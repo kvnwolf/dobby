@@ -1,0 +1,10 @@
+{
+  "name": "dobby",
+  "owner": {
+    "name": "Kevin Wolf",
+    "email": "hi@kvnwolf.com"
+  },
+  "plugins": [
+    { "name": "dobby", "source": "./" }
+  ]
+}
