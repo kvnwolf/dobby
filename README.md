@@ -29,7 +29,7 @@ Two roles, never mixed:
 | Agent | Role | Model |
 | --- | --- | --- |
 | `researcher` | Explore code, fetch current docs (ctx7), resolve unknowns | Opus / medium |
-| `implementor` | Write the code for one scoped task | Fable 5 / xhigh |
+| `implementor` | Write the code for one scoped task | Opus / xhigh |
 | `reviewer` | Code-review a task's diff, pass/fail verdict | Opus / high |
 | `verifier` | Prove the task works against the running app | Sonnet / high |
 

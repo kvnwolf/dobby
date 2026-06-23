@@ -2,7 +2,7 @@
 name: improve-architecture
 description: Review the architecture of a module, subsystem, or repo against deep-contained-module principles, and propose prioritized improvements. Use to assess structural health, find module-boundary smells, or plan a refactor — it reports opportunities, it doesn't change code.
 argument-hint: "[module/path/subsystem, or blank for the whole repo]"
-model: claude-fable-5[1m]
+model: opus
 effort: max
 ---
 

@@ -3,7 +3,7 @@ name: bootstrap
 description: Initialize a project so the work skills can run in it — interview the user about the project, scaffold the base files (CONTEXT.md, CLAUDE.md, docs/adr/, .gitignore), set the workflow config (issue tracker, dev command), make it runnable via portless, and offer to generate the project's run skill. Use once at the start of a new (greenfield) project, or to set up an existing repo for the work skills.
 disable-model-invocation: true
 argument-hint: "[project idea, if greenfield]"
-model: claude-fable-5[1m]
+model: opus
 effort: max
 ---
 

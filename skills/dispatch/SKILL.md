@@ -2,7 +2,7 @@
 name: dispatch
 description: Dispatch a scoped, ad-hoc task to a worker agent (or a few in parallel) and review what comes back — without the full /dobby:execute plan-and-waves ceremony. Use for a one-off fix, a small change, or a bounded investigation, when you don't need a STATE.md spec.
 argument-hint: "[what to dispatch]"
-model: claude-fable-5[1m]
+model: opus
 effort: high
 ---
 
