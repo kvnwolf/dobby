@@ -15,7 +15,7 @@ The task spec (description, decisions, constraints, affected areas) and the diff
 1. **Correctness** — bugs, missed edge cases, wrong role/permission, broken types.
 2. **Plan conformance** — matches the planned task + decisions; flag scope creep or silent deviations.
 3. **Reuse / simplification** — duplicated logic, a shallower interface than needed, an existing module/skill that should have been used.
-4. **Structure** — deep, co-located, feature/domain modules; one public interface; no type-based scatter folders.
+4. **Structure** — deep, co-located, feature/domain modules; deep-path imports (no `index.ts` barrel); no type-based scatter folders.
 
 Scale scrutiny to risk: higher for auth, migrations, anything hard to reverse. Don't rubber-stamp; don't nitpick style the project doesn't enforce.
 

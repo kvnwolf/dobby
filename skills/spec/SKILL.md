@@ -22,7 +22,7 @@ Write it yourself from the in-context decisions — this preserves the interview
 - **Constraints** — technical or business.
 - **Decisions** — key technical decisions from the interview, including any flagged as ADR candidates (these are written at wrap-up, not here).
 - **Edge cases** — each edge case + how it's handled.
-- **Module structure** — for each module the work creates or changes: its name, location, and **public interface** (what callers may use), and why it's shaped that way (this is what the module's own `CONTEXT.md` will record). Module boundaries are an architectural decision the user approves HERE — executors don't improvise them. Apply `references/architecture-vocab.md` (deep, feature/domain modules; one public interface; co-located; inline by default; no type-based folders; each module carries a `CONTEXT.md`). Decide the module and its interface; leave intra-module implementation to the executor.
+- **Module structure** — for each module the work creates or changes: its name, location, and **file surface** (which files callers import by deep path, and what each exposes), and why it's shaped that way (this is what the module's own `CONTEXT.md` will record). Module boundaries are an architectural decision the user approves HERE — executors don't improvise them. Apply `references/architecture-vocab.md` (deep, feature/domain modules; no barrels — deep-path imports; co-located; inline by default; no type-based folders; each module carries a `CONTEXT.md`). Decide the module and its interface; leave intra-module implementation to the executor.
 - **Tasks** — build the table per `references/task-decomposition.md`; the affected-areas column references the modules decided above.
 
 When naming or structuring code in the plan, use the vocabulary in `references/architecture-vocab.md` (module / interface / depth / seam / leverage / locality / adapter) consistently, and match the project's domain language from its glossary.
@@ -55,7 +55,7 @@ Interact with the user in their language. Write all plan content in English; kee
 
 - [ ] Built on a real shared understanding (interview/research), not assumptions
 - [ ] Plan has overview, goals/non-goals, constraints, decisions (ADR candidates flagged), edge cases
-- [ ] Module structure decided (names, locations, public interfaces) and approved by the user — not left to executors
+- [ ] Module structure decided (names, locations, file surfaces) and approved by the user — not left to executors
 - [ ] Task table follows task-decomposition.md: vertical slices, atomic, affected areas, dependencies, verify recipe per task
 - [ ] Architecture vocabulary used consistently
 - [ ] Full plan printed in the conversation BEFORE the approval ask (plain-text question, not a dialog); plan approved by the user (no plan mode); no code written

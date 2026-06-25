@@ -9,7 +9,7 @@ effort: medium
 
 ```tsx
 import { z } from "zod";
-import { useAppForm } from "@/shared";
+import { useAppForm } from "@/shared/use-app-form";
 ```
 
 Rules every form MUST follow:
@@ -223,7 +223,7 @@ Base UI Field handles automatically — no manual wiring needed:
 
 ## Acceptance checklist
 
-- [ ] Uses `useAppForm` from `@/shared`
+- [ ] Uses `useAppForm` from `@/shared/use-app-form`
 - [ ] Validates with Zod via `validators.onSubmit`
 - [ ] Entity-bound form: imports the entity schema and uses `.pick({...})` / `.extend({...})` — NEVER duplicates field rules or messages
 - [ ] Standalone form (auth/search/filter): zod schema defined locally in the form file

@@ -6,7 +6,7 @@ model: opus
 effort: max
 ---
 
-Assess structural health and propose improvements — you report and prioritize; you do NOT change code (hand a chosen refactor to `/dobby:scope`). The bar is the deep, contained-module ideal: a module owns one feature/domain slice end-to-end behind one public interface.
+Assess structural health and propose improvements — you report and prioritize; you do NOT change code (hand a chosen refactor to `/dobby:scope`). The bar is the deep, contained-module ideal: a module owns one feature/domain slice end-to-end, its files named by role and imported by deep path (no barrel).
 
 ## Step 1: Scope the target
 
@@ -21,7 +21,7 @@ Dispatch `researcher` agent(s) (Agent tool, `subagent_type: "dobby:researcher"`)
 From the findings, judge against:
 
 - **Group by domain, not type** — flag top-level `components/` / `services/` / `utils/` / `hooks/` buckets that everything imports from.
-- **One public interface** — flag modules callers reach into past their entry point.
+- **No barrel** — flag a surviving `index.ts` re-export barrel, or a module whose files aren't named by role / aren't importable by deep path.
 - **Deep, not shallow** — flag interfaces nearly as complex as their implementation (the boundary isn't earning its keep).
 - **Co-location** — flag a feature's pieces scattered across the tree.
 - **Inline-by-default** — flag premature `-components/` scatter folders for single-use pieces.
