@@ -179,6 +179,15 @@ It is **never committed** — `/dobby:wrap` disposes it after reconciling the du
 
 - **Hook `vp-check-changes`** — after every Edit/Write, runs `vp check` in projects that have a `vite.config.ts` (no-op everywhere else).
 
+## Improving the kit from real sessions
+
+dobby learns from how its own skills behave in the field. Two skills form the loop:
+
+- `/dobby:mark` — run it in **any** consumer project when a dobby skill was rough. It prints a portable **session indicator**: a pointer to that session's transcript, its repo and worktree root, the still-on-disk `STATE.md` if present, the `/dobby:*` skills it invoked, and your note on what to fix.
+- `/dobby:learn <indicator>` — run it **in the dobby repo**. It digests that session (via a `researcher`, never reading the multi-MB transcript whole) and turns the friction into concrete edits to the skill that underperformed.
+
+These couple to Claude Code's session storage (`~/.claude/projects`) on purpose — they're kit-maintenance tooling, not part of a normal work session.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
