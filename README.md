@@ -147,7 +147,7 @@ Then you type `/dobby:commit`: pre-commit checks, branch, conventional commit, p
 | A brand-new empty repo | `/dobby:bootstrap` |
 | Work is done, ship it | `/dobby:commit` |
 | Structuring or refactoring a module's files | `/dobby:module-conventions` (auto-activates) |
-| Building or refactoring a form | `/dobby:forms` (auto-activates) |
+| Building a form or wiring a data mutation | `/dobby:data-processing` (auto-activates) |
 | Wiring server data into a list/table | `/dobby:data-fetching` (auto-activates) |
 
 Rule of thumb: if getting it wrong would cost you a rework cycle, it deserves a session (`scope`). If you could review the whole change in one glance, `dispatch` it.
@@ -157,8 +157,8 @@ Rule of thumb: if getting it wrong would cost you a rework cycle, it deserves a 
 Three skills are **not** work-session stages — they're stack-convention guides that **auto-activate** while you build, encoding Kevin's standard application stack (TanStack Start + Drizzle/Neon + Better Auth, the `@/shared` form/data system). You never type them to advance a session; they fire when the work matches and reference the consuming project's module file conventions on purpose (deep-path imports and the role-based file taxonomy — no barrels):
 
 - `/dobby:module-conventions` — the per-module file taxonomy: `{export}.server.ts` (eager server-only instance) · `functions.ts` (server fns + middlewares) · `{descriptor}.browser.ts` (browser code) · co-located `schema.gen.ts`, with the framework-enforced boundaries and env-as-single-source.
-- `/dobby:forms` — form conventions: `useAppForm` from `@/shared/use-app-form`, Zod validation, field anatomy, submit/secondary buttons, dialog forms.
-- `/dobby:data-fetching` — the TanStack DB recipe: session-guarded server fn → eager query collection → the `LiveQuery` component.
+- `/dobby:data-processing` — the write side: form conventions (`useAppForm` from `@/shared/use-app-form`, Zod validation, field + dialog anatomy) plus mutation UX (submit-validated by default, optimistic only for in-place row toggles, type-to-confirm, toasts).
+- `/dobby:data-fetching` — the read side: the TanStack DB recipe — session-guarded server fn → eager query collection → the `LiveQuery` component.
 
 ## The artifacts: STATE.md
 

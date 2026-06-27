@@ -1,9 +1,11 @@
 ---
-name: forms
-description: Required conventions for every form in this project — useAppForm from @/shared, Zod validation, field anatomy, submit/secondary buttons, dialog forms. Use when creating, editing, migrating, or refactoring any form, input field, validation, or submit flow.
+name: data-processing
+description: The write-side conventions for this app — forms (useAppForm from @/shared, Zod validation, field + dialog anatomy) and mutation UX (submit-validated dialogs, optimistic in-place toggles, type-to-confirm, toasts). Use when creating, editing, migrating, or refactoring any form, input, validation, submit flow, or data mutation. Write-side partner to /dobby:data-fetching.
 model: opus
 effort: medium
 ---
+
+This is the **write side** of the app — everything that changes server data, with forms as its primary surface. The read-side partner is `/dobby:data-fetching`. Form anatomy and validation come first; the **Mutations** section governs how a submit/toggle/delete behaves and feels.
 
 ## Quick start
 
@@ -20,6 +22,7 @@ Rules every form MUST follow:
 - Every field MUST include `field.Root`, `field.Label`, `field.Control`, `field.ErrorMessage`
 - Forms inside Dialogs MUST use `render` prop on `DialogContent` — see Patterns: dialog forms
 - Forms inside Dialogs MUST call `form.reset()` on close — see Patterns: form reset
+- ALWAYS trim string values in `onSubmit` before sending — see Patterns: trim on submit
 
 ## Patterns
 
@@ -121,6 +124,30 @@ onSubmit: async ({ value, formApi }) => {
 
 The next change-validation on the field clears the server error automatically.
 
+### Trim on submit
+
+String values MUST be trimmed before they leave the form. TanStack Form's Standard Schema validation does NOT propagate transforms into the submitted value: a `z.string().trim()` in `validators` **validates against the trimmed value but still hands `onSubmit` the raw, untrimmed input** ([TanStack Form — submission handling](https://tanstack.com/form/latest/docs/framework/react/guides/submission-handling)). So trim explicitly in `onSubmit`.
+
+Build the outgoing payload as an explicit `data` object, trimming each string field as you assemble it — email-type fields also `.toLowerCase()`. Submit `data`, never the raw `value`:
+
+```tsx
+onSubmit: async ({ formApi, value }) => {
+  const data = {
+    email: value.email.trim().toLowerCase(),
+    firstName: value.firstName.trim(),
+    lastName: value.lastName.trim(),
+  };
+  try {
+    const res = await inviteAdmin(data);
+    // ...success / server-error handling
+  } catch {
+    // ...
+  }
+},
+```
+
+Per-field and explicit — no generic trim-all helper. The same gotcha applies to ANY schema transform (`.toLowerCase()`, `.coerce`, etc.), so apply whatever normalization a field needs right here while building `data`.
+
 ### Polymorphic fields
 
 `render` prop customizes the underlying element while keeping form state binding:
@@ -221,12 +248,45 @@ Base UI Field handles automatically — no manual wiring needed:
 - `for`/`id` linking labels to inputs
 - Disabled state during submission
 
+## Mutations
+
+How a write behaves once submitted. The default is **submit-validated**; optimism is the rare exception, not the baseline.
+
+### Optimistic vs submit-validated
+
+| Mutation | Strategy |
+|----------|----------|
+| In-place **faithful row toggle** — a boolean flip on a row already on screen (disable/reactivate, archive/unarchive) where the new UI state is fully known client-side and rollback is trivial | **Optimistic** — flip now, reconcile on response |
+| Everything else — create, delete, edits with server-computed results, anything that needs server authority (auth, permissions, uniqueness) | **Submit-validated** — await the server, then reflect. NO optimism |
+
+Optimism is justified only when the client already knows the exact post-state and a failure can cleanly roll back. A create can't (no server id yet); a permission-gated action can't (only the server knows the verdict). When unsure, submit-validated.
+
+```tsx
+// Optimistic in-place toggle: flip immediately, roll back on failure
+async function toggleActive(row) {
+  const next = !row.active;
+  setRowActive(row.id, next);                 // optimistic flip
+  const res = await setMemberActive(row.id, next);
+  if (!res.ok) {
+    setRowActive(row.id, row.active);         // rollback to prior state
+    toast.error("Couldn't update — reverted");
+  }
+}
+```
+
+### Dialog & destructive mutations
+
+- **FormDialog locks while submitting** — the dialog can't be closed or re-submitted mid-flight. `form.Submit` already shows the spinner; don't let `onOpenChange` dismiss while `form.state.isSubmitting`.
+- **Type-to-confirm for destructive actions** — irreversible operations (delete, purge) require typing the entity's name/identifier to enable the destructive button. A bare "Are you sure?" is not enough.
+- **Toasts** — every mutation reports its outcome: `toast.success` on completion, `toast.error` (with the reverted-state note for optimistic ones) on failure. Submit-validated mutations toast after the awaited response; optimistic ones toast only on the rollback path.
+
 ## Acceptance checklist
 
 - [ ] Uses `useAppForm` from `@/shared/use-app-form`
 - [ ] Validates with Zod via `validators.onSubmit`
 - [ ] Entity-bound form: imports the entity schema and uses `.pick({...})` / `.extend({...})` — NEVER duplicates field rules or messages
 - [ ] Standalone form (auth/search/filter): zod schema defined locally in the form file
+- [ ] `onSubmit` builds an explicit `data` object trimming each string field (`value.x.trim()`, email also `.toLowerCase()`) and submits `data`, never raw `value`
 - [ ] Form-only fields not present on the entity are added via `.extend({...})` on the picked schema
 - [ ] Every field has `Root`, `Label`, `Control`, `ErrorMessage`
 - [ ] Uses `form.Root` as wrapper, `form.Submit` for submit button
@@ -234,3 +294,7 @@ Base UI Field handles automatically — no manual wiring needed:
 - [ ] Dialog forms use `render={<form.Root />}` on `DialogContent`/`AlertDialogContent`
 - [ ] Dialog forms call `form.reset()` on close via `onOpenChange`
 - [ ] Nested sub-forms inside modals also reset independently
+- [ ] Mutation strategy chosen deliberately: optimistic ONLY for faithful in-place row toggles (with rollback); everything else submit-validated
+- [ ] FormDialog can't close or re-submit while `form.state.isSubmitting`
+- [ ] Destructive actions gated by type-to-confirm, not a bare confirm dialog
+- [ ] Every mutation reports outcome via `toast.success` / `toast.error`

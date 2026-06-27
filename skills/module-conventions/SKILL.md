@@ -67,7 +67,7 @@ export default Object.assign(Email, { PreviewProps: { otp: "123456" } }); // Rea
 
 ## Related skills
 
-- `/dobby:forms` — the form recipe (an entity's `schema.ts` is the single source for validation rules + messages).
+- `/dobby:data-processing` — the write-side recipe: forms (an entity's `schema.ts` is the single source for validation rules + messages) plus mutation UX.
 - `/dobby:data-fetching` — the collection recipe (the server fn in `functions.ts` → the eager collection in `collection.browser.ts` → `LiveQuery`).
 
 ## Acceptance checklist
