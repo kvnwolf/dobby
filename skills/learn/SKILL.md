@@ -34,7 +34,7 @@ Present the proposal and get approval before writing.
 
 ## Step 4: Apply via a worker
 
-Hand the approved edits to a `dobby:implementor` (or `/dobby:dispatch`), pointing it at the exact files. Stay the architect — review what comes back; don't edit the skills yourself. New skills go through `/dobby:create-skill`. Keep the README/decision-table sync in mind (the `/dobby:commit` doc-sync contract enforces it).
+Hand the approved edits to a `dobby:implementor` (or `/dobby:dispatch`), pointing it at the exact files **by cwd-relative path** (`skills/<name>/SKILL.md`) — never anchor to this skill's plugin-install path. When dobby is dogfooded from a Conductor worktree, the cwd IS the dobby checkout on the work branch, and that's where edits must land so the change flows branch → PR → `main` (with `autoUpdate` carrying it back to the global plugin clone). Editing the global install directly skips the branch and the PR. Stay the architect — review what comes back; don't edit the skills yourself. New skills go through `/dobby:create-skill`. Keep the README/decision-table sync in mind (the `/dobby:commit` doc-sync contract enforces it).
 
 ## Privacy
 The researcher extracts **method and pattern** signal, not the consumer project's business content. A kit skill must never carry a client's domain specifics — keep the digest to how the agent should *work*, not what it was building.
