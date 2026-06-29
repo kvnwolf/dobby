@@ -38,7 +38,7 @@ Apply these against the glossary and the codebase while interviewing:
 - **Challenge against the glossary** — call out a term that conflicts with the project's domain language and resolve it.
 - **Sharpen fuzzy language** — when a word is vague or overloaded, propose a precise canonical term.
 - **Stress-test with concrete scenarios** — probe edge boundaries with specific cases, not abstractions.
-- **Cross-reference with code** — when the user states how something works, check the code agrees (dispatch a `researcher` for anything substantial); surface contradictions.
+- **Cross-reference with code** — when the user states how something works, check the code agrees (dispatch a `researcher` for anything substantial); surface contradictions. Your OWN assumptions about a shared primitive are claims too — a shared component's props, a hook's submit/disabled lifecycle, whether two primitives compose (one dialog nested over another). The moment a decision rests on how a reused primitive behaves, dispatch a `researcher` to confirm it against code BEFORE locking the decision, not after. "I'm pretty sure that prop/hook/nesting works that way" is the trigger to verify, never a reason to skip.
 - **Note, don't write** — flag new domain terms and ADR candidates for the planning/wrap stage; never edit files mid-interview.
 
 If a decision genuinely can't be resolved verbally ("how does this state machine feel?", "which UI variant do we like?"), pause and have the user TYPE **`/dobby:prototype`** (do NOT invoke it via the Skill tool — typed entry applies its own `model`/`effort`) to settle it empirically — the user plays with a throwaway prototype and the captured answer lands in `STATE.md` — then resume the interview where it left off.
@@ -49,6 +49,8 @@ Stop only when every ambiguity is resolved, all states / edge cases / roles / ro
 
 **The closing litmus test:** before declaring the interview complete, scan your own closing message. If it contains ANY side-note, "by the way" observation, parenthetical offer, or "I could also do X, unless you'd rather not" — that item IS an unresolved question wearing a disguise. Demoting a question to a side-note is how interviews end prematurely: if it was worth mentioning, it's worth its own focused question. Promote it, ask it, and keep going — the interview is NOT over. Only a closing message with zero new items qualifies as the close.
 
+**The infra-assumption gate:** before declaring zero open questions, scan your Decisions for any that assume how a shared primitive behaves — a prop exists, a button enables, two dialogs compose, a hook fires — without a code check behind it. Those are unverified assumptions wearing the disguise of settled decisions, exactly the ones that turn out wrong once the build starts. Verify each against code (a `researcher`) before you close: a decision built on an unverified primitive assumption is not a decision, it's a guess — and a guess is an open question. Do this on your own initiative — if the user has to ask "are you SURE you checked everything?", the gate already failed.
+
 Produce a tight **Decisions** summary the next step can consume verbatim: each entry = decision · rejected alternative · why · is it an ADR candidate? Include the new-term and ADR-candidate flags here. If a work-session doc exists (from `/dobby:scope`, the repo-root `STATE.md`), write this summary into its `## Findings (interview)` section so later stages and subagents pick it up.
 
 ## Anti-patterns
@@ -57,6 +59,7 @@ Produce a tight **Decisions** summary the next step can consume verbatim: each e
 - Never stop early because the user seems impatient — thoroughness now prevents rework later.
 - Never present a recap and ask "shall I proceed?" if you can think of ONE more question.
 - Never demote a genuine question to a side-note, recap line, or "micro-note in passing" ("I can also clean up X, unless…"). A side-note in your closing message is an unresolved branch — ask it as its own question instead. (Real failure: an interview closed with an alias cleanup as a "micro-nota de pasada"; it turned out to be a full decision requiring research.)
+- Never record a decision that rests on how a shared primitive behaves without verifying that behavior against code first — such statements are claims, not facts. (Real failure: an interview closed a multi-decision recap with two decisions built on unchecked primitive behavior — a shared form hook's submit button that's permanently dead when the form has no fields, and a modal-over-modal nesting the codebase had never actually proven; both were wrong and only surfaced after the user pushed twice for a verification pass.)
 - Never modify the glossary or any file mid-interview.
 
 ## Next step
@@ -77,6 +80,7 @@ Interview in the user's language. Write the Decisions summary (and anything pers
 - [ ] Domain glossary read (if present) and used; conflicts challenged
 - [ ] Code explored via a `researcher` (findings held in your context) to ask informed, specific questions
 - [ ] Every ambiguity, entity state, role, route, and edge case resolved
+- [ ] Every decision resting on a shared-primitive behavior verified against code before close (proactively, not user-forced)
 - [ ] Decisions summary produced, with new-term / ADR-candidate flags
 - [ ] No files modified
 - [ ] Next step handed off in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)
