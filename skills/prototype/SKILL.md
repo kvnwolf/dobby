@@ -28,7 +28,7 @@ Read the branch reference and turn it into a concrete build instruction: the que
 ## Step 3: Hand it over — the play session
 
 - **Logic branch** → give the user the one run command.
-- **UI branch** → give the URL on the **already-running dev server** (the Conductor run — the dev URL comes from the `run_script` terminal; never start a second server) + the `?variant=` keys.
+- **UI branch** → give the URL on the **already-running dev server** (the Conductor run — the dev URL comes from `portless get`; never start a second server) + the `?variant=` keys.
 
 The user drives. The interesting moments are "wait, that shouldn't be possible" and "I want the header from B with the sidebar from C" — those are the answer forming. Iterate through the implementor as the user asks for new actions, adjustments, or another variant. Prototypes evolve.
 
