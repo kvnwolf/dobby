@@ -41,10 +41,12 @@ If `hasNextPage` is true, repeat with `-f cursor=ENDCURSOR`.
 
 The bot keeps ONE issue comment and edits it every review cycle — no append. Select by `updated_at`, never `created_at`, or you'll read a stale body. The per-cycle timeline lives in the PR's review objects + GitHub's "edited" history, not in the summary.
 
+`BOT_SLUG` is the BARE slug (`greptile-apps`), NOT the `[bot]` form: `test()` takes a regex, where `[bot]` is a character class (any of b/o/t), so it never matches the literal login and the summary read silently returns nothing. The bare slug still substring-matches the REST login `greptile-apps[bot]`.
+
 ```bash
 gh api --paginate "repos/OWNER/REPO/issues/PR_NUMBER/comments?per_page=100" \
   | jq -s 'add
-    | map(select(.user.login | test("BOT_LOGIN"; "i")))
+    | map(select(.user.login | test("BOT_SLUG"; "i")))
     | sort_by(.updated_at) | last
     | {author: .user.login, updated_at, body}'
 ```
