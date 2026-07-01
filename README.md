@@ -60,6 +60,7 @@ Side paths, available at any point:
 - `/dobby:prototype` — when a decision can't be settled with words, interview/research hand off to a throwaway prototype you can play with, then resume.
 - `/dobby:diagnose` — when something breaks during execute (or any time), a disciplined hypothesis-driven debugging loop.
 - `/dobby:dispatch` — the whole architect/worker machinery for a task too small to deserve a session.
+- `/dobby:address-review` — take a review bot's or reviewer's PR comments from posted to addressed + threads resolved + re-reviewed.
 
 ## Your first session — end-to-end walkthrough
 
@@ -146,6 +147,7 @@ Then you type `/dobby:commit`: pre-commit checks, branch, conventional commit, p
 | A repeatable workflow worth packaging | `/dobby:create-skill` |
 | A brand-new empty repo | `/dobby:bootstrap` |
 | Work is done, ship it | `/dobby:commit` |
+| A review bot or reviewer left comments on your PR | `/dobby:address-review` |
 | Structuring or refactoring a module's files | `/dobby:module-conventions` (auto-activates) |
 | Building a form or wiring a data mutation | `/dobby:data-processing` (auto-activates) |
 | Wiring server data into a list/table | `/dobby:data-fetching` (auto-activates) |
