@@ -26,7 +26,7 @@ Validity varies (real bug · nitpick · plain wrong) — **never auto-fix everyt
 | Disposition | When |
 |---|---|
 | **fix** | Real defect or worthwhile change |
-| **reply-defer** | Valid but out of scope / YAGNI — keep, reply with rationale |
+| **defer** | Valid but out of scope / YAGNI — keep the thread open (deferred), reply with rationale |
 | **dismiss** | Wrong or a nitpick you won't take — resolve with a one-line why |
 | **outdated** | `isOutdated=true` — the annotated lines already changed |
 
@@ -53,7 +53,7 @@ For each accepted or deferred **decision** (not every fix), evaluate the three c
 Per `references/github-api.md`, and using the detected adapter:
 
 1. **Commit + push** the addressed fixes to the PR branch. It's an existing PR — no new PR, keep the message review-scoped (e.g. `fix: address review feedback`).
-2. **Resolve EXPLICITLY.** Pushing does NOT auto-resolve or outdate threads — confirmed: lines changed by a fix still read `isResolved=false`. Call `resolveReviewThread` (batch with GraphQL aliases) on the `fix`, `dismiss`, and `outdated` threads: `fix` → resolve once the change lands, `dismiss` → resolve with the one-line why, `outdated` → resolve after verifying the newer code covers it. Only `deferred` stays open — close it out with a reply (item 3) instead.
+2. **Resolve EXPLICITLY.** Pushing does NOT auto-resolve or outdate threads — confirmed: lines changed by a fix still read `isResolved=false`. Call `resolveReviewThread` (batch with GraphQL aliases) on the `fix`, `dismiss`, and `outdated` threads: `fix` → resolve once the change lands, `dismiss` → resolve with the one-line why, `outdated` → resolve after verifying the newer code covers it. Only `defer` threads stay open (deferred) — close them out with a reply (item 3) instead.
 3. **Reply with the rationale** on `deferred` threads (and on any `dismiss` where the why is worth stating to the bot) — REST, `in_reply_to=<databaseId>`, `@`-mentioning the bot via `adapter.intentionalReply` so it learns not to re-flag.
 4. **Re-trigger** the review via `adapter.reTrigger` (skip for human/unknown — nothing to trigger).
 5. **Re-fetch and reconcile.** Confirm thread state AND re-read the UPDATED summary/confidence. **The summary lags the threads**: it can still list an addressed concern as open even after a valid fix + a resolved thread. Decide per residual concern — accept it, **rebut** it (a clarifying reply + one more re-trigger to move the summary), or do more work.
@@ -78,7 +78,7 @@ Interact with the user in their language. Code, comments, commit messages, ADRs,
 
 - [ ] PR identified; open unresolved threads fetched; review tool auto-detected via the adapter registry
 - [ ] Summary + confidence read from the edited-in-place bot comment (by `updated_at`)
-- [ ] Every comment triaged (fix / reply-defer / dismiss / outdated) and confirmed at the human gate — nothing auto-fixed
+- [ ] Every comment triaged (fix / defer / dismiss / outdated) and confirmed at the human gate — nothing auto-fixed
 - [ ] Fixes delegated to `dobby:implementor` (or trifecta / scope→execute); architect edited no code
 - [ ] Decision-grade findings evaluated for ADRs; offered and written on approval
 - [ ] Fixes committed + pushed; `fix` / `dismiss` / `outdated` threads resolved EXPLICITLY; `deferred` threads left open and replied with rationale + bot @-mention
