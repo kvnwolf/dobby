@@ -14,16 +14,18 @@ Read `STATE.md` (from `/dobby:scope` + `/dobby:spec`): the `## Spec` task table 
 
 ## Step 2: Launch the build workflow (always)
 
-First, get the `devUrl` — you do NOT start the dev server. Under Conductor, `auto_run_after_setup` already launched the run script, so the coordinator's job is to (1) confirm that run is alive and (2) parse the dev URL from its terminal, then pass it to the workflow. Read `mcp__conductor__GetTerminalOutput({ source: 'run_script' })` and apply the parse recipe (per `STATE.md` `## Research`):
+First, get the `devUrl` — you do NOT start the dev server. Under Conductor, `auto_run_after_setup` already launched the run script, so the coordinator's job is to (1) resolve the dev URL deterministically and (2) confirm that run is alive, then pass it to the workflow. Do NOT read any terminal output — resolve the URL with `portless get` and health-check it with `curl`:
 
-- Strip ANSI codes (`\x1b\[[0-9;]*m`), then match the `https://[a-z0-9.-]+\.localhost` URL.
-- Prefer the `-> https://…` line or the `PORTLESS_URL=https://…` token.
-- Ignore Vite's internal `Local: 127.0.0.1:<port>` line (that's not the shared URL).
-- Absence of any portless URL after a bounded wait = the run isn't serving → surface it as an error rather than proceeding.
+1. **Resolve the URL** with `portless get <NAME>`, where `NAME` is the package.json `name` with any leading `@scope/` stripped:
+   ```
+   portless get "$(node -p "require('./package.json').name")"
+   ```
+   If a `portless.json` or a `portless` key in `package.json` overrides the name, use that instead. `portless get` prints the exact branch-prefixed `https://<branch>.<name>.localhost` WITHOUT starting the server (Conductor's `auto_run_after_setup` already started it). If the command errors nonzero because `get` is unknown, portless is too old → surface it as **"needs portless >= 0.12"** rather than falling back to any other method.
+2. **Confirm the run is alive** by polling `curl`: `curl -sf --max-time 5 <devUrl>`, up to **6 attempts, 5s apart** (~30s bound). If it never responds, surface a clear error rather than proceeding.
 
 Verifiers check against this single shared server and must NOT each start their own (parallel starts collide on the port).
 
-**No run script?** A library / CLI / plugin (like dobby itself) has no `[scripts] run`, so there's no terminal to read and no dev URL — set `devUrl = null`. The verifier then verifies programmatically instead of against a URL.
+**No run script?** A library / CLI / plugin (like dobby itself) has no `[scripts] run`, so there's nothing serving and no dev URL — skip `portless get`/`curl` and set `devUrl = null`. The verifier then verifies programmatically instead of against a URL.
 
 Always run the build loop as a **Workflow** (the Workflow tool) — author it from `references/build-workflow.md` (the reusable trifecta), passing only the task list and the dev URL as `args`. The per-task agents are the custom subagents **`dobby:implementor` / `dobby:reviewer` / `dobby:verifier`**, dispatched via `agentType` — their role instructions live in the agent definitions, NOT passed as args. The workflow runs this per-task state machine, a SEPARATE agent per role:
 

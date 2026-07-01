@@ -113,7 +113,7 @@ The architect turns decisions + research into a build plan and **prints it in fu
 /dobby:execute
 ```
 
-Conductor auto-runs the app (`auto_run_after_setup`), and the coordinator reads the run-script terminal to get the dev URL, then launches the build workflow. Per task, **three separate agents** run a state machine:
+Conductor already auto-ran the app (`auto_run_after_setup`); the coordinator resolves the dev URL with `portless get` and confirms the app is up, then launches the build workflow. Per task, **three separate agents** run a state machine:
 
 ```
 implement → code review → (findings? fix → re-review) → verify → (fail? restart) → done

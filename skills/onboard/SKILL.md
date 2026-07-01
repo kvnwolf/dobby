@@ -24,14 +24,14 @@ One question at a time (AskUserQuestion where the options are anticipatable; pla
 
 Don't reinvent scaffolding — for a greenfield repo, use the stack's OWN create command (the framework's `create` CLI) to lay down a runnable starter. If the repo already runs, skip the scaffold. Don't verify a Node floor from memory; if a tool needs a minimum Node, confirm it before writing it into `engines`/docs.
 
-The project runs through **Conductor**: every workspace runs `.conductor/setup.sh` once, then Conductor's `run` script (auto-started when `auto_run_after_setup` is on). That's what `/dobby:execute`'s verifier reads to confirm-alive and to extract the dev URL. Write these three files (never a run skill, never a portless dev-script rewrite):
+The project runs through **Conductor**: every workspace runs `.conductor/setup.sh` once, then Conductor's `run` script (auto-started when `auto_run_after_setup` is on). That's what `/dobby:execute`'s verifier reads to confirm-alive. The dev command runs through **portless** (`portless run <dev command>`, e.g. `portless run vite dev`) — portless gives each worktree a branch-prefixed `https://<branch>.<name>.localhost`, so concurrent workspaces never collide over the dev URL WITHOUT needing `$CONDUCTOR_PORT`. Write these three files (never a run skill):
 
 **`.conductor/settings.toml`** — the repo-level Conductor config (checked in). Pick the template by the `run_mode` decided in Step 1, and set BOTH `run_mode` and `auto_run_after_setup` **explicitly** — neither has a documented default, so an omitted key is undefined behavior, not a safe fallback.
 
-Concurrent — no shared singletons; each workspace gets its own dev server on its own per-workspace port (`$CONDUCTOR_PORT`, the first of 10 consecutive ports Conductor assigns each workspace). A named run script lets it carry the `$CONDUCTOR_PORT` arg:
+Concurrent — no shared singletons; each workspace gets its own dev server, and **portless** isolates the URL per worktree (branch-prefixed), so nothing collides and no `$CONDUCTOR_PORT` is needed. The run command wraps the dev command with `portless run`:
 
 ```toml
-# concurrent (per-workspace ports, no singletons)
+# concurrent (portless-isolated URLs per worktree, no singletons)
 "$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
 [scripts]
 setup = "./.conductor/setup.sh"
@@ -39,12 +39,12 @@ run_mode = "concurrent"
 auto_run_after_setup = true
 archive = "./.conductor/archive.sh"
 [scripts.run.dev]
-command = "pnpm dev --port $CONDUCTOR_PORT"
+command = "portless run vite dev"
 default = true
 icon = "play"
 ```
 
-Nonconcurrent — a shared DB/port singleton (e.g. local Supabase). A simple-string `run` is fine here; `run_mode = "nonconcurrent"` makes Conductor stop any other active run so two workspaces never fight over the singleton:
+Nonconcurrent — a shared DB/port singleton (e.g. local Supabase / a fixed local Postgres you can only run once per machine). The run command still wraps the dev command with `portless run` (so the URL stays branch-prefixed), but `run_mode = "nonconcurrent"` makes Conductor stop any other active run so two workspaces never fight over the singleton:
 
 ```toml
 # nonconcurrent (shared DB/port singleton, e.g. local Supabase)
@@ -54,7 +54,7 @@ setup = "./.conductor/setup.sh"
 # nonconcurrent + auto_run: each new workspace steals the shared dev server from the previous one.
 run_mode = "nonconcurrent"
 auto_run_after_setup = true
-run = "pnpm supabase start && pnpm dev"
+run = "pnpm supabase start && portless run pnpm dev"
 archive = "./.conductor/archive.sh"
 ```
 
@@ -90,17 +90,17 @@ set -euo pipefail
 
 `chmod +x .conductor/setup.sh .conductor/archive.sh` so Conductor can run them.
 
-**No-dev-server project** (a library, CLI, or plugin — like dobby itself, which has no app to serve): write `settings.toml` with **no `[scripts] run`** at all (keep `setup`, `run_mode`, `auto_run_after_setup`, `archive`). There's no dev URL to read, so `/dobby:execute`'s verifier runs the verify recipe programmatically instead of driving a browser.
+**No-dev-server project** (a library, CLI, or plugin — like dobby itself, which has no app to serve): write `settings.toml` with **no `[scripts] run`** at all (keep `setup`, `run_mode`, `archive`). With no run target, **`auto_run_after_setup = false`** (or omit it entirely) — NEVER leave it `true` when there's nothing to run. There's no dev URL to read, so `/dobby:execute`'s verifier runs the verify recipe programmatically instead of driving a browser.
 
 ## Step 3: Scaffold the base files
 
 - **`CONTEXT.md`** (repo root) — the domain glossary. Format: `# {Project}` + a 1-2 sentence description, then `## Language` (each term as `**Term**:` + a one-sentence definition + `_Avoid_:` aliases, grouped under subheadings when clusters emerge), `## Relationships` (bold terms + cardinality), and `## Flagged ambiguities`. Opinionated, tight, domain-only — start small with the Step 1 terms; it grows via `/dobby:interview` and `/dobby:wrap`.
 - **`CLAUDE.md`** (repo root) — the agent config, with these sections:
   - **Product** — what it is + who it's for.
-  - **Stack** — language, framework, data layer, key services, plus a short **Dev** note: the app runs via **Conductor** (`.conductor/settings.toml`; `auto_run_after_setup` auto-starts the run script in each workspace). Do NOT pin a `npm run dev` command or a computed dev URL here — the URL is branch-prefixed (and may be name-overridden), so it is NOT computable; `/dobby:execute`'s verifier reads it live from the run-script terminal.
+  - **Stack** — language, framework, data layer, key services, plus a short **Dev** note: the app runs via **Conductor** (`.conductor/settings.toml`; `auto_run_after_setup` auto-starts the run script in each workspace), and the run command wraps the dev command with **portless**. Do NOT pin a `npm run dev` command or a hardcoded dev URL here — the URL is branch-prefixed, so it is NOT hardcodable; `/dobby:execute`'s verifier obtains it via `portless get <name>` (deterministic, branch-prefixed).
   - **Module map** — one line per top-level feature/domain module, each linking to that module's own `CONTEXT.md`, e.g. `- [src/<area>/<module>/](src/<area>/<module>/CONTEXT.md) — what it owns`.
   - **Conventions** — encode deep, contained modules: organize by feature/domain (NO type-based `components/`/`services/`/`lib/` buckets); NO barrels — callers import by deep path, each file named by its role (the filename is the interface); co-locate the slice; inline by default; **each module carries its own `CONTEXT.md`** (purpose · Files · Interface · Invariants · What's NOT here). "What works for humans is also great for AI."
-  - **Workflow config** — the issue tracker (GitHub / Linear / local) and how the app runs: **via Conductor** (`.conductor/settings.toml`, `auto_run_after_setup`). Do NOT pin a computed dev URL — `/dobby:execute`'s verifier reads it live from the run-script terminal (Conductor branch-prefixes the URL and may name-override it, so it is NOT computable). For a no-dev-server project, say so (there's no run script → no dev URL; the verifier verifies programmatically).
+  - **Workflow config** — the issue tracker (GitHub / Linear / local) and how the app runs: **via Conductor** (`.conductor/settings.toml`, `auto_run_after_setup`), with the run command wrapping the dev command in **portless**. Do NOT pin a hardcoded dev URL — `/dobby:execute`'s verifier obtains it via `portless get <name>` (deterministic, branch-prefixed via the worktree, so it is NOT hardcodable). For a no-dev-server project, say so (there's no run script → no dev URL; the verifier verifies programmatically).
 - **docs/adr/** — create the directory (add `0001-...` only if the stack choice meets the three ADR criteria: hard to reverse · surprising · real trade-off).
 - **.gitignore** — ensure `STATE.md` is ignored (the ephemeral work-session doc) and `.conductor/settings.local.toml` is ignored (machine-local Conductor secrets), plus the stack's standard ignores. Note: `.conductor/settings.toml`, `setup.sh`, and `archive.sh` ARE checked in — only `settings.local.toml` is ignored.
 
@@ -124,10 +124,11 @@ Interview in the user's language. **Write all generated docs and code — CLAUDE
 ## Acceptance checklist
 
 - [ ] Interviewed: product, domain terms, stack (docs confirmed via /find-docs), `run_mode` (singletons? → concurrent/nonconcurrent), tracker, greenfield-or-existing
-- [ ] Conductor configured: `.conductor/settings.toml` written from the right template (`run_mode` AND `auto_run_after_setup` explicit; no-dev-server → no `[scripts] run`); `nonconcurrent + auto_run` interaction noted in a comment; no `[models]` table
+- [ ] Conductor configured: `.conductor/settings.toml` written from the right template (`run_mode` AND `auto_run_after_setup` explicit); the `[scripts] run` command wraps the dev command with `portless run` (branch-prefixed URL, no `$CONDUCTOR_PORT`); `nonconcurrent + auto_run` interaction noted in a comment; no `[models]` table
+- [ ] No-dev-server project (lib/CLI/plugin): NO `[scripts] run`, and `auto_run_after_setup = false` (or omitted) — never `true` with no run target
 - [ ] `.conductor/setup.sh` + `.conductor/archive.sh` stubs written and `chmod +x`; `file_include_globs` (multi-line string) copies gitignored env files; secrets go in gitignored `.conductor/settings.local.toml`, not `settings.toml`
 - [ ] CONTEXT.md scaffolded (initial glossary) — in English; domain terms keep their real-world form
-- [ ] CLAUDE.md scaffolded (product, stack, module map, deep-module conventions, workflow config) — in English; Dev/Workflow note says the app runs via Conductor and the verifier reads the dev URL from the run-script terminal (no pinned URL)
+- [ ] CLAUDE.md scaffolded (product, stack, module map, deep-module conventions, workflow config) — in English; Dev/Workflow note says the app runs via Conductor with the run command wrapping the dev command in portless, and the verifier obtains the dev URL via `portless get <name>` (no hardcoded URL)
 - [ ] docs/adr/ created; `.gitignore` ignores `STATE.md` and `.conductor/settings.local.toml`
 - [ ] `.claude/commit.config.yml` created (docs to sync + pre-commit checks, user-confirmed)
 - [ ] Next step handed off in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)
