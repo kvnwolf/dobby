@@ -14,7 +14,16 @@ Read `STATE.md` (from `/dobby:scope` + `/dobby:spec`): the `## Spec` task table 
 
 ## Step 2: Launch the build workflow (always)
 
-First, ensure the app's dev server is running ONCE: if it isn't already up, start it (via the project's run skill or documented dev command); if it's up, reuse it. Capture the dev URL — verifiers check against this single shared server and must NOT each start their own (parallel starts collide on the port).
+First, get the `devUrl` — you do NOT start the dev server. Under Conductor, `auto_run_after_setup` already launched the run script, so the coordinator's job is to (1) confirm that run is alive and (2) parse the dev URL from its terminal, then pass it to the workflow. Read `mcp__conductor__GetTerminalOutput({ source: 'run_script' })` and apply the parse recipe (per `STATE.md` `## Research`):
+
+- Strip ANSI codes (`\x1b\[[0-9;]*m`), then match the `https://[a-z0-9.-]+\.localhost` URL.
+- Prefer the `-> https://…` line or the `PORTLESS_URL=https://…` token.
+- Ignore Vite's internal `Local: 127.0.0.1:<port>` line (that's not the shared URL).
+- Absence of any portless URL after a bounded wait = the run isn't serving → surface it as an error rather than proceeding.
+
+Verifiers check against this single shared server and must NOT each start their own (parallel starts collide on the port).
+
+**No run script?** A library / CLI / plugin (like dobby itself) has no `[scripts] run`, so there's no terminal to read and no dev URL — set `devUrl = null`. The verifier then verifies programmatically instead of against a URL.
 
 Always run the build loop as a **Workflow** (the Workflow tool) — author it from `references/build-workflow.md` (the reusable trifecta), passing only the task list and the dev URL as `args`. The per-task agents are the custom subagents **`dobby:implementor` / `dobby:reviewer` / `dobby:verifier`**, dispatched via `agentType` — their role instructions live in the agent definitions, NOT passed as args. The workflow runs this per-task state machine, a SEPARATE agent per role:
 

@@ -70,7 +70,7 @@ One shared switcher component, located wherever shared UI lives, so both sub-sha
 
 ### 5. Hand it over
 
-Surface the URL **on the already-running dev server** (never start a second one) + the `?variant=` keys. The user flips through at their pace. The interesting feedback is usually **"I want the header from B with the sidebar from C"** — that's the actual design they want. Apply adjustments through the implementor; add a variant D if asked.
+Surface the URL **on the already-running dev server** — the Conductor run (the dev URL comes from the `run_script` terminal); never start a second one — + the `?variant=` keys. The user flips through at their pace. The interesting feedback is usually **"I want the header from B with the sidebar from C"** — that's the actual design they want. Apply adjustments through the implementor; add a variant D if asked.
 
 ### 6. Capture the answer and clean up
 

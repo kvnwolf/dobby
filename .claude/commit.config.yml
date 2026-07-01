@@ -1,5 +1,5 @@
 # Contract read by /dobby:commit — docs to keep in sync + pre-commit checks.
-# Created by /dobby:bootstrap. Checks run in order from the repo root; any non-zero exit aborts the commit.
+# Created by /dobby:onboard. Checks run in order from the repo root; any non-zero exit aborts the commit.
 
 files:
   - path: README.md

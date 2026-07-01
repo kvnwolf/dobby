@@ -1,6 +1,6 @@
 # Commit Config Setup
 
-Creates `.claude/commit.config.yml` — the contract `/dobby:commit` reads: which docs to keep in sync and which pre-commit checks gate the commit. Run as part of `/dobby:bootstrap`; skip if the file already exists.
+Creates `.claude/commit.config.yml` — the contract `/dobby:commit` reads: which docs to keep in sync and which pre-commit checks gate the commit. Run as part of `/dobby:onboard`; skip if the file already exists.
 
 ## Discover
 
