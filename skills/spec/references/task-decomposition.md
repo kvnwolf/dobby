@@ -5,7 +5,9 @@ Decompose the work into a task table the executor can dispatch from.
 ## Principles
 
 - **Vertical slices** — each task delivers end-to-end functionality across all layers (data + backend + frontend). Never a task that only touches one layer unless it genuinely has no cross-layer implications.
+- **Prefactor first** — "make the change easy, then make the easy change." If a task needs the ground reshaped before it lands cleanly, schedule that prefactor as its own slice *before* the slices that depend on it — never fold a big prefactor into the feature task.
 - **Incremental expansion** — task 1 = minimal working version; each subsequent task adds a capability on top.
+- **Test-first marker** — when the repo has a test suite, each task carries a `Test-first` flag (`yes` for tasks with real logic/seams, `no` for trivial config/prose/scaffolding) from the plan's Testing Decisions. `/dobby:execute`'s test-author gate reads this column. Omit the column entirely when the repo has no suite.
 - **Atomic** — small enough for one agent to complete within ~50% of its context window. 3-4 files beats 8-10. Prefer many small tasks over few large ones.
 - **Affected areas** — each task declares which modules/directories it touches. Used to decide parallelism: overlapping areas run sequentially, non-overlapping run in parallel.
 - **Dependencies** — express which tasks depend on which.
@@ -24,12 +26,12 @@ Instead of one "Notification system" task: "Notification + list endpoint + empty
 
 ## How to present
 
-A markdown table inside the plan:
+A markdown table inside the plan. Add the `Test-first` column only when the repo has a test suite (see the plan's Testing Decisions):
 
-| # | Task | Description | Depends on | Affected areas | Verify recipe |
-|---|------|-------------|------------|----------------|---------------|
-| 1 | \<title\> | \<1-2 sentences: what this delivers end-to-end\> | — | \<modules/dirs\> | \<what to run + what to observe\> |
-| 2 | \<title\> | \<1-2 sentences\> | 1 | \<modules/dirs\> | \<…\> |
+| # | Task | Description | Depends on | Affected areas | Test-first | Verify recipe |
+|---|------|-------------|------------|----------------|------------|---------------|
+| 1 | \<title\> | \<1-2 sentences: what this delivers end-to-end\> | — | \<modules/dirs\> | yes/no | \<what to run + what to observe\> |
+| 2 | \<title\> | \<1-2 sentences\> | 1 | \<modules/dirs\> | yes/no | \<…\> |
 
 ### Concrete example — a notifications feature
 

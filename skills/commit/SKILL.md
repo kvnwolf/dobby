@@ -48,8 +48,15 @@ git add <updated-doc-files>
 
 The `checks` list in `.claude/commit.config.yml` is the project's pre-commit gate — the harness runs it, replacing git pre-commit hooks.
 
+**Check schema.** Each entry has `name`, `run`, and an optional `scope` that classifies *what the check reads*:
+
+- `scope: staged` — the check should only inspect the files being committed. Pass it the staged paths: resolve them with `git diff --staged --name-only` and template that list into the `run` command. Use for per-file tools whose verdict is local to the diff — formatters, linters, per-file validators. This keeps unrelated pre-existing violations elsewhere in the tree from blocking an unrelated commit.
+- `scope: tree` (the default when `scope` is absent) — the check validates the whole working tree regardless of what's staged. Use for whole-program checks that can break from a staged change even in files you didn't touch — typecheck, build, test suite, cross-file manifest/parse gates.
+
+When in doubt, prefer `tree`: it's the safe default (a passing tree is always commit-safe). Only mark a check `staged` when running it tree-wide would surface noise the current commit isn't responsible for.
+
 1. Read `checks` from the config. If absent or empty, skip this step.
-2. Run each check's `run` command sequentially, from the repo root.
+2. Run each check's `run` command sequentially, from the repo root. For a `scope: staged` check, restrict its input to the staged paths (per the schema above); for `scope: tree` (or unset), run it against the whole tree.
 3. **Any failure aborts the commit.** Report the failing check and its output verbatim, then stop — never commit on top of a red check, and never "pass" it by skipping or weakening it. Fixing the failure is the user's call (or the calling stage's).
 4. If a check legitimately modified files (e.g. a formatter in write mode), re-stage only the paths that were already staged, then re-run the checks ONCE. A second mutation round means the check is misconfigured — stop and report.
 
@@ -106,7 +113,7 @@ Only if branch was pushed in step 8.
 
 - [ ] Commit config exists at `.claude/commit.config.yml` (or the user explicitly chose a one-off contract-less commit; `/dobby:onboard` suggested)
 - [ ] Documentation synced with staged changes
-- [ ] Pre-commit checks ran green (or none configured); commit aborted on any failure
+- [ ] Pre-commit checks ran green (or none configured); commit aborted on any failure — each check run at its declared `scope` (`staged` on the diff paths, `tree`/unset on the whole tree)
 - [ ] Commit message follows semantic format with body
 - [ ] Changes pushed to remote
 - [ ] PR created (if not on main)

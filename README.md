@@ -48,7 +48,7 @@ A work session moves through six stages. Each stage ends by telling you which co
       │
 /dobby:spec         the build plan, printed in full — you approve it
       │
-/dobby:execute      waves of implement → review → verify (the trifecta)
+/dobby:execute      waves of (test →) implement → review → verify (the build loop)
       │
 /dobby:wrap         human smoke test, docs/ADRs, STATE.md disposed
       │
@@ -61,6 +61,11 @@ Side paths, available at any point:
 - `/dobby:diagnose` — when something breaks during execute (or any time), a disciplined hypothesis-driven debugging loop.
 - `/dobby:dispatch` — the whole architect/worker machinery for a task too small to deserve a session.
 - `/dobby:address-review` — take a review bot's or reviewer's PR comments from posted to addressed + threads resolved + re-reviewed.
+- `/dobby:handoff` — compact the session into an ephemeral fork document a fresh session can pick up (see [Context hygiene](#context-hygiene-fork-vs-continue)).
+
+### Context hygiene: fork vs. continue
+
+A long session accumulates dead context — resolved threads, abandoned branches, raw tool output — that quietly crowds out the room the architect needs to think. When context is getting long, the work spans days, or you're about to switch to a distinct sub-goal, don't just keep going: type `/dobby:handoff`. It writes an **ephemeral fork document** (to your OS temp dir) that summarizes where things stand, references the durable artifacts (`STATE.md`, PRDs, ADRs, diffs) by path instead of copying them, redacts secrets, and lists the `/dobby:*` skills to reach for next. Start a fresh session, point it at that document, and continue with a clean slate. It's for **forking**, not durable record-keeping — decisions still land in `CONTEXT.md` / ADRs / commits.
 
 ## Your first session — end-to-end walkthrough
 
@@ -114,13 +119,13 @@ The architect turns decisions + research into a build plan and **prints it in fu
 /dobby:execute
 ```
 
-Conductor already auto-ran the app (`auto_run_after_setup`); the coordinator resolves the dev URL with `portless get` and confirms the app is up, then launches the build workflow. Per task, **three separate agents** run a state machine:
+Conductor already auto-ran the app (`auto_run_after_setup`); the coordinator resolves the dev URL with `portless get` and confirms the app is up, then launches the build loop. Per task, **separate agents** run a state machine:
 
 ```
-implement → code review → (findings? fix → re-review) → verify → (fail? restart) → done
+(test-author) → implement → code review → (findings? fix → re-review) → verify → (fail? restart) → done
 ```
 
-The implementor never reviews itself; the reviewer never implements; the verifier checks the *running app* (the one Conductor is already serving) against the task's verify recipe. Independent tasks run in parallel waves. A task that exhausts its retries is flagged `needs-human` instead of thrashing forever.
+The implementor never reviews itself; the reviewer never implements; the verifier checks the *running app* (the one Conductor is already serving) against the task's verify recipe. The leading test step is conditional: when the repo has a test suite and the spec marked a task test-first, a `dobby:test-author` writes the failing tests before the implementor touches the code; repos without a suite degrade to the classic three-step loop. Independent tasks run in parallel waves. A task that exhausts its retries is flagged `needs-human` instead of thrashing forever.
 
 **You'll see:** live workflow progress, then a status table per task, and the work log appended to `STATE.md`.
 
@@ -140,11 +145,17 @@ Then you type `/dobby:commit`: pre-commit checks, branch, conventional commit, p
 | --- | --- |
 | A feature, fix, or refactor with real surface area | `/dobby:scope` — the full session |
 | A one-off fix, small change, or bounded question | `/dobby:dispatch` |
+| An idea too big to interview-then-plan in one sitting, with unknowns that block each other | `/dobby:map` — a durable decision-map, resolved one ticket at a time |
 | Something is broken and the cause isn't obvious | `/dobby:diagnose` |
 | A design/UX question words can't settle | `/dobby:prototype` |
 | "Is this module structured well?" | `/dobby:improve-architecture` |
 | An idea/bug worth tracking, mid-flow | `/dobby:backlog` — capture and keep moving |
 | A repeatable workflow worth packaging | `/dobby:create-skill` |
+| An incoming issue or outside PR to evaluate and turn into a brief | `/dobby:triage` |
+| A manual setup or A→B procedure worth turning into a guided run | `/dobby:wizard` — generates an interactive bash setup wizard |
+| Learn a topic and check you actually got it | `/dobby:teach` |
+| Context is getting long, or you want to branch a fresh session off a clean summary | `/dobby:handoff` — an ephemeral fork document |
+| A merge/rebase left conflict markers you need to reconcile without losing either side | `/dobby:resolve-conflicts` |
 | A brand-new empty repo | `/dobby:onboard` |
 | Work is done, ship it | `/dobby:commit` |
 | A review bot or reviewer left comments on your PR | `/dobby:address-review` |
@@ -199,7 +210,7 @@ These couple to Claude Code's session storage (`~/.claude/projects`) on purpose 
 | Researchers cite stale/odd docs | `ctx7` CLI missing or unauthenticated | Install `ctx7`; set `CONTEXT7_API_KEY` for higher limits |
 | Skill edits not picked up (local dev) | Only `SKILL.md` hot-reloads | `/reload-plugins` for agents/hooks changes |
 | Post-edit check hook never fires | By design outside vite-plus projects | Gate = `vite.config.ts` at project root **and** `vp` on PATH |
-| Execute re-authored the workflow and lost the loop logic | The trifecta script must be used verbatim | Re-run `/dobby:execute`; the skill's `references/build-workflow.md` is the canonical script |
+| Execute re-authored the workflow and lost the loop logic | The build-loop script must be used verbatim | Re-run `/dobby:execute`; the skill's `references/build-workflow.md` is the canonical script |
 
 ## Recovery quick reference
 

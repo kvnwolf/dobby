@@ -98,6 +98,18 @@ import { booksCollection } from "@/books/collection.browser";
 - `children` receives `data` typed from the query and ALWAYS defined — no ready/loading checks.
 - Page UI lives in the route file; the module exports only the data slice (server fn + collection).
 
+## The collection is a wide interface — state its whole contract
+
+A collection (plus its backing server fn) is the module's public data surface: every `<LiveQuery>` caller depends on it and NONE of them can see inside it. Treat it as a **wide interface** — a small surface (`xCollection`, imported by deep path) that hides a lot of behavior. Before shipping one, write down everything a caller must know so nobody has to read `functions.ts` to use it correctly:
+
+- **Row shape** — the exact projection. It is fixed by the server fn's `.select({...})` and MUST match the collection's `.pick(...)` schema exactly; the row type IS the contract. Adding/removing a column is an interface change (every caller's `children` may break) — treat it as one.
+- **Ordering** — whether rows arrive sorted, and by what. The server fn's `.orderBy(...)` is the source order; the `<LiveQuery>` `.orderBy(...)` re-sorts at the consumer. State which order callers can rely on so nobody re-sorts redundantly or assumes an order that isn't guaranteed.
+- **Invariants** — read-only (no `onInsert`/`onUpdate`/`onDelete`); every row already passed `requireAuth` (never returns another tenant's/user's rows — the auth scope is part of the contract); timestamps are real `Date`s (already coerced from the wire), not ISO strings; keyed by `getKey` (unique, stable).
+- **Error modes** — the fetch can fail (network / server-fn throw / schema-validation mismatch). The error surfaces at the `<LiveQuery>` boundary, and recovery is `utils.clearError()` via `retry` — say so, because a caller who doesn't wire `retry` gets a stuck error loop.
+- **Loading / empty** — `children` receives `data` ALWAYS defined (no ready checks); empty is `rows.length === 0`, not `null`/`undefined`. Callers handle empty in `children`; loading is the `fallback`.
+
+If naming this contract is nearly as much work as the implementation, the seam is too shallow — the point of a wide interface is a lot of hidden behavior behind a small, well-documented surface.
+
 ## Gotchas
 
 | Gotcha | Rule |
@@ -109,9 +121,11 @@ import { booksCollection } from "@/books/collection.browser";
 | Conditional queries | `useLiveSuspenseQuery` (inside LiveQuery) rejects disabled queries — gate with conditional RENDERING in the parent, never a query returning `undefined` |
 | Alias shadowing | The query source alias (`q.from({ book: … })`) lives in the callback scope — avoid names that shadow route-scope variables |
 
-## Realtime seam
+## Realtime seam — hypothetical until a 2nd adapter lands
 
-Collections are adapter-swappable: realtime later means replacing `queryCollectionOptions` with an ElectricSQL adapter (`electricCollectionOptions`) in `collection.browser.ts` — `<LiveQuery>` consumers don't change.
+There is exactly ONE adapter today (`queryCollectionOptions`). A seam with one implementation is a **hypothetical seam, not a real one** — one adapter = a guess about the future, two adapters = a seam something actually varies across. So do NOT build for the swap yet: no adapter-selection layer, no `AdapterConfig` type, no factory that "could pick" the adapter, no premature abstraction wrapping `createCollection`. Write the collection against `queryCollectionOptions` directly, as Step 2 shows.
+
+What earns the abstraction is the SECOND adapter actually arriving. Because the interface above is already wide and stable, the swap stays cheap when it's real: replacing `queryCollectionOptions` with an ElectricSQL adapter (`electricCollectionOptions`) in `collection.browser.ts` changes nothing for `<LiveQuery>` consumers — the collection's row shape, ordering, invariants, and error modes are the contract, and the adapter lives entirely behind it. Introduce the seam THEN, when a second implementation forces it — extend this skill at that point.
 
 ## What's NOT covered
 

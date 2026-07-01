@@ -49,6 +49,8 @@ All components available inside the `form.AppField` render callback:
 
 ### Validation schema
 
+**Name fields and word messages in the project's glossary.** Field names AND the error-message copy must use the exact domain terms from the project's `CONTEXT.md` glossary — not synonyms or invented labels. If the entity is a `Member`, the field is `member` and the message is `"Member is required"`, never "user"/"account"/"person"; if the glossary says `Order`, don't validate a `purchase`. Because entity-bound forms `.pick()` from the entity schema (below), the schema is where a glossary term becomes the single source of BOTH the field name and its message — get it right in `schema.ts` and every form inherits the correct vocabulary. Standalone forms have no entity to borrow from, so match the glossary by hand. Mismatched validation copy (a message that says "user" where the domain says "member") is a glossary drift bug, not just a typo — the user reads these messages and they must speak the domain's language.
+
 Two cases — pick the right one:
 
 **1. Form bound to an entity** (create/edit forms over a table or domain object)
@@ -280,8 +282,15 @@ async function toggleActive(row) {
 - **Type-to-confirm for destructive actions** — irreversible operations (delete, purge) require typing the entity's name/identifier to enable the destructive button. A bare "Are you sure?" is not enough.
 - **Toasts** — every mutation reports its outcome: `toast.success` on completion, `toast.error` (with the reverted-state note for optimistic ones) on failure. Submit-validated mutations toast after the awaited response; optimistic ones toast only on the rollback path.
 
+## Testing
+
+Test a form through its **public interface** — the surface a user drives — and describe WHAT it does, never HOW it's wired. A form's behavior is: fill it, submit it, and observe the outcome (a validation error rendered through `field.ErrorMessage`, the trimmed payload handed to the mutation, the `toast.success`/`toast.error`, the optimistic flip and its rollback). Assert on those observable results, not on internal state — do NOT reach into `form.state`, the Zod schema object, TanStack Form internals, or a specific component's props. A good test reads like a rule from this skill ("submitting a blank required field shows its glossary message", "a failed optimistic toggle rolls the row back and toasts the revert").
+
+The point is that these tests must **survive an internal refactor**: swapping `field.Control`'s underlying element, renaming a helper, or restructuring the submit handler changes HOW the form works, not WHAT it does — a behavior test stays green through all of them. If a test would break when you rename an internal function or re-lay-out the JSX without changing what the user sees, it tested implementation, not behavior — rewrite it against the observable outcome. (This is the same behavior-not-implementation discipline the build loop's test author and reviewer enforce — see `dobby:test-author`.)
+
 ## Acceptance checklist
 
+- [ ] Validation field names AND messages use the project glossary's exact terms (via the entity schema for bound forms; matched by hand for standalone) — no synonyms, no drift
 - [ ] Uses `useAppForm` from `@/shared/use-app-form`
 - [ ] Validates with Zod via `validators.onSubmit`
 - [ ] Entity-bound form: imports the entity schema and uses `.pick({...})` / `.extend({...})` — NEVER duplicates field rules or messages
@@ -298,3 +307,4 @@ async function toggleActive(row) {
 - [ ] FormDialog can't close or re-submit while `form.state.isSubmitting`
 - [ ] Destructive actions gated by type-to-confirm, not a bare confirm dialog
 - [ ] Every mutation reports outcome via `toast.success` / `toast.error`
+- [ ] Any tests drive the form's public interface and assert on observable outcomes (rendered errors, submitted payload, toasts, optimistic rollback) — never internal `form.state`/schema/component internals; they survive an internal refactor

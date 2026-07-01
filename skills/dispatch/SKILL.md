@@ -12,7 +12,7 @@ You are the coordinator/architect. You do NOT do the work yourself — you write
 - **`researcher`** — investigate / locate / understand a subsystem / fetch docs. Returns findings; makes NO changes.
 - **`implementor`** — make a scoped code change or fix. Returns a work-log entry.
 - **`reviewer`** — review a diff you already have. Returns a verdict.
-- **A change that must be proven** — run the **trifecta** (implement → review → verify), reusing the shared trifecta component (the `dobby:execute` skill's `references/build-workflow.md`) with a SINGLE task.
+- **A change that must be proven** — run the **build loop** (implement → review → verify), reusing the shared build-loop component (the `/dobby:execute` skill's `references/build-workflow.md`) with a SINGLE task.
 
 ## Step 1: Scope the task
 Write a self-contained instruction the worker can act on without guessing:
@@ -24,14 +24,15 @@ Write a self-contained instruction the worker can act on without guessing:
 ## Step 2: Dispatch
 - **Investigation** → dispatch one or more `researcher` agents (Agent tool, `subagent_type: "dobby:researcher"`), in parallel when the questions are independent.
 - **Quick, low-risk change** → dispatch one `implementor` (`subagent_type: "dobby:implementor"`).
-- **Change that needs rigor** → you do NOT start the dev server (under Conductor, `auto_run_after_setup` already launched the run script). Resolve the dev URL with `portless get "$(node -p "require('./package.json').name.replace(/^@[^/]+\//, '')")"` (strip any leading `@scope/`; a `portless.json` or `portless` key in `package.json` overrides the name) — it prints the branch-prefixed `https://<branch>.<name>.localhost` without starting anything; if `get` errors nonzero, surface **"needs portless >= 0.12"**. Confirm the run is alive with `curl -sf --max-time 5 <devUrl>`, up to 6 attempts 5s apart (~30s bound). Then author the **trifecta Workflow** from the `dobby:execute` skill's `references/build-workflow.md` (the shared trifecta component) with a single-element `tasks` array, passing that `devUrl`. No run script (a library / CLI / plugin like dobby itself)? Set `devUrl = null` and the verifier verifies programmatically instead of against a URL. The implement→review→verify loop applies in full.
+- **Change that needs rigor** → resolve the `devUrl` exactly as `/dobby:execute` **Step 2** does — you do NOT start the dev server; you `portless get` the branch URL, `curl` it alive, and fall back to `devUrl = null` for a library / CLI / plugin (like dobby) that has no run script. Don't restate that recipe here; follow it there. Then author the **build-loop Workflow** from the `/dobby:execute` skill's `references/build-workflow.md` (the shared build-loop component) with a single-element `tasks` array, passing that `devUrl`. When `devUrl = null` the verifier verifies programmatically instead of against a URL. The implement→review→verify loop applies in full.
 - Parallel workers must touch **non-overlapping areas** (same rule as `/dobby:execute` waves). Serialize anything that mutates shared backend state.
 
 ## Step 3: Review what came back
 You are the architect — the workers did the mechanical work; you make the call.
 - **Researcher findings** → read them; decide the next move.
-- **Implementor work-log** → review the diff yourself, or dispatch a `reviewer` (`subagent_type: "dobby:reviewer"`) if it warrants it (or use the trifecta path from the start).
-- **Trifecta result** → check each task's `status`; surface any `needs-human`. If a session doc is in play, append the returned `workLog` to `STATE.md` (you are the single writer); otherwise summarize inline.
+- **Implementor work-log** → review the diff yourself, or dispatch a `reviewer` (`subagent_type: "dobby:reviewer"`) if it warrants it (or use the build-loop path from the start). When you scale up to a `reviewer`, its verdict comes back on **two axes — Standards (repo conventions) and Spec (did it build what you asked)** — reported side-by-side, never merged. Read them as two independent gates: a clean Spec result does not excuse a Standards finding, and vice versa.
+- **Build-loop result** → check each task's `status`; surface any `needs-human`. If a session doc is in play, append the returned `workLog` to `STATE.md` (you are the single writer); otherwise summarize inline.
+- **Don't re-review what was already rigorously verified.** If a change came through the full build loop (review + verify both passed), that IS the review — don't dispatch a second `reviewer` over the same diff. Reserve the standalone `reviewer` for changes that skipped the loop (a bare `implementor` work-log you want a second opinion on). Redundant review burns turns and adds no signal.
 
 ## Rules
 - No commits — no agent commits, and you don't either unless the user asks.

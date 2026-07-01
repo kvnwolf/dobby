@@ -12,6 +12,12 @@ You are strictly a coordinator. You NEVER implement, review, or verify yourself 
 
 Read `STATE.md` (from `/dobby:scope` + `/dobby:spec`): the `## Spec` task table plus `## Findings`, `## Research`, `## Exploration`. If there's no `STATE.md`, use the plan in the conversation or `$ARGUMENTS`. Per task you need: description, decisions, constraints, affected areas, dependencies, and its verify recipe.
 
+**Fail-fast preconditions — check BEFORE launching wave 1.** A missing piece surfaces as a needs-human flag halfway through a wave, after you've already burned agent turns; catch it now instead.
+- The spec exists and every task has the fields above (a task with no verify recipe or no affected areas can't be run — stop and route back to `/dobby:spec`).
+- **Testing gate is resolved for the whole run:** from the spec's Testing Decisions, know whether the repo has a runnable test suite (`hasTestSuite`) and, if so, which tasks are marked test-first. No suite (a lib / CLI / plugin like dobby) → `hasTestSuite = false`, the build loop is the classic 3-step, and no task's `testFirst` flag matters.
+- Dependencies form a runnable wave order (no task depends on something not in the plan).
+If any precondition fails, STOP and say what's missing — do not launch a partial run.
+
 ## Step 2: Launch the build workflow (always)
 
 First, get the `devUrl` — you do NOT start the dev server. Under Conductor, `auto_run_after_setup` already launched the run script, so the coordinator's job is to (1) resolve the dev URL deterministically and (2) confirm that run is alive, then pass it to the workflow. Do NOT read any terminal output — resolve the URL with `portless get` and health-check it with `curl`:
@@ -27,11 +33,15 @@ Verifiers check against this single shared server and must NOT each start their 
 
 **No run script?** A library / CLI / plugin (like dobby itself) has no `[scripts] run`, so there's nothing serving and no dev URL — skip `portless get`/`curl` and set `devUrl = null`. The verifier then verifies programmatically instead of against a URL.
 
-Always run the build loop as a **Workflow** (the Workflow tool) — author it from `references/build-workflow.md` (the reusable trifecta), passing only the task list and the dev URL as `args`. The per-task agents are the custom subagents **`dobby:implementor` / `dobby:reviewer` / `dobby:verifier`**, dispatched via `agentType` — their role instructions live in the agent definitions, NOT passed as args. The workflow runs this per-task state machine, a SEPARATE agent per role:
+Always run the build loop as a **Workflow** (the Workflow tool) — author it from `references/build-workflow.md` (the reusable build loop), passing only the task list, the dev URL, and `hasTestSuite` as `args`. The per-task agents are the custom subagents **`dobby:test-author` (conditional) / `dobby:implementor` / `dobby:reviewer` / `dobby:verifier`**, dispatched via `agentType` — their role instructions live in the agent definitions, NOT passed as args. The workflow runs this per-task state machine, a SEPARATE agent per role:
 
 ```
-implement → code review → (findings? fix → re-review) → verify → (fail? back to implement → review → verify) → done
+[test-author] → implement → code review → (findings? fix → re-review) → verify → (fail? back to implement → review → verify) → done
 ```
+
+The leading **test-author** step is gated: it runs ONLY when `hasTestSuite` is true AND the task is marked test-first, writes the tests from the spec alone (once, as the fixed contract), and hands the reviewer/verifier a combined tests+code diff. When the gate is closed — no suite (dobby is a plugin with none), or a task that isn't test-first — the loop is byte-for-byte the classic 3-step. This is orthogonal to the `devUrl` branch: the test suite (green) and dynamic litmus are part of the programmatic verify path, exactly the path a `devUrl = null` plugin already uses.
+
+**Refactor only in green.** When a task has a test contract, the implementor changes behavior to make red tests green, then refactors ONLY while the suite is green — never restructuring code while a test is red (a red test during a refactor can't tell you whether the refactor or the pending behavior broke it). This is the implementor's discipline (it lives in `dobby:implementor` / `dobby:test-author`), but the coordinator relies on it: the outer loop's re-implement steps assume the tests are a stable green/red signal, not noise from mid-refactor breakage.
 
 Group tasks into waves by **non-overlapping affected areas** (overlapping areas serialize). Because the local backend is shared, verification that mutates shared state must be serialized — never two destructive verifies at once.
 
@@ -57,9 +67,10 @@ User-facing output (status) in the user's language. Write all code, comments, do
 
 ## Acceptance checklist
 
-- [ ] Plan + context loaded from `STATE.md` (or conversation)
-- [ ] Build loop ran as a workflow; implement / review / verify done by SEPARATE agents (via `agentType`)
-- [ ] State machine respected: review gates before verify; verify-fail restarts implement→review→verify (with a cap)
+- [ ] Plan + context loaded from `STATE.md` (or conversation); fail-fast preconditions checked (complete spec, resolved testing gate, runnable wave order) before wave 1
+- [ ] Build loop ran as a workflow; test-author (when gated in) / implement / review / verify done by SEPARATE agents (via `agentType`)
+- [ ] Test-author gated correctly: runs ONLY when `hasTestSuite` AND the task is test-first, once per task; otherwise the loop is the classic 3-step
+- [ ] State machine respected: (test-author →) review gates before verify; verify-fail restarts implement→review→verify (with a cap), always against the same authored tests
 - [ ] Tasks parallelized only across non-overlapping areas; shared-state verification serialized
 - [ ] Each task's work-log entry appended to `STATE.md` by the coordinator (serially, single writer)
 - [ ] `needs-human` tasks surfaced; final smoke items handed to the user (for `/dobby:wrap`)

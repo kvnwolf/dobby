@@ -74,6 +74,8 @@ file_include_globs = """
 
 **Secrets never go in `settings.toml`** (it's checked in). Put API keys / DB URLs in `.conductor/settings.local.toml` (same directory, machine-local, gitignored in Step 3) under `[environment_variables]`; non-secret env can stay in `settings.toml`'s `[environment_variables]`. **NEVER write a `[models]` table to the repo `settings.toml`** — the repo schema doesn't accept model tiers there (those live in `~/.conductor/settings.toml`); it would fail validation.
 
+**If the stack needs manual external-service setup** — creating a database (Neon), configuring auth (Better Auth), setting CI secrets — those values can't be scaffolded, only obtained by a human clicking through provider dashboards. Rather than hand-walk the user each time, **offer to invoke `/dobby:wizard`**: it generates a guided bash wizard that opens each URL, says what to click and copy, captures the values, and writes them to `.conductor/settings.local.toml` / GitHub secrets. Offer it (plain text, don't auto-invoke) whenever Step 1 surfaced services that need one-time human setup; the user types `/dobby:wizard` when ready.
+
 **`.conductor/setup.sh`** — a minimal, executable install stub the workspace runs once. Start with just dependency install; leave stack-specific setup (DB branch/seed, migrations) as a commented TODO:
 
 ```sh
@@ -97,27 +99,34 @@ set -euo pipefail
 
 ## Step 3: Scaffold the base files
 
-- **`CONTEXT.md`** (repo root) — the domain glossary. Format: `# {Project}` + a 1-2 sentence description, then `## Language` (each term as `**Term**:` + a one-sentence definition + `_Avoid_:` aliases, grouped under subheadings when clusters emerge), `## Relationships` (bold terms + cardinality), and `## Flagged ambiguities`. Opinionated, tight, domain-only — start small with the Step 1 terms; it grows via `/dobby:interview` and `/dobby:wrap`.
+**No-clobber rule — never overwrite an existing file the user already wrote.** For each file below (`CONTEXT.md`, `CLAUDE.md`/`AGENTS.md`, `.gitignore`, `.claude/commit.config.yml`), check whether it already exists first. If it does NOT exist, scaffold it fresh. If it DOES exist, do NOT overwrite it — read it, then *merge additively*: add only the missing sections, and leave the user's existing content untouched. Show the user the diff (or the sections you propose to append) and get approval before writing. An existing repo often already carries a hand-written `CLAUDE.md` or `AGENTS.md`; blindly regenerating it is a data-loss bug, not setup. (Some repos use `AGENTS.md` as the agent-config filename instead of `CLAUDE.md` — if one already exists, extend THAT file; don't create a second, competing one.)
+
+Each scaffolded choice below carries a one-line **why** — say it to the user as you write, so setup teaches the shape of the kit instead of dropping opaque files:
+
+- **`CONTEXT.md`** (repo root) — the domain glossary. Format: `# {Project}` + a 1-2 sentence description, then `## Language` (each term as `**Term**:` + a one-sentence definition + `_Avoid_:` aliases, grouped under subheadings when clusters emerge), `## Relationships` (bold terms + cardinality), and `## Flagged ambiguities`. Opinionated, tight, domain-only — start small with the Step 1 terms; it grows via `/dobby:interview` and `/dobby:wrap`. *Why:* the work skills read the ubiquitous language from here — it's the single place a term is defined, so agents and humans mean the same thing.
 - **`CLAUDE.md`** (repo root) — the agent config, with these sections:
   - **Product** — what it is + who it's for.
   - **Stack** — language, framework, data layer, key services, plus a short **Dev** note: the app runs via **Conductor** (`.conductor/settings.toml`; `auto_run_after_setup` auto-starts the run script in each workspace), and the run command wraps the dev command with **portless**. Do NOT pin a `npm run dev` command or a hardcoded dev URL here — the URL is branch-prefixed, so it is NOT hardcodable; `/dobby:execute`'s verifier obtains it via `portless get <name>` (deterministic, branch-prefixed).
   - **Module map** — one line per top-level feature/domain module, each linking to that module's own `CONTEXT.md`, e.g. `- [src/<area>/<module>/](src/<area>/<module>/CONTEXT.md) — what it owns`.
   - **Conventions** — encode deep, contained modules: organize by feature/domain (NO type-based `components/`/`services/`/`lib/` buckets); NO barrels — callers import by deep path, each file named by its role (the filename is the interface); co-locate the slice; inline by default; **each module carries its own `CONTEXT.md`** (purpose · Files · Interface · Invariants · What's NOT here). "What works for humans is also great for AI."
   - **Workflow config** — the issue tracker (GitHub / Linear / local) and how the app runs: **via Conductor** (`.conductor/settings.toml`, `auto_run_after_setup`), with the run command wrapping the dev command in **portless**. Do NOT pin a hardcoded dev URL — `/dobby:execute`'s verifier obtains it via `portless get <name>` (deterministic, branch-prefixed via the worktree, so it is NOT hardcodable). For a no-dev-server project, say so (there's no run script → no dev URL; the verifier verifies programmatically).
-- **docs/adr/** — create the directory (add `0001-...` only if the stack choice meets the three ADR criteria: hard to reverse · surprising · real trade-off).
-- **.gitignore** — ensure `STATE.md` is ignored (the ephemeral work-session doc) and `.conductor/settings.local.toml` is ignored (machine-local Conductor secrets), plus the stack's standard ignores. Note: `.conductor/settings.toml`, `setup.sh`, and `archive.sh` ARE checked in — only `settings.local.toml` is ignored.
+
+  *Why:* this is the adapter the generic work skills read from — Product/Stack orient every worker, the Module map + Conventions make the tree navigable to humans and agents alike, and Workflow config tells `/dobby:execute` how to run and verify. See `references/tracker-seeds.md` for the per-tracker Workflow-config seed to drop in, and the role→label table.
+- **docs/adr/** — create the directory (add `0001-...` only if the stack choice meets the three ADR criteria: hard to reverse · surprising · real trade-off). *Why:* durable architecture decisions get a numbered home from day one, so `/dobby:wrap` and `/dobby:improve-architecture` have somewhere to write and something to respect.
+- **.gitignore** — ensure `STATE.md` is ignored (the ephemeral work-session doc) and `.conductor/settings.local.toml` is ignored (machine-local Conductor secrets), plus the stack's standard ignores. Note: `.conductor/settings.toml`, `setup.sh`, and `archive.sh` ARE checked in — only `settings.local.toml` is ignored. *Why:* work-session scratch and machine-local secrets must never reach the remote; the checked-in Conductor config must, so every workspace scaffolds identically.
 
 Don't scaffold per-module `CONTEXT.md` files now — each module gets its own when `/dobby:execute` builds it.
 
 ## Step 4: Set the commit contract
 
-Create `.claude/commit.config.yml` following `references/commit-config.md` — discovery (docs to sync + pre-commit checks, via a `dobby:researcher`), user confirmation, write. On a greenfield repo the doc list starts with the files just scaffolded and the checks come from the stack's own toolchain (typecheck/lint/test). This is the contract `/dobby:commit` reads — without it, commits skip doc-sync and checks.
+Create `.claude/commit.config.yml` following `references/commit-config.md` — discovery (docs to sync + pre-commit checks, via a `dobby:researcher`), user confirmation, write. On a greenfield repo the doc list starts with the files just scaffolded and the checks come from the stack's own toolchain (typecheck/lint/test). This is the contract `/dobby:commit` reads — without it, commits skip doc-sync and checks. **No-clobber:** if `.claude/commit.config.yml` already exists, don't overwrite it — the file itself says to skip; merge in any missing docs/checks additively with the user's approval. *Why:* `/dobby:commit` gates every commit on this file — it's how doc-sync and pre-commit checks stay enforced without a separate hook manager.
 
 ## Step 5: Hand off
 
 Setup is done. End with a plain-text handoff: suggest the user TYPE `/dobby:scope <first goal>` (ask for the goal first if not already clear) — NO AskUserQuestion, NO Skill-tool auto-invoke; typed entry applies `/dobby:scope`'s own `model`/`effort`. Or stop here — they'll start a work session later.
 
 - **`/dobby:scope <first goal>`** *(Recommended)* — start the first work session.
+- **`/dobby:wizard`** *(if external services need manual setup)* — generate a guided wizard to create the DB, configure auth, and set CI secrets (only offer when Step 1 surfaced services that need one-time human setup).
 - **Stop here.**
 
 ## Language
@@ -130,8 +139,10 @@ Interview in the user's language. **Write all generated docs and code — CLAUDE
 - [ ] Conductor configured: `.conductor/settings.toml` written from the right template (`run_mode` AND `auto_run_after_setup` explicit); the `[scripts] run` command wraps the dev command with `portless run` (branch-prefixed URL, no `$CONDUCTOR_PORT`); `nonconcurrent + auto_run` interaction noted in a comment; no `[models]` table
 - [ ] No-dev-server project (lib/CLI/plugin): NO `[scripts] run`, and `auto_run_after_setup = false` (or omitted) — never `true` with no run target
 - [ ] `.conductor/setup.sh` + `.conductor/archive.sh` stubs written and `chmod +x`; `file_include_globs` (multi-line string) copies gitignored env files; secrets go in gitignored `.conductor/settings.local.toml`, not `settings.toml`
+- [ ] No-clobber respected: existing `CONTEXT.md` / `CLAUDE.md` / `AGENTS.md` / `.gitignore` / `.claude/commit.config.yml` were NOT overwritten — merged additively with user approval; an existing `AGENTS.md` was extended, not shadowed by a new `CLAUDE.md`
 - [ ] CONTEXT.md scaffolded (initial glossary) — in English; domain terms keep their real-world form
-- [ ] CLAUDE.md scaffolded (product, stack, module map, deep-module conventions, workflow config) — in English; Dev/Workflow note says the app runs via Conductor with the run command wrapping the dev command in portless, and the verifier obtains the dev URL via `portless get <name>` (no hardcoded URL)
+- [ ] CLAUDE.md scaffolded (product, stack, module map, deep-module conventions, workflow config) — in English; each scaffolded choice explained in plain language; Workflow config seeded from `references/tracker-seeds.md` for the chosen tracker, with the role→label vocabulary; Dev/Workflow note says the app runs via Conductor with the run command wrapping the dev command in portless, and the verifier obtains the dev URL via `portless get <name>` (no hardcoded URL)
 - [ ] docs/adr/ created; `.gitignore` ignores `STATE.md` and `.conductor/settings.local.toml`
 - [ ] `.claude/commit.config.yml` created (docs to sync + pre-commit checks, user-confirmed)
+- [ ] `/dobby:wizard` offered (plain text, not auto-invoked) if Step 1 surfaced external services needing one-time manual setup (DB/auth/CI secrets)
 - [ ] Next step handed off in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)

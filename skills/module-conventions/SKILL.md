@@ -11,11 +11,12 @@ Every module is a deep, contained folder reached by **deep path** — there is N
 
 | Role | File | Boundary | Examples |
 |------|------|----------|----------|
-| Server-only eager instance / server-only logic | `{descriptor}.server.ts` | `.server.*` ENFORCED — a client import is a **build error** | `auth/auth.server.ts`, `shared/db.server.ts`, `notifications/send.server.ts` |
-| Server functions (`createServerFn`) + their middlewares | `functions.ts` | isomorphic (no suffix) | `auth/functions.ts`, `users/functions.ts` |
-| Browser-only code that SSR routes import | `{descriptor}.browser.ts` | none — **NOT `.client.ts`** | `auth/client.browser.ts`, `users/collection.browser.ts` |
-| Drizzle tables (hand-written / generated) | `schema.ts` / `schema.gen.ts` | co-located, found by a drizzle-kit glob | `auth/schema.gen.ts` |
-| Components | `{component}.tsx` | — | — |
+| Server-only eager instance / server-only logic | `{descriptor}.server.ts` — _Avoid_: `service.ts`, `db.ts`, `lib.ts` (no boundary; drags Pool/secrets into the client bundle) | `.server.*` ENFORCED — a client import is a **build error** | `auth/auth.server.ts`, `shared/db.server.ts`, `notifications/send.server.ts` |
+| Server functions (`createServerFn`) + their middlewares | `functions.ts` — _Avoid_: `api.ts`, `actions.ts`, `handlers.ts` (obscures the isomorphic-DCE contract) | isomorphic (no suffix) | `auth/functions.ts`, `users/functions.ts` |
+| Browser-only code that SSR routes import | `{descriptor}.browser.ts` — _Avoid_: `{descriptor}.client.ts` (looks like a boundary suffix but TanStack Start enforces none — a false compile guarantee), `hooks.ts`, `utils.ts` | none — **NOT `.client.ts`** | `auth/client.browser.ts`, `users/collection.browser.ts` |
+| Drizzle tables (hand-written / generated) | `schema.ts` / `schema.gen.ts` — _Avoid_: `models.ts`, `tables.ts`, `entities.ts` (the drizzle-kit glob only finds `schema*`) | co-located, found by a drizzle-kit glob | `auth/schema.gen.ts` |
+| Components | `{component}.tsx` — _Avoid_: `index.tsx` (a barrel by another name), a shared `components/` bucket | — | — |
+| Barrel re-export | — | — | **Never.** _Avoid_: `index.ts`, `index.tsx` — there is no barrel; import the role file by deep path |
 
 Routes in `src/routes/` own page UI; they delegate all logic to modules by deep path.
 
@@ -35,6 +36,27 @@ If unsure why a suffix is required, read `references/import-protection.md` — t
   1. `src/router.tsx` — `import.meta.env.DEV`, a Vite compile-time DCE flag not modelable by t3-env.
   2. `drizzle.config.ts` — drizzle-kit / Vercel build; does its own `process.loadEnvFile(".env.local")` in the module body (an `import { env }` would hoist above it).
   3. `notifications/templates/*.tsx` — `process.env.APP_URL`; loads in React Email's dev preview AND the CLI chain, where `@/` and `import.meta.env` don't resolve.
+
+## Should this module exist? — the deletion test
+
+Before you carve out a module (or defend one in review), imagine **deleting it** and inlining its body at every call site:
+
+- If the complexity **reappears across N callers** — the same guard, the same eager-instance wiring, the same query shape copied N times — it was **earning its keep**: a deep module (a lot of behaviour behind one deep-path file). Keep it.
+- If the complexity **vanishes** — the "module" was a one-line re-export, a rename, a thin pass-through that every caller could inline without loss — it was a **shallow module**: pure interface tax. Fold it back into its single caller.
+
+Corollaries for seams:
+- **One adapter is a hypothetical seam; two adapters make it real.** Don't split a module behind an interface for a variation that doesn't yet exist — no `notifications/send.server.ts` + `notifications/send-sms.server.ts` fork until a second channel actually ships (contrast the additive template pattern below, which stays in ONE file until a channel is real).
+- **The interface is the test surface.** A module is tested THROUGH its deep-path file, not past it. If a test has to reach around the filename to a private helper, the seam is in the wrong place — reshape the module, don't punch through it.
+
+## Rejected framings
+
+Each convention here rejects a common alternative for a concrete, stack-specific reason — not taste. Naming the rejected framing is what keeps the layout predictable across modules.
+
+- **Barrels (`index.ts` re-exports).** Rejected. A barrel makes the *folder* the interface and hides which file a symbol lives in, so a single `@/module` import can drag an entire module graph — including a `.server.ts` Pool or secret — onto a client or CLI-eval path. Deep-path imports make the **filename the interface**: `@/module/file` pulls exactly that file. (This is also why `env` reads stay a deep `@/shared/env` import.)
+- **Lazy singletons (`??=`, `getX()` init wrappers).** Rejected. Laziness is a *runtime* guard bolted on to compensate for a missing *compile* boundary. The `.server.ts` suffix already keeps the instance out of the client bundle at build time (a violating import is a build error), so eager `export const x = ...` is both simpler and stronger. `new Pool(...)` doesn't connect at construction and a TanStack DB collection doesn't fetch until its first subscriber, so eager module-eval costs nothing — the lazy wrapper buys only indirection.
+- **`.client.ts` as a boundary suffix.** Rejected. It *reads* like the mirror of `.server.ts`, but TanStack Start enforces nothing on `.client.ts` — it's a false compile guarantee that lulls you into importing server code from it. Browser-only code uses the plain-descriptive **`.browser.ts`** (no enforced boundary, honestly named) with `import type`-only references to server modules.
+- **Type-based buckets (`components/`, `services/`, `hooks/`, `lib/`, `utils/`).** Rejected. Grouping by *kind* scatters one feature across six folders and lets anything import anything. Group by feature/domain slice; a one-off sub-piece stays inline in its role file until a second caller earns it its own file. `lib.*`/`utils.*` names are rejected outright — name the file by what it does.
+- **Depth measured as lines-of-implementation ÷ lines-of-interface.** Rejected (it rewards padding the body). Depth here means **leverage**: how much behaviour a caller gets per unit of interface they must learn — see the deletion test above.
 
 ## Schema co-location
 
@@ -72,6 +94,7 @@ export default Object.assign(Email, { PreviewProps: { otp: "123456" } }); // Rea
 
 ## Acceptance checklist
 
+- [ ] Passes the deletion test — if the module vanished, its complexity would reappear across N callers (not fold into one)
 - [ ] No `index.ts` barrel; cross-module imports are deep paths (`@/module/file`), intra-module imports are relative
 - [ ] Server-only eager instances/logic live in `{descriptor}.server.ts` (bare eager export, no lazy init)
 - [ ] Server fns + middlewares live in `functions.ts` and import the instance as a value

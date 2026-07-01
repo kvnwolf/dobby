@@ -23,7 +23,7 @@ The two branches produce very different artifacts — getting this wrong wastes 
 
 Read the branch reference and turn it into a concrete build instruction: the question, the branch recipe (embed the reference's process — the implementor doesn't have it), the variant/action spec you decided, and where the prototype lives. Dispatch **ONE `implementor`** (Agent tool, `subagent_type: "dobby:implementor"`) — variants share the route and switcher, so parallel writers would collide.
 
-**No trifecta.** Prototypes are exempt from review/verify by design — throwaway code answering a question, not production code. No tests, no work-log entry; the captured answer is the deliverable.
+**No build loop.** Prototypes are exempt from review/verify by design — throwaway code answering a question, not production code. No tests, no work-log entry; the captured answer is the deliverable.
 
 ## Step 3: Hand it over — the play session
 
@@ -65,7 +65,7 @@ Interact with the user in their language. Write prototype code, comments, and th
 ## Acceptance checklist
 
 - [ ] The question stated explicitly, branch picked (logic vs UI) accordingly
-- [ ] Built by ONE `implementor` (no trifecta, no work-log); throwaway, clearly marked, one command/URL
+- [ ] Built by ONE `implementor` (no build loop, no work-log); throwaway, clearly marked, one command/URL
 - [ ] UI branch served from the already-running dev server; variants structurally different, switcher prod-gated
 - [ ] User drove the prototype; iterations applied through the implementor
 - [ ] Answer captured (STATE.md section of the calling stage, or NOTES.md standalone); ADR candidate flagged if warranted
