@@ -11,6 +11,10 @@ Encoded rules:
 - Caps prevent infinite loops; a task that exhausts them is flagged `needs-human`.
 - The implementor RETURNS its work-log entry (it does NOT write `STATE.md` — parallel self-appends race and clobber each other). The workflow accumulates them per task; the coordinator appends them to `STATE.md` serially AFTER the workflow returns (single writer).
 - Pass only non-overlapping-area tasks into one batch (the coordinator groups waves). Serialize anything that mutates shared backend state during verify.
+- **Coordination guards (per-task agents run in parallel — these keep them from corrupting each other):**
+  - **Never commit.** No `git commit`, no `git add` from any implementor/reviewer/verifier — the coordinator and `/dobby:commit` own the index. Parallel tasks share a working tree; a stray commit/stage sweeps in siblings' half-done edits.
+  - **Scope review/verify to the task's Affected areas.** Judge scope with `git diff -- <that task's files>` or by reading those files — NEVER a bare `git diff` / `git status`, which shows sibling tasks' in-flight changes and invites false findings.
+  - **Never revert or "fix" changes outside your task's areas.** Another parallel task's edits are not yours to touch; leave them even if they look wrong.
 
 ```js
 export const meta = {
@@ -71,7 +75,10 @@ async function runTask(t) {
     if (!reviewed) return { id: t.id, status: 'needs-human', reason: 'code review never passed', workLog: workLog.join('\n\n') }
 
     // 3. VERIFY (fresh verifier agent)
-    const verify = await agent(`The app is already running at: ${a.devUrl}\n\n${ctx}\nVerify recipe: ${t.verifyRecipe}`,
+    const runState = a.devUrl                                   // devUrl set → app already running at that URL; null → no dev server (lib/CLI/plugin), verify programmatically
+      ? `The app is already running at: ${a.devUrl}`
+      : `This project has no dev server (no run script) — verify programmatically (Bash/reads), not against a URL.`
+    const verify = await agent(`${runState}\n\n${ctx}\nVerify recipe: ${t.verifyRecipe}`,
       { label: `verify:${t.id}`, phase: 'Build', agentType: 'dobby:verifier', schema: VERDICT })
     if (verify?.pass) return { id: t.id, status: 'done', evidence: verify.evidence, workLog: workLog.join('\n\n') }   // verify may be null (agent errored/skipped) → treat as not-passed
     feedback = 'Verification failed:\n' + (verify?.findings ?? 'verifier returned no result')   // restart implement→review→verify
@@ -87,7 +94,7 @@ return { results }
 Notes:
 - The coordinator passes ONE wave of area-disjoint tasks per workflow run (or runs waves in sequence as dependencies clear).
 - For verify steps that write shared backend state, run those tasks one wave at a time so no two destructive verifies overlap.
-- **Role instructions are NOT passed in `args`** — they live in the `dobby:implementor` / `dobby:reviewer` / `dobby:verifier` agent definitions (dispatched via `agentType`). `args` carries only `tasks` and `devUrl` (the already-running dev server the coordinator started ONCE — so verifiers never start their own).
+- **Role instructions are NOT passed in `args`** — they live in the `dobby:implementor` / `dobby:reviewer` / `dobby:verifier` agent definitions (dispatched via `agentType`). `args` carries only `tasks` and `devUrl`. Under Conductor the coordinator does NOT start a server — `auto_run_after_setup` already did; the coordinator resolves `devUrl` with `portless get` (then health-checks it with `curl`) and passes it so verifiers never start their own. A project with no run script (lib/CLI/plugin) has `devUrl = null`, and the verify prompt switches to "no dev server — verify programmatically".
 - **Work log: the workflow does NOT write `STATE.md`** (workflows have no filesystem access). Each task result carries its accumulated `workLog`; the coordinator appends these to `STATE.md` serially after the workflow returns (single writer — no parallel-append race).
 - The workflow is headless: no human QA, no interactive steps.
 - **Pass `args` as an actual JSON object** in the Workflow call (the tool delivers it verbatim — do NOT `JSON.stringify` it). The script still parses defensively (`typeof args === 'string' ? JSON.parse(args) : args`) because the runtime may deliver it as a JSON string; without that guard, `args.tasks` is `undefined` and every task throws on the first access.

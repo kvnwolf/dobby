@@ -12,9 +12,9 @@ effort: medium
 
 Check if `.claude/commit.config.yml` exists. If it exists, continue to step 2.
 
-If not, the project hasn't been set up for harness-driven commits — that config (doc-sync rules + pre-commit checks) is created by `/dobby:bootstrap`, which can't be auto-invoked. Offer with AskUserQuestion:
+If not, the project hasn't been set up for harness-driven commits — that config (doc-sync rules + pre-commit checks) is created by `/dobby:onboard`, which can't be auto-invoked. Offer with AskUserQuestion:
 
-- **Set up the project first** *(Recommended)* — stop here and have the user type `/dobby:bootstrap` (it creates the config along with the rest of the project setup), then re-run `/dobby:commit`.
+- **Set up the project first** *(Recommended)* — stop here and have the user type `/dobby:onboard` (it creates the config along with the rest of the project setup), then re-run `/dobby:commit`.
 - **Commit once without the contract** — proceed, skipping doc-sync (step 4-5) and pre-commit checks (step 6) for this commit only. Don't create the config ad hoc.
 
 ## Step 2: Gather Context
@@ -104,7 +104,7 @@ Only if branch was pushed in step 8.
 
 ## Acceptance checklist
 
-- [ ] Commit config exists at `.claude/commit.config.yml` (or the user explicitly chose a one-off contract-less commit; `/dobby:bootstrap` suggested)
+- [ ] Commit config exists at `.claude/commit.config.yml` (or the user explicitly chose a one-off contract-less commit; `/dobby:onboard` suggested)
 - [ ] Documentation synced with staged changes
 - [ ] Pre-commit checks ran green (or none configured); commit aborted on any failure
 - [ ] Commit message follows semantic format with body

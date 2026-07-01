@@ -14,7 +14,18 @@ Read `STATE.md` (from `/dobby:scope` + `/dobby:spec`): the `## Spec` task table 
 
 ## Step 2: Launch the build workflow (always)
 
-First, ensure the app's dev server is running ONCE: if it isn't already up, start it (via the project's run skill or documented dev command); if it's up, reuse it. Capture the dev URL — verifiers check against this single shared server and must NOT each start their own (parallel starts collide on the port).
+First, get the `devUrl` — you do NOT start the dev server. Under Conductor, `auto_run_after_setup` already launched the run script, so the coordinator's job is to (1) resolve the dev URL deterministically and (2) confirm that run is alive, then pass it to the workflow. Do NOT read any terminal output — resolve the URL with `portless get` and health-check it with `curl`:
+
+1. **Resolve the URL** with `portless get <NAME>`, where `NAME` is the package.json `name` with any leading `@scope/` stripped:
+   ```
+   portless get "$(node -p "require('./package.json').name.replace(/^@[^/]+\//, '')")"
+   ```
+   If a `portless.json` or a `portless` key in `package.json` overrides the name, use that instead. `portless get` prints the exact branch-prefixed `https://<branch>.<name>.localhost` WITHOUT starting the server (Conductor's `auto_run_after_setup` already started it). If the command errors nonzero because `get` is unknown, portless is too old → surface it as **"needs portless >= 0.12"** rather than falling back to any other method.
+2. **Confirm the run is alive** by polling `curl`: `curl -sf --max-time 5 <devUrl>`, up to **6 attempts, 5s apart** (~30s bound). If it never responds, surface a clear error rather than proceeding.
+
+Verifiers check against this single shared server and must NOT each start their own (parallel starts collide on the port).
+
+**No run script?** A library / CLI / plugin (like dobby itself) has no `[scripts] run`, so there's nothing serving and no dev URL — skip `portless get`/`curl` and set `devUrl = null`. The verifier then verifies programmatically instead of against a URL.
 
 Always run the build loop as a **Workflow** (the Workflow tool) — author it from `references/build-workflow.md` (the reusable trifecta), passing only the task list and the dev URL as `args`. The per-task agents are the custom subagents **`dobby:implementor` / `dobby:reviewer` / `dobby:verifier`**, dispatched via `agentType` — their role instructions live in the agent definitions, NOT passed as args. The workflow runs this per-task state machine, a SEPARATE agent per role:
 

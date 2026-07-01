@@ -114,13 +114,13 @@ The architect turns decisions + research into a build plan and **prints it in fu
 /dobby:execute
 ```
 
-The architect starts your dev server once, then launches the build workflow. Per task, **three separate agents** run a state machine:
+Conductor already auto-ran the app (`auto_run_after_setup`); the coordinator resolves the dev URL with `portless get` and confirms the app is up, then launches the build workflow. Per task, **three separate agents** run a state machine:
 
 ```
 implement → code review → (findings? fix → re-review) → verify → (fail? restart) → done
 ```
 
-The implementor never reviews itself; the reviewer never implements; the verifier checks the *running app* against the task's verify recipe. Independent tasks run in parallel waves. A task that exhausts its retries is flagged `needs-human` instead of thrashing forever.
+The implementor never reviews itself; the reviewer never implements; the verifier checks the *running app* (the one Conductor is already serving) against the task's verify recipe. Independent tasks run in parallel waves. A task that exhausts its retries is flagged `needs-human` instead of thrashing forever.
 
 **You'll see:** live workflow progress, then a status table per task, and the work log appended to `STATE.md`.
 
@@ -145,7 +145,7 @@ Then you type `/dobby:commit`: pre-commit checks, branch, conventional commit, p
 | "Is this module structured well?" | `/dobby:improve-architecture` |
 | An idea/bug worth tracking, mid-flow | `/dobby:backlog` — capture and keep moving |
 | A repeatable workflow worth packaging | `/dobby:create-skill` |
-| A brand-new empty repo | `/dobby:bootstrap` |
+| A brand-new empty repo | `/dobby:onboard` |
 | Work is done, ship it | `/dobby:commit` |
 | A review bot or reviewer left comments on your PR | `/dobby:address-review` |
 | Structuring or refactoring a module's files | `/dobby:module-conventions` (auto-activates) |

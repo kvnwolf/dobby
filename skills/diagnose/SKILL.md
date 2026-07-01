@@ -13,7 +13,7 @@ For hard bugs (intermittent, non-obvious, performance regression). For a trivial
 **This is the skill.** Everything else is mechanical once you have a fast, deterministic, agent-runnable pass/fail signal for the bug. Be aggressive and creative; try in roughly this order:
 
 1. Failing test at whatever seam reaches the bug.
-2. `curl` / HTTP script against a running dev server.
+2. `curl` / HTTP script against a running dev server (the dev URL comes from `portless get`).
 3. CLI invocation with a fixture input, diff stdout vs known-good.
 4. Headless browser script driving the UI.
 5. Replay a captured trace (real request / payload / event log saved to disk) through the code path in isolation.

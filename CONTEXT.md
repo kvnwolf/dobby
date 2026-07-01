@@ -2,6 +2,8 @@
 
 The vocabulary of the dobby kit. Use these terms exactly — in skills, agents, docs, and conversation.
 
+- **Conductor** — the kit's **execution host**: sessions run inside a Conductor workspace (`.conductor/settings.toml`). Conductor auto-runs the app after setup (`auto_run_after_setup`); the coordinator and verifier reach the running app via `portless get` + curl (URL and liveness) and claude-in-chrome (UI) — not by reading a run-script terminal. The kit assumes Conductor as its host — there is no dual/fallback path for other hosts.
+- **Run script** — Conductor's `[scripts] run` in `.conductor/settings.toml`: the command Conductor uses to start the app (wrapping **portless**). The dev URL is obtained deterministically via `portless get <name>` — worktree-branch-prefixed, so it's resolved, never parsed from terminal output — and liveness is confirmed with a curl health-check against that URL. `/dobby:onboard` writes it; a project with no app (a lib/CLI/plugin like dobby itself) has no `[scripts] run`, so `devUrl` is null and the verifier verifies programmatically.
 - **Architect** — the main thread. It frames the work, decides, and reviews what comes back. It NEVER writes code; that asymmetry (expensive cognition at the top, hands-on work delegated) is the kit's core design.
 - **Worker** — one of the four custom agents that do the hands-on work: `researcher`, `implementor`, `reviewer`, `verifier`. Each has a fixed role, toolset, model, and effort.
 - **Work session** — one end-to-end run over a single goal, moving through stages: scope → interview → research → spec → execute → wrap.
