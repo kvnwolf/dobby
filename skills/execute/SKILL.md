@@ -18,7 +18,7 @@ First, get the `devUrl` — you do NOT start the dev server. Under Conductor, `a
 
 1. **Resolve the URL** with `portless get <NAME>`, where `NAME` is the package.json `name` with any leading `@scope/` stripped:
    ```
-   portless get "$(node -p "require('./package.json').name")"
+   portless get "$(node -p "require('./package.json').name.replace(/^@[^/]+\//, '')")"
    ```
    If a `portless.json` or a `portless` key in `package.json` overrides the name, use that instead. `portless get` prints the exact branch-prefixed `https://<branch>.<name>.localhost` WITHOUT starting the server (Conductor's `auto_run_after_setup` already started it). If the command errors nonzero because `get` is unknown, portless is too old → surface it as **"needs portless >= 0.12"** rather than falling back to any other method.
 2. **Confirm the run is alive** by polling `curl`: `curl -sf --max-time 5 <devUrl>`, up to **6 attempts, 5s apart** (~30s bound). If it never responds, surface a clear error rather than proceeding.

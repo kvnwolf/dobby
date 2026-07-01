@@ -54,8 +54,11 @@ setup = "./.conductor/setup.sh"
 # nonconcurrent + auto_run: each new workspace steals the shared dev server from the previous one.
 run_mode = "nonconcurrent"
 auto_run_after_setup = true
-run = "pnpm supabase start && portless run pnpm dev"
 archive = "./.conductor/archive.sh"
+[scripts.run.dev]
+command = "pnpm supabase start && portless run pnpm dev"
+default = true
+icon = "play"
 ```
 
 `auto_run_after_setup × run_mode` interaction — **write the two keys together and leave a comment**: with `nonconcurrent + auto_run_after_setup = true`, every newly-created workspace auto-starts the run, which (being nonconcurrent) STEALS the shared singleton from whatever workspace was running it. That may be exactly what you want (the newest workspace is the active one), but it's surprising — so state it in a comment right above the keys, e.g. `# nonconcurrent + auto_run: each new workspace steals the shared dev server from the previous one.`
