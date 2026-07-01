@@ -26,7 +26,7 @@ human_or_unknown:
 
 ## Auto-detect
 
-Intersect the OPEN-thread authors (from the `reviewThreads` fetch) with `botLogins` across the registry:
+Intersect the OPEN-thread authors (from the `reviewThreads` fetch) with `botLogins` across the registry. **Normalize before comparing: strip any trailing `[bot]` on BOTH sides.** The `reviewThreads` GraphQL query returns the author login WITHOUT the suffix (`greptile-apps`) while REST comment authors include it (`greptile-apps[bot]`) — so match by bare slug or detection wrongly falls through to `human_or_unknown`.
 
 - **exactly one** adapter matches → use it.
 - **several** match (two bots reviewed the PR) → ask which to run, or run all sequentially.

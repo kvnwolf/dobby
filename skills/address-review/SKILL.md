@@ -13,8 +13,8 @@ You are the coordinator/architect. You run the PR mechanics (`gh`/`git`) yoursel
 
 Identify the PR (use the argument, else `gh pr view --json number,headRefName,url`). Then, per `references/github-api.md`:
 
-- Fetch OPEN review threads (`reviewThreads`, keep `isResolved=false`). Grab each first comment's `databaseId`, `author.login`, `path`, `line`, `body`.
-- **Auto-detect the tool**: intersect the open-thread authors with the adapter registry (`references/adapters.md`). One match → that adapter · several → ask which (or handle all) · none → generic/human mode (resolve + push, no re-trigger).
+- Fetch OPEN review threads (`reviewThreads`, keep `isResolved=false`). Grab each first comment's `databaseId`, `author.login`, `path`, `line`, `body`, plus the thread's `isOutdated` — `isOutdated=true` means a newer push already changed the annotated lines (GitHub collapses these).
+- **Auto-detect the tool**: intersect the open-thread authors with the adapter registry (`references/adapters.md`), matching by bot slug (ignore any `[bot]` suffix). One match → that adapter · several → ask which (or handle all) · none → generic/human mode (resolve + push, no re-trigger).
 - Read the bot's **summary + confidence** — it lives in ONE issue comment the bot EDITS IN PLACE, so select the bot-authored comment by `updated_at`, not `created_at`.
 
 Present what you found: the tool, the open threads, the summary's residual concerns, current confidence.
@@ -28,6 +28,9 @@ Validity varies (real bug · nitpick · plain wrong) — **never auto-fix everyt
 | **fix** | Real defect or worthwhile change |
 | **reply-defer** | Valid but out of scope / YAGNI — keep, reply with rationale |
 | **dismiss** | Wrong or a nitpick you won't take — resolve with a one-line why |
+| **outdated** | `isOutdated=true` — the annotated lines already changed |
+
+For an **outdated** thread, verify the newer code already covers the comment, then resolve WITHOUT re-fixing — don't mix it in with current findings.
 
 Present the full triage as a table, then gate with AskUserQuestion: **Apply as proposed** / **Let me adjust**. The user's adjustments win.
 
@@ -63,7 +66,7 @@ If the tool posts a confidence-gated status check, read the current confidence a
 
 Plain-text handoff — no AskUserQuestion, no Skill-tool auto-invoke:
 
-- **More fixes needed** → loop back to Step 2 with the residual concerns.
+- **More fixes needed** → loop back to Step 2, re-triaging ONLY the NEW residual concerns from the bot's UPDATED summary — not every open thread. Deferred/dismissed threads stay `isResolved=false` on purpose; don't re-present decisions the user already made.
 - **Gate met** → ready to merge.
 - **Part of a larger session** → suggest the user TYPE `/dobby:wrap` to reconcile docs and write any ADRs.
 
@@ -75,7 +78,7 @@ Interact with the user in their language. Code, comments, commit messages, ADRs,
 
 - [ ] PR identified; open unresolved threads fetched; review tool auto-detected via the adapter registry
 - [ ] Summary + confidence read from the edited-in-place bot comment (by `updated_at`)
-- [ ] Every comment triaged (fix / reply-defer / dismiss) and confirmed at the human gate — nothing auto-fixed
+- [ ] Every comment triaged (fix / reply-defer / dismiss / outdated) and confirmed at the human gate — nothing auto-fixed
 - [ ] Fixes delegated to `dobby:implementor` (or trifecta / scope→execute); architect edited no code
 - [ ] Decision-grade findings evaluated for ADRs; offered and written on approval
 - [ ] Fixes committed + pushed; every addressed thread resolved EXPLICITLY; deferred threads replied with rationale + bot @-mention
