@@ -32,9 +32,9 @@ When naming or structuring code in the plan, use the vocabulary in `references/a
 
 ## Step 3: Approval gate (no plan mode)
 
-**Print the FULL plan as message text in the conversation first.** A plan that lives only in your reasoning or in `STATE.md` has NOT been presented — the user can only approve what they can read on screen. (Real failure: spec once jumped straight to an Approve/Revise dialog without ever printing the plan; the user had nothing to approve.)
+**Print the FULL plan as message text in the conversation first.** A plan that lives only in your reasoning or in `STATE.md` has NOT been presented — the user can only approve what they can read on screen. (Real failure: spec once jumped straight to an Approve/Revise dialog without ever printing the plan; the user had nothing to approve.) The dialog comes AFTER the full plan is on screen, never instead of it — this is non-negotiable.
 
-Then ask for approval **in plain text at the end of that same message** ("¿apruebo, o qué ajusto?"). Do NOT use AskUserQuestion for this gate — a dialog rendered right after a long plan buries it, and revision feedback is free-form anyway. Do NOT enter plan mode. If the user asks for changes, regenerate with their feedback before anyone executes. The approved plan is the contract `/dobby:execute` runs against.
+Then take approval with **one AskUserQuestion** so the user approves with a single tap instead of typing — restate the context in the question (which plan), one topic. Options: **Aprobar** (proceed to write the spec and hand off) and **Ajustar** (describe changes — free-form, via the dialog's own text field; regenerate with that feedback before anyone executes). Do NOT enter plan mode. This gate is internal to the spec stage — it is NOT the Next-step handoff, so a dialog here is fine (the handoff below must stay typed). The approved plan is the contract `/dobby:execute` runs against.
 
 ## Step 4: Write the spec into the work-session doc
 
@@ -64,6 +64,6 @@ Interact with the user in their language. Write all plan content in English; kee
 - [ ] Task table follows task-decomposition.md: vertical slices, atomic, affected areas, dependencies, verify recipe per task; any prefactor scheduled as its own slice first
 - [ ] Nothing structural mandated beyond what the plan proves it needs (no extra waves / parallelism / checks / agents)
 - [ ] Architecture vocabulary used consistently
-- [ ] Full plan printed in the conversation BEFORE the approval ask (plain-text question, not a dialog); plan approved by the user (no plan mode); no code written
+- [ ] Full plan printed in the conversation BEFORE the approval ask; approval taken via a single AskUserQuestion (Aprobar / Ajustar), never instead of printing the plan; plan approved by the user (no plan mode); no code written
 - [ ] Approved plan written into the work-session doc's `## Spec` section (`STATE.md`)
 - [ ] Next step handed off in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)
