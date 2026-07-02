@@ -1,7 +1,7 @@
 ---
 name: create-skill
 description: Creates or modifies agent skills, including single-workflow and multi-workflow (orchestrator) skills. Use when the user wants to create, write, author, scaffold, edit, update, fix, or refactor a skill, or migrate a skill from single to multi-workflow.
-model: opus
+model: claude-fable-5[1m]
 effort: max
 ---
 

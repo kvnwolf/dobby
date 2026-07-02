@@ -2,7 +2,7 @@
 name: diagnose
 description: Disciplined diagnosis loop for hard bugs and performance regressions — build a fast deterministic feedback loop, rank falsifiable hypotheses, instrument one variable at a time. Use when something is broken/throwing/failing, a bug is intermittent or non-obvious, or there's a performance regression.
 argument-hint: "[the bug or symptom]"
-model: opus
+model: claude-fable-5[1m]
 effort: max
 ---
 
