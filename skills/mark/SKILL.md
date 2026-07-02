@@ -35,9 +35,17 @@ echo "repo=$REPO when=$WHEN skills=$SKILLS"; echo "root=$ROOT"; echo "state=$STA
 
 `ROOT` is the worktree root — the durable anchor for *where* this ran (it may be a Conductor worktree). `STATE` points at dobby's ephemeral `STATE.md` (repo root, gitignored: the goal + decisions + plan + work-log). It's **best-effort**: `/dobby:wrap` deletes it, so it's only on disk if you mark mid-session. Either way `learn` can recover its content from the transcript.
 
-## Step 3: Print the indicator
+## Step 3: Pick a suggested skill to audit (optional hint)
 
-Print one copy-pasteable block. The `transcript:` line is the only thing `/dobby:learn` strictly needs; the rest is for the human. Fold `$ARGUMENTS` into `note:` (this is the most valuable field — it's the intent that would otherwise be buried in a huge transcript):
+`SKILLS` lists *every* `/dobby:*` skill the session touched; `/dobby:learn` still has to guess *which one* the friction is about. If `$ARGUMENTS` (the note) or the session clearly points at ONE skill, emit it as `suggested:` — a single `/dobby:<skill>` that pre-orients `learn` on which skill to audit first, so it doesn't have to re-derive the target or ask. This is a **hint, not a verdict**: `learn` mines the evidence and may land elsewhere. Rules:
+
+- Prefer the skill named or implied in the `note:`. Otherwise, if exactly one skill in `SKILLS` was where the friction happened, suggest that one.
+- Must be one of the `SKILLS` values (never invent a skill the session didn't run).
+- Genuinely unsure, or the friction spans several skills? Omit the line — never guess. An absent `suggested:` is correct and expected; a wrong one mis-orients `learn`.
+
+## Step 4: Print the indicator
+
+Print one copy-pasteable block. The `transcript:` line is the only thing `/dobby:learn` strictly needs; the rest is for the human. Fold `$ARGUMENTS` into `note:` (this is the most valuable field — it's the intent that would otherwise be buried in a huge transcript). Include `suggested:` only when Step 3 produced one — omit the whole line otherwise:
 
 ```
 dobby-session v1
@@ -46,6 +54,7 @@ dobby-session v1
   cwd: <ROOT>
   state: <STATE>
   skills: <SKILLS>
+  suggested: <one /dobby:<skill> from SKILLS to audit first — omit if unsure>
   note: <$ARGUMENTS — what was rough / what to improve>
 ```
 

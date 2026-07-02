@@ -19,7 +19,7 @@ files:
     update_when:
       - When a domain term is introduced, renamed, or its meaning changes
       - When a new worker agent or stage is added
-      - When trifecta/wave mechanics change
+      - When build loop/wave mechanics change
 
 checks:
   - name: manifests-parse

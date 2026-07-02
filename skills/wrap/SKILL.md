@@ -12,14 +12,19 @@ Turn a finished work session into durable project memory, confirm it works and t
 
 From `STATE.md`'s spec (user flow, goals, edge cases) and anything the executors/verifiers flagged as needing human judgment, build a SHORT list of user-facing behaviors the machine layers couldn't fully prove — cross-task end-to-end flows, subjective UX. Present them one at a time with AskUserQuestion (Pass / Fail / Skip). On Fail, dispatch the `implementor` agent (Agent tool, `subagent_type: "dobby:implementor"`; no commits) to fix it, then re-present. Don't re-run the per-task verification the workflow already did.
 
+**Push right — present a decision-ready brief, not raw output.** For each behavior, the user should be able to judge in seconds: give them a compact Brief — **what to test** (the exact flow/steps to exercise), **what to decide** (the pass/fail question in their terms), and **what's needed from you** (any credential, seed data, or environment they must supply). Do the reduction work yourself; never dump logs, diffs, or a wall of raw output and ask the user to interpret it. If a behavior needs setup they alone can do, that goes in "what's needed from you" so nothing stalls silently.
+
 ## Step 2: Reconcile project docs
 
 Update only what the work changed:
 
-- **Root `CONTEXT.md`** — add or sharpen the domain terms resolved during the session (see `references/context-format.md`). Create it lazily if absent. Domain language only, no implementation detail.
+- **Root `CONTEXT.md`** — add or sharpen the domain terms resolved during the session (see `references/context-format.md`). Create it lazily if absent.
+  - **Purity: it is a glossary and NOTHING else — totally devoid of implementation detail.** Not a spec, not a scratch pad, not a home for decisions (those become ADRs). If a line describes HOW something works rather than what a term MEANS, it doesn't belong here.
+  - **Unique-to-this-domain test.** Before adding a term, ask: is this concept unique to this domain, or a general programming concept? General ones — timeouts, error types, retry, cache, utility patterns — don't belong even if the project uses them heavily. Only domain-specific vocabulary earns a glossary entry.
 - **Module `CONTEXT.md`** — for each module the work created or changed, create/update its own `CONTEXT.md` (purpose · Files · Interface · Invariants · What's NOT here) so it reflects the module's current interface, invariants, and contents. (Executors keep this current as they build; here you reconcile anything left.)
+  - **Cross-reference invariants with the code — don't just transcribe.** When you record or carry forward an invariant, verify it against what the code actually does. If they contradict, surface it rather than writing the stale claim: "the `CONTEXT` says Orders cancel whole, but the code cancels line items — which is right?" A reconciled doc that quietly disagrees with the code is worse than no doc.
 - **CLAUDE.md** — if a new top-level convention emerged, or a new module belongs in the **module map** (one line + a link to the module's `CONTEXT.md`).
-- **docs/adr/** — for each decision flagged as an ADR candidate (in `STATE.md`'s findings) that meets the three criteria in `references/adr-format.md` (hard to reverse · surprising without context · real trade-off), offer to write the ADR. The user approves before you write. Number sequentially.
+- **docs/adr/** — for each decision flagged as an ADR candidate (in `STATE.md`'s findings) that meets the three criteria in `references/adr-format.md` (hard to reverse · surprising without context · real trade-off), offer to write the ADR. The user approves before you write. Number sequentially — scan `docs/adr/` for the highest existing number and increment (`0001` = the Conductor execution host, so new ADRs start at `0002`). `/dobby:address-review` also writes sequential ADRs into this same directory, so always rescan the directory rather than assuming a next number.
 
 ## Step 3: Evaluate a reusable skill
 
@@ -42,8 +47,8 @@ Interact with the user in their language. Write docs / ADRs / CONTEXT in English
 
 ## Acceptance checklist
 
-- [ ] Final human smoke test run on the behaviors the machine layers couldn't prove
-- [ ] CONTEXT.md / CLAUDE.md updated where the work changed them
+- [ ] Final human smoke test run as decision-ready Briefs (what to test · what to decide · what's needed from the user), never raw output
+- [ ] CONTEXT.md / CLAUDE.md updated where the work changed them — glossary kept pure (domain-only, no implementation detail), invariants cross-referenced against the code
 - [ ] ADR candidates offered + written (with approval) for decisions meeting the 3 criteria
 - [ ] Reusable-skill packaging evaluated and offered if warranted
 - [ ] `STATE.md` disposed; final summary presented; no commits (handed to `/dobby:commit`)

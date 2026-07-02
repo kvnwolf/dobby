@@ -39,7 +39,7 @@ Present the full triage as a table, then gate with AskUserQuestion: **Apply as p
 For every `fix`, delegate (the architect never works):
 
 - **Small / scoped** (most review fixes) → spawn `dobby:implementor` (Agent tool, `subagent_type: "dobby:implementor"`). Batch several trivial fixes into ONE implementor call. Parallel implementors only on **non-overlapping** areas (same rule as `/dobby:execute` waves).
-- **A fix that must be proven** → run the **trifecta** (implement → review → verify) via the `dobby:execute` skill's `references/build-workflow.md` with a single-task array.
+- **A fix that must be proven** → run the **build loop** (implement → review → verify) via the `dobby:execute` skill's `references/build-workflow.md` with a single-task array.
 - **Feature-sized finding** (rare) → don't force it through here. Suggest, as plain text, that the user TYPE `/dobby:scope → … → /dobby:execute`; leave it for them to enter.
 
 Implementors keep the tree green (build/type/lint); they do NOT commit.
@@ -79,7 +79,7 @@ Interact with the user in their language. Code, comments, commit messages, ADRs,
 - [ ] PR identified; open unresolved threads fetched; review tool auto-detected via the adapter registry
 - [ ] Summary + confidence read from the edited-in-place bot comment (by `updated_at`)
 - [ ] Every comment triaged (fix / defer / dismiss / outdated) and confirmed at the human gate — nothing auto-fixed
-- [ ] Fixes delegated to `dobby:implementor` (or trifecta / scope→execute); architect edited no code
+- [ ] Fixes delegated to `dobby:implementor` (or build loop / scope→execute); architect edited no code
 - [ ] Decision-grade findings evaluated for ADRs; offered and written on approval
 - [ ] Fixes committed + pushed; `fix` / `dismiss` / `outdated` threads resolved EXPLICITLY; `deferred` threads left open and replied with rationale + bot @-mention
 - [ ] Review re-triggered (unless human/unknown); thread state AND summary reconciled; stale summary rebutted where warranted

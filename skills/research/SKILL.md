@@ -23,6 +23,8 @@ If nothing is uncertain and no external tech is involved, say so and stop — do
 
 Hand each independent research item to a `researcher` agent (Agent tool, `subagent_type: "dobby:researcher"`), in parallel — each one fetches current docs (via `ctx7`), traces the codebase, and returns grounded findings. Don't fetch docs or grep in the main thread; that's what the researchers are for. Group sensibly — one per technology, or per cluster of related unknowns:
 
+Feed each researcher **dual vocabulary** so findings name things consistently: (1) the **architecture vocabulary** (`/dobby:spec`'s `references/architecture-vocab.md` — module / interface / depth / seam / adapter / leverage / locality) for structural claims, and (2) the **project's own domain glossary** (its `CONTEXT.md`) for domain nouns. A researcher that doesn't hold both invents its own words and the plan has to re-translate. Tell each one to report in these two vocabularies (structure in the architecture terms, domain in the project's terms) and to flag any concept it can't name in either.
+
 - **Per technology** → "fetch current docs for `<lib>` and report the exact signatures / config keys / version gotchas this task needs: `<specifics>`".
 - **Codebase reuse** → "find existing modules/patterns in this repo that already do `<X>`; report paths + how callers use them".
 - **Bounded unknown** → "resolve `<question>` against the docs/code and report the answer with evidence".
@@ -34,9 +36,9 @@ For BROAD or open web questions (architecture comparisons, "how do teams do X", 
 From the researchers' findings, write a tight brief the planning step can consume verbatim:
 
 - **Per technology** — the key facts the task relies on (signatures, config, version/gotcha), each with its doc source.
-- **Reuse** — applicable skills and existing modules, and what each is for.
+- **Reuse** — applicable skills and existing modules, and what each is for. Before recommending a NEW shared skill/module (extracting a pattern to a common place), apply the **two-adapters test** (`/dobby:spec`'s `references/architecture-vocab.md`): a shared seam is only real once **two real use sites** need it. One real case is a *hypothetical* seam — flag the reuse but say it stays inline until a second caller appears; don't recommend extracting on a single case. (Reusing what ALREADY exists needs no second site — that's already a real seam.)
 - **Resolved** — each answered question + the answer + why.
-- **Open** — what still needs a spike or a decision, flagged clearly.
+- **Open** — what still needs a spike or a decision. Don't hand the plan a bare list of unknowns: carry a **recommended hypothesis** for each — the architect's falsifiable default to confirm or refute (like `/dobby:diagnose`'s ranked hypotheses), stated as "*default: X, because Y — confirm before building*". An Open item is "open WITH a proposed default", not just a question, so the plan can proceed on the default if the spike stays cheap.
 
 Keep it to what the task needs. Don't paste raw docs. If a work-session doc exists (the repo-root `STATE.md` from `/dobby:scope`), write this brief into its `## Research` section.
 
@@ -56,6 +58,8 @@ Interact with the user in their language. Write the research brief in English; k
 
 - [ ] Every technology and unknown enumerated; applicable skills noted by you (you hold the list)
 - [ ] Docs / codebase / unknowns researched by `researcher` agents (not dug in the main thread); current docs via ctx7, not training data
+- [ ] Each researcher fed dual vocabulary (architecture-vocab + the project's `CONTEXT.md`) so findings name structure and domain consistently
 - [ ] Broad/open web questions sent to `deep-research`; empirical questions sent to `/dobby:prototype` or flagged as Open
 - [ ] Concise research brief synthesized from the findings; no code written, no plan made
+- [ ] Reuse recommendations pass the two-adapters test (extract only on a second real use site); every Open item carries a recommended falsifiable default
 - [ ] Next step handed off in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)

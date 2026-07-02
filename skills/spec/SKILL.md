@@ -20,10 +20,13 @@ Write it yourself from the in-context decisions — this preserves the interview
 - **User flow** — ordered steps the user goes through (omit for backend-only / refactoring tasks).
 - **Goals** / **Non-goals** — what it achieves; what's explicitly out of scope.
 - **Constraints** — technical or business.
-- **Decisions** — key technical decisions from the interview, including any flagged as ADR candidates (these are written at wrap-up, not here).
+- **Decisions** — key technical decisions from the interview, including any flagged as ADR candidates (these are written at wrap-up, not here). Prose, not code — file paths and snippets go stale. **Snippet exception:** if a decision is encoded more tightly by a snippet than by prose — a state machine, reducer, schema, or type shape — inline it *within* that decision, trimmed to the decision-rich parts (not a working demo, just the bits that pin the decision down), and note where it came from (e.g. a prototype).
+- **Testing Decisions** — where and what to test, decided per `references/testing-decisions.md`. Minimize seams (prefer existing, use the highest, fewer is better, ideal is ONE), state what makes a good test here, and — for a repo that has a test suite — mark which tasks are **test-first**. Confirm the seams with the user before writing the plan. This section feeds `/dobby:execute`'s per-task test-author gate.
 - **Edge cases** — each edge case + how it's handled.
 - **Module structure** — for each module the work creates or changes: its name, location, and **file surface** (which files callers import by deep path, and what each exposes), and why it's shaped that way (this is what the module's own `CONTEXT.md` will record). Module boundaries are an architectural decision the user approves HERE — executors don't improvise them. Apply `references/architecture-vocab.md` (deep, feature/domain modules; no barrels — deep-path imports; co-located; inline by default; no type-based folders; each module carries a `CONTEXT.md`). Decide the module and its interface; leave intra-module implementation to the executor.
-- **Tasks** — build the table per `references/task-decomposition.md`; the affected-areas column references the modules decided above.
+- **Tasks** — build the table per `references/task-decomposition.md`; the affected-areas column references the modules decided above. If the plan needs a **prefactor** — a change that makes the feature change easy ("make the change easy, then make the easy change") — schedule it as its own slice *before* the feature slices that depend on it. When the repo has a test suite, carry a **test-first** marker on each task (from Testing Decisions above) — this is the flag `/dobby:execute`'s test-author gate reads.
+
+**Mandate nothing structural.** Default to the minimal plan. Do NOT add extra waves, parallelism, checks, or agents unless the plan itself *proves* they're needed (a real dependency, a real seam, a real risk). Structure the plan justifies, nothing the plan merely permits — added machinery is cost the executor pays whether or not it earns its keep.
 
 When naming or structuring code in the plan, use the vocabulary in `references/architecture-vocab.md` (module / interface / depth / seam / leverage / locality / adapter) consistently, and match the project's domain language from its glossary.
 
@@ -55,8 +58,11 @@ Interact with the user in their language. Write all plan content in English; kee
 
 - [ ] Built on a real shared understanding (interview/research), not assumptions
 - [ ] Plan has overview, goals/non-goals, constraints, decisions (ADR candidates flagged), edge cases
+- [ ] Decisions are prose; any snippet present encodes a decision more tightly than prose (state machine / reducer / schema / type), trimmed to the decision-rich parts
+- [ ] Testing Decisions written: seams minimized (prefer existing / highest / fewest — ideal ONE) and confirmed with the user; test-first tasks marked when the repo has a suite
 - [ ] Module structure decided (names, locations, file surfaces) and approved by the user — not left to executors
-- [ ] Task table follows task-decomposition.md: vertical slices, atomic, affected areas, dependencies, verify recipe per task
+- [ ] Task table follows task-decomposition.md: vertical slices, atomic, affected areas, dependencies, verify recipe per task; any prefactor scheduled as its own slice first
+- [ ] Nothing structural mandated beyond what the plan proves it needs (no extra waves / parallelism / checks / agents)
 - [ ] Architecture vocabulary used consistently
 - [ ] Full plan printed in the conversation BEFORE the approval ask (plain-text question, not a dialog); plan approved by the user (no plan mode); no code written
 - [ ] Approved plan written into the work-session doc's `## Spec` section (`STATE.md`)

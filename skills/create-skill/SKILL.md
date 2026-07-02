@@ -5,6 +5,8 @@ model: opus
 effort: max
 ---
 
+A skill exists to wrangle determinism out of a stochastic system; **predictability** — the agent taking the same _process_ every run, not producing the same output — is the root virtue, and every rule below is a lever on it. The craft vocabulary that names those levers lives in `references/craft-glossary.md`; reach for it when a review or a dispute turns on what a term means.
+
 ## Step 1: Gather context
 
 Ask the user what the skill should do, when it should activate, and any conventions it should follow.
@@ -24,6 +26,8 @@ description: [What it does, third person]. Use when [activation triggers].
 
 - `disable-model-invocation: true` — only the user can invoke (`/name`); use for side-effect or deliberate skills.
 - `user-invocable: false` — hidden from the `/` menu; only the model invokes it (background knowledge).
+
+**Choosing invocation — the two loads.** Keeping a `description` makes the skill **model-invoked**: the agent can fire it autonomously and other skills can reach it, but it pays a **context load** — the description sits in the window every turn. Stripping it (`disable-model-invocation: true`) makes the skill **user-invoked**: zero context load, but it spends **cognitive load** — _you_ become the index that must remember it exists. Keep the description only when the agent must reach the skill on its own, or another skill must; if it only ever fires by hand, make it user-invoked and pay no context load.
 - `argument-hint` / `arguments` — autocomplete hint and `$name` substitution in the body.
 - `allowed-tools` / `disallowed-tools` — pre-approve or remove tools while the skill is active.
 - `model` / `effort` — override model or reasoning effort (`low|medium|high|xhigh|max`) for the skill's turn.
@@ -59,6 +63,7 @@ Sacrifice grammar for concision and scannability. Every line must justify its to
 - **Freedom matching** — prescriptive for fragile ops, flexible for open-ended tasks
 - **Examples over rules** — concrete input/output pairs teach better than abstract descriptions
 - **No over-explaining** — the agent knows what PDFs are, how imports work, etc.
+- **Sharp completion criteria** — every step ends on the condition that tells the agent it's done. Make it both _checkable_ (can the agent tell done from not-done?) and, where it matters, _exhaustive_ ("every modified model accounted for", not "produce a change list"). A vague bound invites premature completion — the agent slips to the next step before the work is genuinely finished.
 
 ### Progressive disclosure (3 levels)
 
@@ -66,6 +71,8 @@ Content loads lazily — put each thing at the cheapest level:
 1. **Metadata** (`name` + `description`) — always preloaded for every skill (~100 tokens). This is what triggers loading.
 2. **SKILL.md body** — loads only when the skill triggers; keep it under ~5k tokens. The recipe, not the encyclopedia.
 3. **Resources** (`references/`, `scripts/`, `examples/`) — loaded only when the body points to them; effectively free until accessed. One level deep — never reference a reference.
+
+A **context pointer** is the phrase that points the body at a resource, and its _wording_ — not its target — decides when and how reliably the agent reaches the material. A must-have target behind a weakly-worded pointer is a variance bug: name the trigger condition sharply ("when a dispute turns on what a term means, read X") rather than gesturing ("see X for details"). If a must-have still fires unreliably, sharpen the wording first and inline the material only if that fails.
 
 ### Format
 
@@ -91,6 +98,17 @@ See `examples/` for complete skill examples by type:
 | `examples/with-references.md` | Conditional/alternate flows |
 | `examples/reference-style.md` | Knowledge base, no steps |
 | `examples/combined.md` | Scripts + examples + references |
+
+### Leading words
+
+A **leading word** is a compact concept already living in the model's pretraining that the agent thinks with while running the skill (e.g. _lesson_, _fog of war_, _tracer bullets_, _red_). Repeated as a token throughout the text, it accumulates a distributed definition and anchors a whole region of behaviour in the fewest tokens — recruiting priors the model already holds. It serves predictability twice: in the body it anchors _execution_ (the agent reaches for the same behaviour every time the word appears), and in the description it anchors _invocation_ (when the same word lives in your prompts, docs, and code, the agent links that shared language to the skill and fires it more reliably).
+
+- **Prefer an existing pretrained word over a coined one.** A made-up term recruits no priors — you pay in definition tokens what a pretrained word gives free. Coin your own only when no pretrained word fits, and then define it clearly.
+- **Hunt for restatements a leading word retires.** A quality spelled out three ways ("fast, deterministic, low-overhead") collapses into one pretrained word (a _tight_ loop); a fuzzy gate ("a loop you believe in") sharpens into a binary observable (the loop goes _red_, or it doesn't). Fewer tokens _and_ a sharper hook.
+
+### The no-op test
+
+Hunt no-ops sentence by sentence, not just line by line. For each sentence in isolation: **does it change behaviour versus the model's default? If not, delete the WHOLE sentence** — don't trim words from it. Be aggressive; most prose that fails the test should go, not be rewritten. This is model-relative, not reader-relative: if two people disagree over whether a line is a no-op, they disagree about the model's default — **settle it by running the skill, not by debating.** A weak leading word (_be thorough_ when the agent is already thorough-ish) is itself a no-op; the fix is a stronger word (_relentless_), not a different technique.
 
 ## Step 4: Organize the directory
 
@@ -159,6 +177,16 @@ Where the directory lives determines reach:
 
 The **directory name** is the command name (`~/.claude/skills/deploy-staging/` → `/deploy-staging`); the frontmatter `name` only sets the display label for directory-based skills. On name conflicts, precedence is enterprise > personal > project; plugins are namespaced so they never conflict. Edits under these directories are picked up **in the current session** (live reload); run `/reload-skills` to force a re-scan, or `/reload-plugins` for a plugin's non-`SKILL.md` files (hooks, MCP, agents).
 
+## Step 6: Audit for failure modes
+
+Before finishing, scan the skill for the five named failure modes. Each has a defence — apply it:
+
+- **Premature completion** — a step ends before it's genuinely done because attention slips to _being done_. Sharpen the completion criterion first (cheap, local); only if it's irreducibly fuzzy _and_ you observe the rush, hide the later steps by splitting the sequence.
+- **Duplication** — the same meaning in more than one place. Costs maintenance and tokens, and inflates that meaning's rank past its real weight. Keep each meaning in a single source of truth. (Distinct from a leading word, which repeats a _token_ on purpose, never the meaning.)
+- **Sediment** — stale layers that settle because adding feels safe and removing feels risky. The default fate of any skill without a pruning discipline; core down and clear it.
+- **Sprawl** — the skill is simply too long, even when every line is live and unique. Cure with the disclosure ladder: push reference behind a context pointer, and split by branch or sequence so each path carries only what it needs.
+- **No-op** — a line the model already obeys by default, so you pay load to say nothing. Run the no-op test (above) sentence by sentence and delete what fails.
+
 ## Acceptance checklist
 
 - [ ] Description: third person, specific, activation triggers
@@ -174,3 +202,9 @@ The **directory name** is the command name (`~/.claude/skills/deploy-staging/` �
 - [ ] Paths as inline code, no markdown links
 - [ ] Ends with `## Acceptance checklist`
 - [ ] Multi-workflow: description reflects all current flows
+- [ ] Audited for the five failure modes (premature completion, duplication, sediment, sprawl, no-op)
+- [ ] Every sentence passes the no-op test (changes behaviour vs the model's default)
+
+---
+
+*Predictability framing, craft glossary, leading words, the no-op test, and the failure-mode catalog adapted from [mattpocock/skills](https://github.com/mattpocock/skills) `productivity/writing-great-skills`.*
