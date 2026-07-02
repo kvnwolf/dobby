@@ -94,11 +94,19 @@ confirm() {
   [[ "$reply" =~ ^[Yy] ]]
 }
 
-# _existing KEY — current value of KEY in ENV_FILE, if any.
+# _existing KEY — current value of KEY in ENV_FILE, if any. Exact inverse of
+# write_env: strips one layer of surrounding double-quotes and unescapes \" → "
+# so a re-run's "[Enter keeps current]" default round-trips unchanged. Legacy
+# unquoted lines are returned verbatim.
 _existing() {
   [[ -f "$ENV_FILE" ]] || return 1
-  local line; line=$(grep -E "^${1}=" "$ENV_FILE" | tail -n1) || return 1
-  printf '%s' "${line#*=}"
+  local line raw; line=$(grep -E "^${1}=" "$ENV_FILE" | tail -n1) || return 1
+  raw="${line#*=}"
+  if [[ "$raw" == '"'*'"' ]]; then
+    raw="${raw#\"}"; raw="${raw%\"}"   # drop exactly one surrounding pair
+    raw="${raw//\\\"/\"}"              # unescape \" → "
+  fi
+  printf '%s' "$raw"
 }
 
 # ask KEY "Prompt" — read a value into $KEY. Offers the existing .env value as
