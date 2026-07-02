@@ -110,7 +110,7 @@ Researchers fan out in parallel: one fetches current docs for the CSV library ca
 /dobby:spec
 ```
 
-The architect turns decisions + research into a build plan and **prints it in full in the conversation** — overview, edge cases, and a task table where every task carries its own *verify recipe* (the exact steps that will later prove it works). Approval is asked in plain text at the end of the printed plan; nothing builds until you say so.
+The architect turns decisions + research into a build plan and **prints it in full in the conversation** — overview, edge cases, and a task table where every task carries its own *verify recipe* (the exact steps that will later prove it works). Approval is a single tap (Aprobar / Ajustar) right after the printed plan; nothing builds until you say so.
 
 **Artifact:** `## Spec` in `STATE.md`.
 
