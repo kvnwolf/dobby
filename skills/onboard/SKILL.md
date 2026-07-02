@@ -3,7 +3,7 @@ name: onboard
 description: Initialize a project so the work skills can run in it — interview the user about the project, scaffold the base files (CONTEXT.md, CLAUDE.md, docs/adr/, .gitignore), set the workflow config (issue tracker, dev command), and configure Conductor setup (write .conductor/settings.toml + setup.sh/archive.sh stubs so each workspace installs and auto-runs). Use once at the start of a new (greenfield) project, or to set up an existing repo for the work skills.
 disable-model-invocation: true
 argument-hint: "[project idea, if greenfield]"
-model: opus
+model: claude-fable-5[1m]
 effort: max
 ---
 

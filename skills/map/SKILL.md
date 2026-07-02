@@ -3,7 +3,7 @@ name: map
 description: Turn a loose, multi-session idea into a durable decision-map — a git-tracked file of dependency-linked investigation tickets — then drive it toward a plan one ticket per cycle. Use when an idea is too big to interview-then-plan in one session, when open decisions block each other, or when the user says "map this out", "figure out the unknowns", "we need to research a few things first".
 argument-hint: "[loose idea, or path to an existing map (+ optional ticket slug)]"
 disable-model-invocation: true
-model: opus
+model: claude-fable-5[1m]
 effort: max
 ---
 

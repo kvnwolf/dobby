@@ -2,7 +2,7 @@
 name: execute
 description: Build an approved plan's tasks by running a workflow where, per task, separate agents implement → code-review → verify in a loop until both pass. Use to execute a task plan or run the build-verify-review loop. Standalone, or as the execute stage after /dobby:spec.
 argument-hint: "[plan or STATE.md]"
-model: opus
+model: claude-fable-5[1m]
 effort: high
 ---
 

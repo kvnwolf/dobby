@@ -2,7 +2,7 @@
 name: interview
 description: Interview the user relentlessly to reach a complete, shared understanding of a task before it's planned or built. Use before planning a feature, change, or refactor; to stress-test a design; to resolve ambiguity; or when the user says "interview me" / "grill me".
 argument-hint: "[what you want to build or decide]"
-model: opus
+model: claude-fable-5[1m]
 effort: max
 ---
 

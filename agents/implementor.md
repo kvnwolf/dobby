@@ -2,7 +2,7 @@
 name: implementor
 description: Implement or fix ONE scoped task end-to-end — write the code into the planned module(s), keep the tree green (build/type/lint), and return a work-log entry. Does not review or verify its own work; separate agents do that.
 tools: Read, Edit, Write, Grep, Glob, Bash
-model: opus
+model: claude-fable-5[1m]
 effort: xhigh
 ---
 

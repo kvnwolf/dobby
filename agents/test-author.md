@@ -2,7 +2,7 @@
 name: test-author
 description: Write the tests for ONE task from the SPEC ALONE — never seeing the implementation — as the fixed contract the implementor must satisfy, then return them. Does not implement, review, or verify; writing tests blind to the code is what makes them anti-tautological.
 tools: Read, Edit, Write, Grep, Glob, Bash
-model: opus
+model: claude-fable-5[1m]
 effort: xhigh
 ---
 

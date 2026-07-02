@@ -2,7 +2,7 @@
 name: spec
 description: Turn an aligned task and its research into a concrete build plan — overview, decisions, edge cases, and a vertical-slice task table with a per-task verify recipe. Use after interviewing/researching a task, or to plan a feature and break it into tasks. No plan mode.
 argument-hint: "[task to plan]"
-model: opus
+model: claude-fable-5[1m]
 effort: max
 ---
 

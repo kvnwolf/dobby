@@ -2,7 +2,7 @@
 name: learn
 description: Mine a marked session (a /dobby:mark indicator, or a raw path to a session .jsonl from any project) to improve dobby's internal skills from how they actually behaved in the field. Use in the dobby repo when you have a session pointer and want to turn its friction into concrete skill edits.
 argument-hint: "[indicator block or .jsonl path] — which skill/area to improve"
-model: opus
+model: claude-fable-5[1m]
 effort: max
 ---
 
