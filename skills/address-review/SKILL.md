@@ -1,6 +1,6 @@
 ---
 name: address-review
-description: Triage and address external code-review findings on the current PR (Greptile, CodeRabbit, or human reviewers), then close the loop — fix, reply, resolve threads, re-trigger review, and report merge-readiness. Use when a review bot or reviewer left comments on a PR and you want to address the feedback, resolve threads, rebut a stale finding, or get the review to green. Decoupled from any one review tool via a thin adapter.
+description: Address external code-review findings on the current PR — triage with a human gate, delegate fixes, resolve threads, re-trigger review, report merge-readiness. Use when a review bot (Greptile, CodeRabbit) or human reviewer left comments on a PR and you want the feedback addressed and the review green, or to rebut a stale finding.
 argument-hint: "[PR number (optional)]"
 allowed-tools: Bash(gh *), Bash(git add *), Bash(git commit *), Bash(git push *), Bash(git diff *), Bash(git log *)
 model: opus
@@ -36,7 +36,7 @@ Present the full triage as a table, then gate with AskUserQuestion: **Apply as p
 
 ## Step 3: Address — delegate, never edit inline
 
-For every `fix`, delegate (the architect never works):
+For every `fix`, delegate:
 
 - **Small / scoped** (most review fixes) → spawn `dobby:implementor` (Agent tool, `subagent_type: "dobby:implementor"`). Batch several trivial fixes into ONE implementor call. Parallel implementors only on **non-overlapping** areas (same rule as `/dobby:execute` waves).
 - **A fix that must be proven** → run the **build loop** (implement → review → verify) via the `dobby:execute` skill's `references/build-workflow.md` with a single-task array.
@@ -46,14 +46,14 @@ Implementors keep the tree green (build/type/lint); they do NOT commit.
 
 ## Step 4: ADR candidates
 
-For each accepted or deferred **decision** (not every fix), evaluate the three criteria — hard to reverse · surprising without context · a real trade-off (mirrors `/dobby:wrap`). Review-driven decisions earn posterity; routine fixes don't. Offer to write the ADR; the user approves; you write it to `docs/adr/`, numbered sequentially. Typical from reviews: "defer the FK index (YAGNI at this scale)", "coerce a stale FK to null at the server seam instead of a cross-module refetch".
+For each accepted or deferred **decision** (not every fix), evaluate the three criteria — hard to reverse · surprising without context · a real trade-off (mirrors `/dobby:wrap`). Offer to write the ADR; the user approves; you write it to `docs/adr/`, numbered sequentially. Typical from reviews: "defer the FK index (YAGNI at this scale)", "coerce a stale FK to null at the server seam instead of a cross-module refetch".
 
 ## Step 5: Close the loop
 
 Per `references/github-api.md`, and using the detected adapter:
 
 1. **Commit + push** the addressed fixes to the PR branch. It's an existing PR — no new PR, keep the message review-scoped (e.g. `fix: address review feedback`).
-2. **Resolve EXPLICITLY.** Pushing does NOT auto-resolve or outdate threads — confirmed: lines changed by a fix still read `isResolved=false`. Call `resolveReviewThread` (batch with GraphQL aliases) on the `fix`, `dismiss`, and `outdated` threads: `fix` → resolve once the change lands, `dismiss` → resolve with the one-line why, `outdated` → resolve after verifying the newer code covers it. Only `defer` threads stay open (deferred) — close them out with a reply (item 3) instead.
+2. **Resolve EXPLICITLY.** Pushing does NOT auto-resolve or outdate threads — confirmed: lines changed by a fix still read `isResolved=false`. Call `resolveReviewThread` (batch with GraphQL aliases) on the `fix`, `dismiss`, and `outdated` threads, honoring each disposition's semantics from Step 2. Only `defer` threads stay open (deferred) — close them out with a reply (item 3) instead.
 3. **Reply with the rationale** on `deferred` threads (and on any `dismiss` where the why is worth stating to the bot) — REST, `in_reply_to=<databaseId>`, `@`-mentioning the bot via `adapter.intentionalReply` so it learns not to re-flag.
 4. **Re-trigger** the review via `adapter.reTrigger` (skip for human/unknown — nothing to trigger).
 5. **Re-fetch and reconcile.** Confirm thread state AND re-read the UPDATED summary/confidence. **The summary lags the threads**: it can still list an addressed concern as open even after a valid fix + a resolved thread. Decide per residual concern — accept it, **rebut** it (a clarifying reply + one more re-trigger to move the summary), or do more work.

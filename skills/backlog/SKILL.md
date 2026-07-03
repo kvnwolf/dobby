@@ -1,12 +1,12 @@
 ---
 name: backlog
-description: Quick-capture a follow-up, bug, or tech-debt item to the project tracker (Linear) without breaking your flow. Use when you spot something worth tracking mid-work and want it logged and out of your head, not triaged now.
+description: Quick-capture a follow-up, bug, or tech-debt item to the project tracker (Linear). Use when you spot something worth tracking mid-work and want it logged, not triaged now.
 argument-hint: "[the item to capture]"
 model: sonnet
 effort: medium
 ---
 
-Capture a backlog item fast and get back to work. This is quick-capture, NOT triage — get it logged with enough context to act on later, then stop.
+This is quick-capture, NOT triage — log the item, then stop.
 
 ## Step 1: Dedup by concept
 

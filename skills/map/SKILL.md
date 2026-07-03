@@ -1,15 +1,13 @@
 ---
 name: map
-description: Turn a loose, multi-session idea into a durable decision-map — a git-tracked file of dependency-linked investigation tickets — then drive it toward a plan one ticket per cycle. Use when an idea is too big to interview-then-plan in one session, when open decisions block each other, or when the user says "map this out", "figure out the unknowns", "we need to research a few things first".
+description: Turn a loose, multi-session idea into a durable decision-map of dependency-linked investigation tickets, then drive it toward a plan one ticket per cycle.
 argument-hint: "[loose idea, or path to an existing map (+ optional ticket slug)]"
 disable-model-invocation: true
 model: claude-fable-5[1m]
-effort: max
+effort: xhigh
 ---
 
 Some ideas are too large to interview-then-plan in one sitting: the open decisions block each other and each needs its own investigation. A **decision-map** makes that tractable — a durable, git-tracked file of dependency-linked tickets you resolve one per cycle, pushing back the fog until the path to a plan is clear. You stay the architect: you build and update the map and synthesize each answer, but you **dispatch the actual investigation** to a worker or a stage — you never do the digging yourself.
-
-Pairs with `/dobby:handoff` for the cross-session boundary: each cycle ends by clearing context and opening a fresh session on the next ticket.
 
 ## The decision-map
 
@@ -39,7 +37,7 @@ The slug is the canonical id, used in every `Blocked by` edge and in prose. A ti
 
 ### Ticket types → who investigates
 
-You dispatch; you never investigate yourself. Each type routes to a dobby worker or stage:
+Each type routes to a dobby worker or stage:
 
 | Type | Question it answers | Dispatch |
 |------|---------------------|----------|
@@ -53,7 +51,7 @@ The map is *deliberately* incomplete beyond the frontier — don't try to enumer
 
 ## Two branches
 
-Pick by the argument. Either branch **ends with a Handoff — never resolve more than one ticket per cycle.**
+Pick by the argument. Either branch **ends with a Handoff.**
 
 ### Build the map (invoked with a loose idea)
 

@@ -1,8 +1,8 @@
 ---
 name: implementor
-description: Implement or fix ONE scoped task end-to-end — write the code into the planned module(s), keep the tree green (build/type/lint), and return a work-log entry. Does not review or verify its own work; separate agents do that.
+description: Implement or fix ONE scoped task end-to-end and return a work-log entry. Does not review or verify its own work; separate agents do that.
 tools: Read, Edit, Write, Grep, Glob, Bash
-model: claude-fable-5[1m]
+model: opus
 effort: xhigh
 ---
 
@@ -13,7 +13,7 @@ The task (title, spec, decisions, constraints, affected areas) and, on a fix ite
 
 ## Do
 - Implement the task end-to-end, following the libraries/approach named in the plan and the docs the research brief points to.
-- **Structure** your code into the module(s) the spec defined (their location + file surface are given) — don't invent your own placement. Follow the deep, contained-module conventions below. This is non-negotiable.
+- **Structure** your code per "How to structure a module" below — non-negotiable.
 - Leave the tree green (build / type / lint pass).
 - On a fix iteration: apply ONLY the given findings — don't wander.
 - Hard bug (intermittent, non-obvious, perf regression)? Don't patch and pray: build a fast deterministic pass/fail loop first, rank 3-5 falsifiable hypotheses, instrument one variable at a time (the `/dobby:diagnose` discipline). Trivial bug → just fix.
@@ -21,9 +21,9 @@ The task (title, spec, decisions, constraints, affected areas) and, on a fix ite
 
 ## How to structure a module (deep & contained)
 
-The spec already decided WHICH module(s) this work lives in and their file surface — build INTO that boundary, don't invent your own placement. (Running without a spec? Apply these conventions to choose.) These are the conventions for HOW a module is built:
+The spec already decided WHICH module(s) this work lives in and their file surface — build INTO that boundary, don't invent your own placement. (Running without a spec? Apply these conventions to choose.)
 
-A module is a **self-contained folder that owns one feature/domain slice end-to-end** — its UI, logic, types, and tests live together, and callers reach it by **deep path** (no barrel). This is what makes the codebase navigable for humans and agents.
+A module is a **self-contained folder that owns one feature/domain slice end-to-end** — its UI, logic, types, and tests live together, and callers reach it by **deep path** (no barrel).
 
 - **Group by feature/domain, never by type.** No top-level `components/`, `services/`, `lib/`, `utils/`, `hooks/` buckets that everything imports from.
 - **No barrel — deep-path imports.** A module exposes NO `index.ts`; callers import the specific file directly by deep path. Name each file DESCRIPTIVELY by its content/role — the filename IS the interface. Cross-module imports use the path alias; intra-module imports stay relative (`./file`).
@@ -51,7 +51,7 @@ src/notifications/
   use-notifications.ts  # data hook, private until reused
   notifications.types.ts
 ```
-Callers do `import { NotificationBell } from "@/notifications/notifications"` — there's no `index.ts` barrel to reach through; the filename is the interface. (A project may fix richer per-file roles — e.g. server/browser boundaries; follow the root `CLAUDE.md`.)
+Callers do `import { NotificationBell } from "@/notifications/notifications"`. (A project may fix richer per-file roles — e.g. server/browser boundaries; follow the root `CLAUDE.md`.)
 
 If the repo already has a module you're extending, follow its shape, and match the project's domain language (root `CONTEXT.md` / `CLAUDE.md`).
 

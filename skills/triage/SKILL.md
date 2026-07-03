@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Triage an incoming issue or external PR — verify the claim, then write a durable, behavioral agent brief that can seed a work session, and record wontfix-rejected enhancements in the out-of-scope knowledge base. Use when a maintainer wants to evaluate a reported bug, an enhancement request, or an outside contributor's PR and decide what to do with it. Do not use for review-bot comments on your own PR — that is /dobby:address-review.
+description: Triage an incoming issue or external PR — verify the claim, then write a behavioral agent brief or record the rejection in the out-of-scope KB.
 argument-hint: "[issue/PR number or what to triage]"
 disable-model-invocation: true
 allowed-tools: Bash(gh *), Bash(git *)
@@ -12,7 +12,7 @@ You are the coordinator/architect. You run the tracker/PR mechanics (`gh`/`git`)
 
 **Scope of this skill (portable half):** verify-the-claim, the behavioral agent brief, and the out-of-scope KB. The full role/state-machine — tracker labels, canonical role names, discovery queries, state transitions — is **out of scope here** (no issue tracker is wired into this repo yet). Triage what the maintainer points you at; don't invent a labeling machine.
 
-**Triage vs. address-review.** This skill triages **incoming requests** — an issue or an *external* PR proposing a change. `/dobby:address-review` triages **review-bot / reviewer comments on your own open PR** (Greptile, CodeRabbit, humans) and drives them to resolved. Different surface, different loop: incoming request here, outbound-PR feedback there. If the user hands you review threads on their active PR, point them to `/dobby:address-review`.
+**Triage vs. address-review.** This skill triages **incoming requests** — an issue or an *external* PR proposing a change. Review-bot / reviewer comments on **your own open PR** (Greptile, CodeRabbit, humans) belong to `/dobby:address-review` — if the user hands you review threads on their active PR, point them there.
 
 **gh mechanics.** For every GitHub read/write (fetch an issue/PR, read comments, post a comment, checkout a PR branch) reuse the recipes in `../address-review/references/github-api.md` — derive `OWNER`/`REPO` from `gh repo view --json owner,name`, nothing hardcoded. Don't re-author `gh` commands.
 
@@ -46,7 +46,7 @@ The researcher returns one of three verdicts:
 | **failed** | Could not reproduce / the diff's claim doesn't hold | Not a bug as reported (or the PR is broken) — tell the maintainer before briefing |
 | **insufficient** | Not enough detail to attempt it | A strong signal to go back to the reporter for specifics before briefing |
 
-A **confirmed** verification makes a far stronger agent brief. Report the verdict to the maintainer and let them steer the outcome.
+Report the verdict to the maintainer and let them steer the outcome.
 
 ## Step 3: Write the agent brief (when it's actionable)
 

@@ -1,6 +1,6 @@
 ---
 name: module-conventions
-description: The per-module file-type convention for this stack (TanStack Start + Drizzle/Neon + Better Auth) — which file each piece of code belongs in (.server.ts instance · functions.ts server fns · .browser.ts browser code · schema.gen.ts · collection.browser.ts), the framework-enforced boundaries, deep-path imports (no barrels), eager instances, env as single source. Use when creating or refactoring a module, deciding where a piece of code goes, adding a server function, a server-only instance, or a browser client, co-locating a Drizzle schema, or structuring a new feature slice.
+description: Per-module file-type convention for this stack (TanStack Start + Drizzle/Neon + Better Auth) — which role file each piece of code belongs in (.server.ts · functions.ts · .browser.ts · schema.gen.ts), deep-path imports (no barrels), eager instances, env as single source. Use when creating or refactoring a module or feature slice, deciding where a piece of code goes (a server function, a server-only instance, a browser client), or co-locating a Drizzle schema.
 model: opus
 effort: medium
 ---
@@ -50,12 +50,10 @@ Corollaries for seams:
 
 ## Rejected framings
 
-Each convention here rejects a common alternative for a concrete, stack-specific reason — not taste. Naming the rejected framing is what keeps the layout predictable across modules.
-
-- **Barrels (`index.ts` re-exports).** Rejected. A barrel makes the *folder* the interface and hides which file a symbol lives in, so a single `@/module` import can drag an entire module graph — including a `.server.ts` Pool or secret — onto a client or CLI-eval path. Deep-path imports make the **filename the interface**: `@/module/file` pulls exactly that file. (This is also why `env` reads stay a deep `@/shared/env` import.)
-- **Lazy singletons (`??=`, `getX()` init wrappers).** Rejected. Laziness is a *runtime* guard bolted on to compensate for a missing *compile* boundary. The `.server.ts` suffix already keeps the instance out of the client bundle at build time (a violating import is a build error), so eager `export const x = ...` is both simpler and stronger. `new Pool(...)` doesn't connect at construction and a TanStack DB collection doesn't fetch until its first subscriber, so eager module-eval costs nothing — the lazy wrapper buys only indirection.
-- **`.client.ts` as a boundary suffix.** Rejected. It *reads* like the mirror of `.server.ts`, but TanStack Start enforces nothing on `.client.ts` — it's a false compile guarantee that lulls you into importing server code from it. Browser-only code uses the plain-descriptive **`.browser.ts`** (no enforced boundary, honestly named) with `import type`-only references to server modules.
-- **Type-based buckets (`components/`, `services/`, `hooks/`, `lib/`, `utils/`).** Rejected. Grouping by *kind* scatters one feature across six folders and lets anything import anything. Group by feature/domain slice; a one-off sub-piece stays inline in its role file until a second caller earns it its own file. `lib.*`/`utils.*` names are rejected outright — name the file by what it does.
+- **Barrels (`index.ts` re-exports).** Rejected. A barrel makes the *folder* the interface and hides which file a symbol lives in, so a single `@/module` import can drag an entire module graph — including a `.server.ts` Pool or secret — onto a client or CLI-eval path.
+- **Lazy singletons (`??=`, `getX()` init wrappers).** Rejected. Laziness is a *runtime* guard bolted on to compensate for a missing *compile* boundary — `.server.ts` already IS that boundary, so the lazy wrapper buys only indirection.
+- **`.client.ts` as a boundary suffix.** Rejected. It *reads* like the mirror of `.server.ts`, but TanStack Start enforces nothing on it — a false compile guarantee that lulls you into importing server code from it. Browser-only code uses the honestly named **`.browser.ts`**.
+- **Type-based buckets (`components/`, `services/`, `hooks/`, `lib/`, `utils/`).** Rejected. Grouping by *kind* scatters one feature across six folders and lets anything import anything. Group by feature/domain slice; a one-off sub-piece stays inline in its role file until a second caller earns it its own file.
 - **Depth measured as lines-of-implementation ÷ lines-of-interface.** Rejected (it rewards padding the body). Depth here means **leverage**: how much behaviour a caller gets per unit of interface they must learn — see the deletion test above.
 
 ## Schema co-location

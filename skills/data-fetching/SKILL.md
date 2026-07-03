@@ -1,6 +1,6 @@
 ---
 name: data-fetching
-description: Recipe for client-side data fetching with TanStack DB — session-guarded server function, query collection derived from the Drizzle schema, consumed via the LiveQuery component. Use when adding data fetching, a new collection, a list or table view, or wiring server data into the UI.
+description: Recipe for client-side data fetching with TanStack DB — server function → Drizzle-derived query collection → LiveQuery. Use when adding data fetching, a new collection, or a list/table view.
 model: opus
 effort: medium
 ---
@@ -106,26 +106,24 @@ A collection (plus its backing server fn) is the module's public data surface: e
 - **Ordering** — whether rows arrive sorted, and by what. The server fn's `.orderBy(...)` is the source order; the `<LiveQuery>` `.orderBy(...)` re-sorts at the consumer. State which order callers can rely on so nobody re-sorts redundantly or assumes an order that isn't guaranteed.
 - **Invariants** — read-only (no `onInsert`/`onUpdate`/`onDelete`); every row already passed `requireAuth` (never returns another tenant's/user's rows — the auth scope is part of the contract); timestamps are real `Date`s (already coerced from the wire), not ISO strings; keyed by `getKey` (unique, stable).
 - **Error modes** — the fetch can fail (network / server-fn throw / schema-validation mismatch). The error surfaces at the `<LiveQuery>` boundary, and recovery is `utils.clearError()` via `retry` — say so, because a caller who doesn't wire `retry` gets a stuck error loop.
-- **Loading / empty** — `children` receives `data` ALWAYS defined (no ready checks); empty is `rows.length === 0`, not `null`/`undefined`. Callers handle empty in `children`; loading is the `fallback`.
+- **Loading / empty** — empty is `rows.length === 0`, never `null`/`undefined`. Callers handle empty in `children`; loading is the `fallback`.
 
-If naming this contract is nearly as much work as the implementation, the seam is too shallow — the point of a wide interface is a lot of hidden behavior behind a small, well-documented surface.
+If naming this contract is nearly as much work as the implementation, the seam is too shallow.
 
 ## Gotchas
 
 | Gotcha | Rule |
 |--------|------|
 | Dates over the wire | Server fns serialize `Date` → ISO string; override every timestamp column with `z.coerce.date()` or schema validation fails at runtime |
-| SSR safety | The eager collection is safe — `startSync` defaults to `false`, so it doesn't fetch until the first `<LiveQuery>` subscriber; SSR module-eval constructs nothing live |
-| Auth | `requireAuth` middleware on every data server fn — they're public endpoints |
 | Retry | `retry` must clear the collection's error (`utils.clearError()`) BEFORE the boundary resets, or the stored error rethrows in a loop |
 | Conditional queries | `useLiveSuspenseQuery` (inside LiveQuery) rejects disabled queries — gate with conditional RENDERING in the parent, never a query returning `undefined` |
 | Alias shadowing | The query source alias (`q.from({ book: … })`) lives in the callback scope — avoid names that shadow route-scope variables |
 
 ## Realtime seam — hypothetical until a 2nd adapter lands
 
-There is exactly ONE adapter today (`queryCollectionOptions`). A seam with one implementation is a **hypothetical seam, not a real one** — one adapter = a guess about the future, two adapters = a seam something actually varies across. So do NOT build for the swap yet: no adapter-selection layer, no `AdapterConfig` type, no factory that "could pick" the adapter, no premature abstraction wrapping `createCollection`. Write the collection against `queryCollectionOptions` directly, as Step 2 shows.
+There is exactly ONE adapter today (`queryCollectionOptions`). A seam with one implementation is a guess about the future, not a real seam — do NOT build for the swap: no adapter-selection layer, no factory, no wrapper around `createCollection`. Write the collection against `queryCollectionOptions` directly, as Step 2 shows.
 
-What earns the abstraction is the SECOND adapter actually arriving. Because the interface above is already wide and stable, the swap stays cheap when it's real: replacing `queryCollectionOptions` with an ElectricSQL adapter (`electricCollectionOptions`) in `collection.browser.ts` changes nothing for `<LiveQuery>` consumers — the collection's row shape, ordering, invariants, and error modes are the contract, and the adapter lives entirely behind it. Introduce the seam THEN, when a second implementation forces it — extend this skill at that point.
+When a second adapter actually lands (e.g. ElectricSQL's `electricCollectionOptions`), the swap stays cheap because the interface above is the contract: replacing the adapter in `collection.browser.ts` changes nothing for `<LiveQuery>` consumers — row shape, ordering, invariants, and error modes hold, and the adapter lives entirely behind them. Introduce the seam then, and extend this skill at that point.
 
 ## What's NOT covered
 

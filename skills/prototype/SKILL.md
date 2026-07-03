@@ -1,12 +1,12 @@
 ---
 name: prototype
-description: Build a throwaway prototype to answer a design question before committing — an interactive terminal app for state/business-logic questions, or several radically different UI variants on one route with a floating switcher. Use when the user wants to prototype something, compare UI variants, sanity-check a data model or state machine, or says "prototype this", "try a few designs", "let me play with it".
+description: Build a throwaway prototype to answer a design question before committing — an interactive terminal app for state/business-logic questions, or several UI variants on one route with a switcher. Use when the user wants to prototype something, compare UI variants, or sanity-check a data model or state machine; or when /dobby:interview or /dobby:research hits a question only answerable by playing with it.
 argument-hint: "[the question the prototype answers]"
 model: opus
 effort: high
 ---
 
-A prototype is **throwaway code that answers a question**. The question decides the shape. You stay the architect: define the question, pick the branch, and spec the variants/actions — the `implementor` agent writes the code.
+A prototype is **throwaway code that answers a question**. The question decides the shape. You stay the architect: define the question, pick the branch, and spec the variants/actions — the `dobby:implementor` agent writes the code.
 
 Typically invoked mid-stage — from `/dobby:interview` when a decision can't be resolved verbally ("which UI variant do we like?", "does this state machine feel right?"), or from `/dobby:research` when a question is only answerable empirically. Also runs standalone.
 
@@ -17,20 +17,20 @@ Write down the ONE question this prototype answers (from `$ARGUMENTS` or the con
 - **"Does this logic / state model feel right?"** → `references/logic.md`. A tiny interactive terminal app that pushes the state machine through cases that are hard to reason about on paper.
 - **"What should this look like?"** → `references/ui.md`. Several radically different UI variations on a single route, switchable via a URL search param and a floating bottom bar.
 
-The two branches produce very different artifacts — getting this wrong wastes the whole prototype. If genuinely ambiguous, ask the user; if unreachable, default to whichever matches the surrounding code (backend module → logic; page/component → UI) and state the assumption at the top of the prototype.
+If genuinely ambiguous, ask the user; if unreachable, default to whichever matches the surrounding code (backend module → logic; page/component → UI) and state the assumption at the top of the prototype.
 
 ## Step 2: Dispatch the build
 
 Read the branch reference and turn it into a concrete build instruction: the question, the branch recipe (embed the reference's process — the implementor doesn't have it), the variant/action spec you decided, and where the prototype lives. Dispatch **ONE `implementor`** (Agent tool, `subagent_type: "dobby:implementor"`) — variants share the route and switcher, so parallel writers would collide.
 
-**No build loop.** Prototypes are exempt from review/verify by design — throwaway code answering a question, not production code. No tests, no work-log entry; the captured answer is the deliverable.
+**No build loop.** Prototypes are exempt from review/verify by design; no work-log entry — the captured answer is the deliverable.
 
 ## Step 3: Hand it over — the play session
 
 - **Logic branch** → give the user the one run command.
 - **UI branch** → give the URL on the **already-running dev server** (the Conductor run — the dev URL comes from `portless get`; never start a second server) + the `?variant=` keys.
 
-The user drives. The interesting moments are "wait, that shouldn't be possible" and "I want the header from B with the sidebar from C" — those are the answer forming. Iterate through the implementor as the user asks for new actions, adjustments, or another variant. Prototypes evolve.
+The user drives. The interesting moments are "wait, that shouldn't be possible" and "I want the header from B with the sidebar from C" — those are the answer forming. Iterate through the implementor as the user asks for new actions, adjustments, or another variant.
 
 ## Step 4: Capture the answer, clean up
 
@@ -39,7 +39,7 @@ The **answer is the only thing worth keeping**. Capture the question + verdict +
 - If a work-session doc exists (repo-root `STATE.md`), write it into the section of the stage that sent you here (`## Findings (interview)` or `## Research`), flagging it as an ADR candidate if it meets the bar (written at `/dobby:wrap`, not here).
 - Standalone → a `NOTES.md` next to the prototype (or the commit message / issue).
 
-Then **delete or absorb** (via the implementor): fold the winning variant or validated logic module into the real code through the normal flow — prototype code was written under prototype constraints, so production-bound pieces get rebuilt properly (the logic branch's pure module is the exception: it's built portable on purpose). Delete the losers, the switcher, and any throwaway route. Don't leave them rotting.
+Then **delete or absorb** (via the implementor): fold the winning variant or validated logic module into the real code through the normal flow — prototype code was written under prototype constraints, so production-bound pieces get rebuilt properly (the logic branch's pure module is the exception: it's built portable on purpose). Delete the losers, the switcher, and any throwaway route.
 
 ## Rules (both branches)
 

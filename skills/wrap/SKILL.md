@@ -1,6 +1,6 @@
 ---
 name: wrap
-description: Close out a work session — reconcile project docs (CONTEXT.md, CLAUDE.md), write any ADRs the work earned, optionally package a reusable skill, run a final human smoke test, then dispose the ephemeral STATE.md and hand off to commit. Use when finishing a feature or session, or to wrap up before committing.
+description: Close out a work session — final human smoke test, doc/ADR reconciliation, optional skill packaging, then dispose the ephemeral STATE.md and hand off to /dobby:commit. Use when finishing a feature or session, or wrapping up before committing.
 argument-hint: ""
 model: opus
 effort: high
@@ -18,13 +18,12 @@ From `STATE.md`'s spec (user flow, goals, edge cases) and anything the executors
 
 Update only what the work changed:
 
-- **Root `CONTEXT.md`** — add or sharpen the domain terms resolved during the session (see `references/context-format.md`). Create it lazily if absent.
-  - **Purity: it is a glossary and NOTHING else — totally devoid of implementation detail.** Not a spec, not a scratch pad, not a home for decisions (those become ADRs). If a line describes HOW something works rather than what a term MEANS, it doesn't belong here.
-  - **Unique-to-this-domain test.** Before adding a term, ask: is this concept unique to this domain, or a general programming concept? General ones — timeouts, error types, retry, cache, utility patterns — don't belong even if the project uses them heavily. Only domain-specific vocabulary earns a glossary entry.
+- **Root `CONTEXT.md`** — add or sharpen the domain terms resolved during the session. Before writing, read `references/context-format.md` for the format and the admission rules (domain-unique terms only — general programming concepts don't belong). Create it lazily if absent.
+  - **Purity: it is a glossary and NOTHING else.** Not a spec, not a scratch pad, not a home for decisions (those become ADRs). If a line describes HOW something works rather than what a term MEANS, it doesn't belong here.
 - **Module `CONTEXT.md`** — for each module the work created or changed, create/update its own `CONTEXT.md` (purpose · Files · Interface · Invariants · What's NOT here) so it reflects the module's current interface, invariants, and contents. (Executors keep this current as they build; here you reconcile anything left.)
   - **Cross-reference invariants with the code — don't just transcribe.** When you record or carry forward an invariant, verify it against what the code actually does. If they contradict, surface it rather than writing the stale claim: "the `CONTEXT` says Orders cancel whole, but the code cancels line items — which is right?" A reconciled doc that quietly disagrees with the code is worse than no doc.
 - **CLAUDE.md** — if a new top-level convention emerged, or a new module belongs in the **module map** (one line + a link to the module's `CONTEXT.md`).
-- **docs/adr/** — for each decision flagged as an ADR candidate (in `STATE.md`'s findings) that meets the three criteria in `references/adr-format.md` (hard to reverse · surprising without context · real trade-off), offer to write the ADR. The user approves before you write. Number sequentially — scan `docs/adr/` for the highest existing number and increment (`0001` = the Conductor execution host, so new ADRs start at `0002`). `/dobby:address-review` also writes sequential ADRs into this same directory, so always rescan the directory rather than assuming a next number.
+- **docs/adr/** — for each decision flagged as an ADR candidate (in `STATE.md`'s findings) that meets the three criteria in `references/adr-format.md` (hard to reverse · surprising without context · real trade-off), offer to write the ADR. The user approves before you write. Number sequentially: rescan `docs/adr/` for the highest existing number rather than assuming one — `/dobby:address-review` also writes sequential ADRs into this directory (`0001` = the Conductor execution host).
 
 ## Step 3: Evaluate a reusable skill
 

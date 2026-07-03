@@ -1,6 +1,6 @@
 ---
 name: resolve-conflicts
-description: Resolves an in-progress git merge or rebase conflict by recovering each side's original intent from history and PRs, then reconciling every hunk. Use when a merge, rebase, or cherry-pick left conflict markers, when git reports unmerged paths, or when you need to finish a stuck rebase without losing either side's behaviour.
+description: Resolve an in-progress merge, rebase, or cherry-pick conflict by recovering each side's intent from history and PRs, then reconciling every hunk without losing either side's behaviour.
 disable-model-invocation: true
 model: opus
 effort: high
@@ -27,7 +27,7 @@ For a rebase, `git status` names the commit being replayed; `git log --oneline -
 
 ## Step 2: Recover the INTENT per hunk
 
-For every conflicting hunk, understand *why* each side made its change — the intent, not just the diff. This is synthesis, so you do it. Never resolve a hunk whose purpose you can't state in one sentence per side.
+For every conflicting hunk, understand *why* each side made its change — the intent, not just the diff. Never resolve a hunk whose purpose you can't state in one sentence per side.
 
 - `git log --oneline -L <start>,<end>:<file>` or `git log -p --follow -- <file>` — the commits that produced each side of the hunk, with their messages.
 - `git log --merge -p -- <file>` — only the commits that differ between the two sides for that file (the ones actually in conflict).
@@ -62,15 +62,13 @@ Only after Step 4 is green. Stage the resolved files, then hand the actual commi
 - **Rebase:** stage the resolved files, then `git rebase --continue`. This replays the NEXT commit — which may raise a fresh conflict. Loop back to Step 1 for each one until `git status` reports the rebase is done. Then suggest `/dobby:commit` for any follow-up.
 - **Cherry-pick:** `git add <resolved-files>`, then `git cherry-pick --continue`.
 
-If an incompatible hunk forced a trade-off (Step 3), tell the user it's an ADR candidate for `/dobby:wrap` (hard-to-reverse ∧ surprising ∧ real trade-off).
-
 ## Next step
 
 Plain-text handoff — no AskUserQuestion, no Skill-tool auto-invoke:
 
 - **Rebase still replaying** → loop back to Step 1 for the next conflicted commit; don't stop until `git status` says the rebase is complete.
 - **Resolved and staged** → suggest the user TYPE `/dobby:commit` to finish the commit and open/update the PR.
-- **A trade-off was recorded** → suggest `/dobby:wrap` to capture the ADR.
+- **An incompatible hunk forced a trade-off (Step 3)** → tell the user it's an ADR candidate and suggest `/dobby:wrap` to capture it (hard-to-reverse ∧ surprising ∧ real trade-off).
 
 ## Language
 

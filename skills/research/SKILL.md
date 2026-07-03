@@ -1,6 +1,6 @@
 ---
 name: research
-description: Gather the technical context a plan needs before building — fetch current docs for the libraries/SDKs/CLIs/services a task will touch, find existing skills/modules to reuse, and resolve technical unknowns. Use after aligning on a task and before planning it, or when asked to research the tech or approach for an upcoming change. (For a one-off doc lookup, use find-docs directly.)
+description: Gather the technical context a plan needs before building — current docs, reusable skills/modules, resolved unknowns. Use after aligning on a task and before planning it, or when asked to research the tech or approach for an upcoming change. (For a one-off doc lookup, use find-docs directly.)
 argument-hint: "[technologies or questions to research]"
 model: opus
 effort: high
@@ -21,7 +21,7 @@ If nothing is uncertain and no external tech is involved, say so and stop — do
 
 ## Step 2: Dispatch researchers (parallel)
 
-Hand each independent research item to a `researcher` agent (Agent tool, `subagent_type: "dobby:researcher"`), in parallel — each one fetches current docs (via `ctx7`), traces the codebase, and returns grounded findings. Don't fetch docs or grep in the main thread; that's what the researchers are for. Group sensibly — one per technology, or per cluster of related unknowns:
+Hand each independent research item to a `researcher` agent (Agent tool, `subagent_type: "dobby:researcher"`), in parallel — each one fetches current docs (via `ctx7`), traces the codebase, and returns grounded findings. Group sensibly — one per technology, or per cluster of related unknowns:
 
 Feed each researcher **dual vocabulary** so findings name things consistently: (1) the **architecture vocabulary** (`/dobby:spec`'s `references/architecture-vocab.md` — module / interface / depth / seam / adapter / leverage / locality) for structural claims, and (2) the **project's own domain glossary** (its `CONTEXT.md`) for domain nouns. A researcher that doesn't hold both invents its own words and the plan has to re-translate. Tell each one to report in these two vocabularies (structure in the architecture terms, domain in the project's terms) and to flag any concept it can't name in either.
 
@@ -29,7 +29,7 @@ Feed each researcher **dual vocabulary** so findings name things consistently: (
 - **Codebase reuse** → "find existing modules/patterns in this repo that already do `<X>`; report paths + how callers use them".
 - **Bounded unknown** → "resolve `<question>` against the docs/code and report the answer with evidence".
 
-For BROAD or open web questions (architecture comparisons, "how do teams do X", cross-approach trade-offs), delegate to **`deep-research`** instead — its multi-source, fact-checked report is the right tool, not a single `researcher`. For a question only answerable empirically ("does this actually work / feel right?", "which variant do we like?"), don't research it to death — send the user to TYPE **`/dobby:prototype`** (logic or UI branch; do NOT auto-invoke it — typed entry applies its own `model`/`effort`) and fold the captured answer into the brief, or flag it as Open for the plan if it can wait.
+For BROAD or open web questions (architecture comparisons, "how do teams do X", cross-approach trade-offs), delegate to **`deep-research`** instead — its multi-source, fact-checked report is the right tool, not a single `researcher`. For a question only answerable empirically ("does this actually work / feel right?", "which variant do we like?"), don't research it to death — send the user to TYPE **`/dobby:prototype`** (logic or UI branch; do NOT auto-invoke it — see Next step for why typed entry matters) and fold the captured answer into the brief, or flag it as Open for the plan if it can wait.
 
 ## Step 3: Synthesize the brief (you)
 
