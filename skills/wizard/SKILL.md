@@ -1,16 +1,16 @@
 ---
 name: wizard
-description: Generates an interactive bash wizard that walks a human step by step through a manual procedure — third-party setup, a one-off migration, an A→B state transition — opening URLs, capturing values, confirming each step, and writing .env files and GitHub Actions secrets. Use when the user wants to script a manual setup, generate a setup wizard, or turn a tedious click-through procedure into a repeatable guided run.
+description: Generate an interactive bash wizard that guides a human through a manual procedure — opening URLs, capturing values, and writing .env files and GitHub Actions secrets.
 disable-model-invocation: true
 model: opus
 effort: high
 ---
 
-A **wizard** is a bash script that walks a human, step by step, through a manual procedure that's tedious to do by hand and tedious to re-explain to an AI every time. It opens each URL, says exactly what to click and copy, captures the values, writes them where they belong (`.env`, GitHub secrets), confirms at every stage, and shows how much is left. It might configure a third-party service (Better Auth, Neon, CI secrets), run a one-off migration, or move the project from one state to another.
+A **wizard** is a bash script that walks a human, step by step, through a manual procedure that's tedious to do by hand and tedious to re-explain to an AI every time — configuring a third-party service (Better Auth, Neon, CI secrets), running a one-off migration, or moving the project from one state to another. It opens each URL, says exactly what to click and copy, captures the values, and writes them where they belong (`.env`, GitHub secrets).
 
-The delightful UX is already solved by `references/template.sh` — progress with time-remaining, confirmation gates, cross-platform URL opening (including WSL), hidden secret entry, idempotent `.env` upserts, `gh secret`/`gh variable` writes with graceful degradation when `gh` is missing, and a closing summary. **The only work is to scope the procedure and author its stages.** The library above the `# STAGES` marker is identical in every wizard; that consistency is the point — it is copied verbatim and NEVER hand-edited.
+The delightful UX is already solved by `references/template.sh` — progress with time-remaining, confirmation gates, cross-platform URL opening (including WSL), hidden secret entry, idempotent `.env` upserts, `gh secret`/`gh variable` writes with graceful degradation when `gh` is missing, and a closing summary. **The only work is to scope the procedure and author its stages.**
 
-You stay the architect: scope the procedure and map each stage's journey, then dispatch a `dobby:implementor` to copy the template and author the stages over it. A wizard is **ephemeral by default** — built for one run, saved to a scratch or `scripts/` path, deleted when the job's done. Commit it only when the user wants a repeatable setup path that should live in the repo. `/dobby:onboard` may offer to invoke this.
+You stay the architect: scope the procedure and map each stage's journey, then dispatch a `dobby:implementor` to copy the template and author the stages over it. A wizard is **ephemeral by default** — built for one run, saved to a scratch or `scripts/` path, deleted when the job's done. Commit it only when the user wants a repeatable setup path that should live in the repo.
 
 ## Step 1: Scope the procedure
 
@@ -36,7 +36,7 @@ Hand the mapped-out procedure to **ONE `dobby:implementor`** (Agent tool, `subag
 - The target path (scratch or `scripts/`; ephemeral by default).
 - The ordered stages from Steps 1–2, each with its URL, click-path, captured variable, destination, and secret/public flag.
 - These authoring rules (the implementor doesn't have this skill's context):
-  - **Copy `references/template.sh` verbatim to the target path.** Author ONLY below the `# STAGES` marker (line 189). **NEVER edit the library above the marker** — that consistency is load-bearing.
+  - **Copy `references/template.sh` verbatim to the target path.** Author ONLY below the `# STAGES` marker. **NEVER edit the library above the marker** — that consistency is load-bearing.
   - Replace the example stage with one `stage "Name" <minutes>` per step, in dependency order. Set `TOTAL_STAGES` and `TOTAL_MINUTES` to **honest** estimates (they drive the time-remaining display).
   - Use the library helpers: `stage`, `say`/`step`/`note`/`warn`, `open_url`, `ask`/`ask_secret`, `write_env`, `set_secret`/`set_var`, `pause`/`confirm`.
   - Hold the template's bar: open the URL before asking for its value; `ask_secret` for anything secret; `write_env` every persisted value; `set_secret` only the values CI actually needs (each name must exactly match a `secrets.*` reference); `confirm` before any irreversible action. Each `stage` clears the screen — keep a stage to one focused task so nothing the human needs scrolls away.

@@ -1,12 +1,12 @@
 ---
 name: diagnose
-description: Disciplined diagnosis loop for hard bugs and performance regressions — build a fast deterministic feedback loop, rank falsifiable hypotheses, instrument one variable at a time. Use when something is broken/throwing/failing, a bug is intermittent or non-obvious, or there's a performance regression.
+description: Disciplined diagnosis loop for hard bugs — build a fast deterministic feedback loop, rank falsifiable hypotheses, instrument one variable at a time. Use when something is failing, a bug is intermittent or non-obvious, or there's a performance regression.
 argument-hint: "[the bug or symptom]"
 model: claude-fable-5[1m]
 effort: max
 ---
 
-For hard bugs (intermittent, non-obvious, performance regression). For a trivial bug, just fix it. The rule: **don't patch and pray** — the fastest path to a fix is a tight feedback loop, ranked hypotheses, and one-variable-at-a-time instrumentation.
+For hard bugs (intermittent, non-obvious, performance regression). For a trivial bug, just fix it. The rule: **don't patch and pray**.
 
 This skill is also the `dobby:verifier`'s named downstream: when verification hits an **opaque 500** (a server error with no actionable message), the verifier hands off here to diagnose it.
 
@@ -37,7 +37,7 @@ If you genuinely cannot build a loop: stop and say so, list what you tried, and 
 
 Before you form a single hypothesis, name **ONE command** — a test invocation, a `curl`, a script path — that you have **already run at least once**. Paste the exact invocation *and* its output. That command must be:
 
-- [ ] **Red-capable** — it drives the actual bug code path and asserts the user's **exact symptom**, so it goes red on *this* bug and green once fixed. Not "runs without erroring" — it must be able to *catch this specific bug*.
+- [ ] **Red-capable** — it drives the actual bug code path and asserts the user's **exact symptom**, so it goes red on *this* bug and green once fixed. Not "runs without erroring".
 - [ ] **Deterministic** — same verdict every run (flaky bugs: a pinned, high reproduction rate, per above).
 - [ ] **Fast** — seconds, not minutes.
 - [ ] **Agent-runnable** — you can run it unattended (a human in the loop only via a structured HITL script).
@@ -58,7 +58,7 @@ Then generate **3-5 ranked, falsifiable** hypotheses before testing any — each
 
 Each probe maps to a prediction. **Change one variable at a time.** Prefer a debugger/REPL over logs; never "log everything and grep". **Tag every debug log** with a unique prefix (e.g. `[DEBUG-a4f2]`) so cleanup is one grep.
 
-**Perf branch (measure first, fix second).** For a performance regression, logs are usually the wrong tool. Instead: establish a **baseline measurement** — a timing harness, `performance.now()`, a profiler, or a query plan — then **bisect** toward the hot spot one change at a time. Never optimise before you have a number; a guess-driven perf "fix" that isn't measured against the baseline is patch-and-pray.
+**Perf branch (measure first, fix second).** For a performance regression, logs are usually the wrong tool. Instead: establish a **baseline measurement** — a timing harness, `performance.now()`, a profiler, or a query plan — then **bisect** toward the hot spot one change at a time. Never optimise before you have a number — that's patch-and-pray.
 
 ## Step 5: Fix
 

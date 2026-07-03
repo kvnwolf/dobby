@@ -1,32 +1,25 @@
 ---
 name: teach
-description: Teach the user a topic on demand — explain it from trusted resources, run a tight feedback loop to verify understanding, and record demonstrated understanding as evidence. Use when the user asks you to teach, explain, walk through, or help them learn/understand a concept, tool, or skill and check they got it.
+description: Learn a topic in-session — taught from trusted resources, verified with a tight feedback loop, recorded as evidence of understanding.
 disable-model-invocation: true
 argument-hint: "What would you like to learn about?"
 model: opus
 effort: high
 ---
 
-The user asked you to teach them something. This is a **light, on-demand** capability — one topic, in-session, conversational. You are the architect and the teacher: teaching is interaction, not code work, so you do it yourself (no worker dispatch). Do NOT build a persistent lesson workspace (no HTML lessons, no asset library, no print machinery) — that weight is out of scope. Produce understanding, verify it, record the evidence.
-
-The loop, every time:
-
-1. **Ground in why** — know the mission before teaching.
-2. **Teach the knowledge** — from trusted resources, never parametric memory.
-3. **Close a tight feedback loop** — a quiz or task that forces retrieval, feedback immediate.
-4. **Record demonstrated understanding** — as evidence, only when it's real.
+The user asked you to teach them something. This is a **light, on-demand** capability — one topic, in-session, conversational. You are the architect and the teacher: teaching is interaction, not code work, so you do it yourself (no worker dispatch). Do NOT build a persistent lesson workspace (no HTML lessons, no asset library, no print machinery) — that weight is out of scope. Produce understanding, verify it, record the evidence — the four steps below, every time.
 
 ## Step 1: Ground in the mission
 
-Teaching that isn't tied to a concrete goal feels abstract and you can't judge what to teach next. Before explaining anything, know *why* the user wants this — the real-world outcome, not "to understand X". If it's obvious from `$ARGUMENTS`, state it back in one line and move on. If it's vague, ask once (interview them), then proceed.
+Before explaining anything, know *why* the user wants this — the real-world outcome, not "to understand X". If it's obvious from `$ARGUMENTS`, state it back in one line and move on. If it's vague, ask once (interview them), then proceed.
 
 If the topic is large, pick the smallest slice that serves the mission and sits in the user's zone of proximal development (challenging, not overwhelming). One tangible win per pass.
 
-The mission format (why it matters, how to keep it concrete) is in `references/mission-format.md` — read it if the user wants to make the mission durable across sessions.
+When the user wants the mission durable across sessions, read `references/mission-format.md`.
 
 ## Step 2: Teach the knowledge — from trusted resources
 
-**Never trust your parametric knowledge.** Ground the explanation in high-quality, high-trust resources: fetch current docs (use the `ctx7` CLI / `find-docs` for any library, framework, API, or tool), cite primary sources, and surface links so the user can verify. A claim without a citation is a claim you shouldn't make.
+**Never trust your parametric knowledge.** Ground the explanation in high-quality, high-trust resources: fetch current docs (use the `ctx7` CLI / `find-docs` for any library, framework, API, or tool), cite primary sources, and surface links so the user can verify.
 
 Teach only the knowledge the win requires — no encyclopedia. Keep it tight, concrete, and scannable. Recommend ONE primary source (the best resource you found) for the user to read or watch after.
 
@@ -40,7 +33,7 @@ Fluency ≠ storage strength. **Fluency** (smooth in-the-moment recall right aft
 
 ## Step 3: Close a tight feedback loop
 
-Understanding is proven by retrieval, not by nodding along. After teaching, run an immediate feedback loop — a quiz question or a small task — where the user recalls or applies, and you give feedback *immediately*. Tight loop, fast signal. This is the effortful-retrieval difficulty that turns knowledge into a skill.
+Understanding is proven by retrieval, not by nodding along. After teaching, run an immediate feedback loop — a quiz question or a small task — where the user recalls or applies, and you give feedback *immediately*.
 
 **Quiz anti-cueing rule (mandatory):** every answer option must be the **same word count and, where possible, the same character count** — no length tells, no formatting tells (no bolding one option, no punctuation that flags the answer). The distractors must be as plausibly-shaped as the correct answer, or the quiz tests test-taking, not understanding.
 
@@ -50,9 +43,7 @@ Prefer questions that force recall from memory over ones the user can recognize.
 
 When the user *demonstrates* real understanding (answers correctly under retrieval, completes the task, corrects a prior misconception, or discloses solid prior knowledge), record it as evidence — a learning record. This is the evidence ledger that sets the floor for what to teach next and prevents re-teaching what's known. Format and the "what does NOT qualify" bar (coverage is not learning) are in `references/learning-record-format.md`.
 
-If the topic has its own nomenclature, maintain a tight glossary as the user's understanding compresses — one canonical term per concept, aliases listed under `_Avoid_`. This dovetails with a project's `CONTEXT.md`: the same discipline (opinionated canonical term, avoid-list, tight definitions). Format in `references/glossary-format.md`. Add a term only once the user can use it correctly — the glossary is a record of compressed understanding, not a dictionary to read.
-
-Record only what's real. Material merely covered is not learning; wait for evidence.
+If the topic has its own nomenclature, maintain a tight glossary as the user's understanding compresses — one canonical term per concept, aliases listed under `_Avoid_`. Format in `references/glossary-format.md`. Add a term only once the user can use it correctly — the glossary is a record of compressed understanding, not a dictionary to read.
 
 ## Next step
 

@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Compact the current session into an ephemeral fork document another Claude Code session can pick up. Use when context is getting long, the work spans days, or you want to branch a fresh session off a clean summary instead of continuing this one. Do not use to permanently document decisions — that is CONTEXT.md / ADRs / commits.
+description: Compact the current session into an ephemeral fork document a fresh Claude Code session can pick up.
 argument-hint: "What will the next session focus on?"
 disable-model-invocation: true
 model: opus
@@ -9,7 +9,7 @@ effort: medium
 
 Write a handoff document a fresh Claude Code session can start from. This is a **side-path**, not a lifecycle stage — it never chains a Next-step and never disposes `STATE.md`.
 
-**Context hygiene — fork, don't continue.** A long session accumulates dead ends, superseded plans, and stale reasoning that a fresh session shouldn't pay for. When the useful state fits in a short doc, prefer forking (write this handoff, start a clean session from it) over continuing (dragging the whole transcript forward). The handoff is the compacted seam between the two sessions: enough to resume, none of the sediment. It is **ephemeral** — it lives in the OS temp dir, gets referenced by path, and is discarded once the next session has absorbed it. Durable memory belongs in `CONTEXT.md`, ADRs, and commits, not here.
+**Context hygiene — fork, don't continue.** A long session accumulates dead ends, superseded plans, and stale reasoning that a fresh session shouldn't pay for. The handoff is the compacted seam between the two sessions: enough to resume, none of the sediment. It is **ephemeral** — discarded once the next session has absorbed it. Durable memory belongs in `CONTEXT.md`, ADRs, and commits, not here.
 
 Reading the session for synthesis is the architect's own work here (like `/dobby:learn`) — you are compacting what you already hold, not dispatching a worker.
 
@@ -34,7 +34,7 @@ Structure:
 - **Where we are** — 3-6 lines of current state: what's done, what's in flight, what's blocked. Prose, not a transcript replay.
 - **Artifacts** — the reference list from Step 1, each as `path/URL — one line on what it holds`. No pasted bodies.
 - **Open questions / next moves** — the decisions still live and the concrete next actions, so the fresh session doesn't re-derive them.
-- **Suggested skills** — the `/dobby:*` commands the next session should run, most-likely first, each with a one-line why. This is what turns the doc into a runnable resume point.
+- **Suggested skills** — the `/dobby:*` commands the next session should run, most-likely first, each with a one-line why.
 
 Example of the suggested-skills section:
 
@@ -47,7 +47,7 @@ Example of the suggested-skills section:
 
 ## Step 3: Redact
 
-Before the file is final, scrub secrets and PII: API keys, tokens, passwords, connection strings, private emails, personal names beyond what the work needs. Reference where a secret lives (`.env`, the secret manager) rather than its value. When unsure, redact — the doc goes to a temp dir and may be shared into another session.
+Before the file is final, scrub secrets and PII: API keys, tokens, passwords, connection strings, private emails, personal names beyond what the work needs. Reference where a secret lives (`.env`, the secret manager) rather than its value. When unsure, redact.
 
 ## Next step
 

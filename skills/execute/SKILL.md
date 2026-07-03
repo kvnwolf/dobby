@@ -1,8 +1,8 @@
 ---
 name: execute
-description: Build an approved plan's tasks by running a workflow where, per task, separate agents implement → code-review → verify in a loop until both pass. Use to execute a task plan or run the build-verify-review loop. Standalone, or as the execute stage after /dobby:spec.
+description: Build an approved plan's tasks — per task, separate agents implement → code-review → verify in a loop until both pass. Use to execute a task plan, standalone or as the execute stage after /dobby:spec.
 argument-hint: "[plan or STATE.md]"
-model: claude-fable-5[1m]
+model: opus
 effort: high
 ---
 
@@ -14,19 +14,19 @@ Read `STATE.md` (from `/dobby:scope` + `/dobby:spec`): the `## Spec` task table 
 
 **Fail-fast preconditions — check BEFORE launching wave 1.** A missing piece surfaces as a needs-human flag halfway through a wave, after you've already burned agent turns; catch it now instead.
 - The spec exists and every task has the fields above (a task with no verify recipe or no affected areas can't be run — stop and route back to `/dobby:spec`).
-- **Testing gate is resolved for the whole run:** from the spec's Testing Decisions, know whether the repo has a runnable test suite (`hasTestSuite`) and, if so, which tasks are marked test-first. No suite (a lib / CLI / plugin like dobby) → `hasTestSuite = false`, the build loop is the classic 3-step, and no task's `testFirst` flag matters.
+- **Testing gate is resolved for the whole run:** from the spec's Testing Decisions, know whether the repo has a runnable test suite (`hasTestSuite`) and, if so, which tasks are marked test-first. No suite (a lib / CLI / plugin like dobby) → `hasTestSuite = false`.
 - Dependencies form a runnable wave order (no task depends on something not in the plan).
 If any precondition fails, STOP and say what's missing — do not launch a partial run.
 
 ## Step 2: Launch the build workflow (always)
 
-First, get the `devUrl` — you do NOT start the dev server. Under Conductor, `auto_run_after_setup` already launched the run script, so the coordinator's job is to (1) resolve the dev URL deterministically and (2) confirm that run is alive, then pass it to the workflow. Do NOT read any terminal output — resolve the URL with `portless get` and health-check it with `curl`:
+First, get the `devUrl` — you do NOT start the dev server (under Conductor, `auto_run_after_setup` already launched the run script) and do NOT read any terminal output:
 
 1. **Resolve the URL** with `portless get <NAME>`, where `NAME` is the package.json `name` with any leading `@scope/` stripped:
    ```
    portless get "$(node -p "require('./package.json').name.replace(/^@[^/]+\//, '')")"
    ```
-   If a `portless.json` or a `portless` key in `package.json` overrides the name, use that instead. `portless get` prints the exact branch-prefixed `https://<branch>.<name>.localhost` WITHOUT starting the server (Conductor's `auto_run_after_setup` already started it). If the command errors nonzero because `get` is unknown, portless is too old → surface it as **"needs portless >= 0.12"** rather than falling back to any other method.
+   If a `portless.json` or a `portless` key in `package.json` overrides the name, use that instead. `portless get` prints the exact branch-prefixed `https://<branch>.<name>.localhost` WITHOUT starting the server. If the command errors nonzero because `get` is unknown, portless is too old → surface it as **"needs portless >= 0.12"** rather than falling back to any other method.
 2. **Confirm the run is alive** by polling `curl`: `curl -sf --max-time 5 <devUrl>`, up to **6 attempts, 5s apart** (~30s bound). If it never responds, surface a clear error rather than proceeding.
 
 Verifiers check against this single shared server and must NOT each start their own (parallel starts collide on the port).

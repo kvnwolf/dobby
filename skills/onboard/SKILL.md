@@ -1,6 +1,6 @@
 ---
 name: onboard
-description: Initialize a project so the work skills can run in it — interview the user about the project, scaffold the base files (CONTEXT.md, CLAUDE.md, docs/adr/, .gitignore), set the workflow config (issue tracker, dev command), and configure Conductor setup (write .conductor/settings.toml + setup.sh/archive.sh stubs so each workspace installs and auto-runs). Use once at the start of a new (greenfield) project, or to set up an existing repo for the work skills.
+description: Set up a repo (greenfield or existing) for the work skills — interview, scaffold the base files, write the Conductor config. Run once.
 disable-model-invocation: true
 argument-hint: "[project idea, if greenfield]"
 model: claude-fable-5[1m]
@@ -28,7 +28,7 @@ The project runs through **Conductor**: every workspace runs `.conductor/setup.s
 
 **`.conductor/settings.toml`** — the repo-level Conductor config (checked in). Pick the template by the `run_mode` decided in Step 1, and set BOTH `run_mode` and `auto_run_after_setup` **explicitly** — neither has a documented default, so an omitted key is undefined behavior, not a safe fallback.
 
-Concurrent — no shared singletons; each workspace gets its own dev server, and **portless** isolates the URL per worktree (branch-prefixed), so nothing collides and no `$CONDUCTOR_PORT` is needed. The run command wraps the dev command with `portless run`:
+Concurrent — no shared singletons; each workspace runs its own dev server behind its portless URL:
 
 ```toml
 # concurrent (portless-isolated URLs per worktree, no singletons)
@@ -44,7 +44,7 @@ default = true
 icon = "play"
 ```
 
-Nonconcurrent — a shared DB/port singleton (e.g. local Supabase / a fixed local Postgres you can only run once per machine). The run command still wraps the dev command with `portless run` (so the URL stays branch-prefixed), but `run_mode = "nonconcurrent"` makes Conductor stop any other active run so two workspaces never fight over the singleton:
+Nonconcurrent — a shared DB/port singleton. The run command still wraps the dev command with `portless run`; `run_mode = "nonconcurrent"` makes Conductor stop any other active run:
 
 ```toml
 # nonconcurrent (shared DB/port singleton, e.g. local Supabase)
@@ -61,7 +61,7 @@ default = true
 icon = "play"
 ```
 
-`auto_run_after_setup × run_mode` interaction — **write the two keys together and leave a comment**: with `nonconcurrent + auto_run_after_setup = true`, every newly-created workspace auto-starts the run, which (being nonconcurrent) STEALS the shared singleton from whatever workspace was running it. That may be exactly what you want (the newest workspace is the active one), but it's surprising — so state it in a comment right above the keys, e.g. `# nonconcurrent + auto_run: each new workspace steals the shared dev server from the previous one.`
+`auto_run_after_setup × run_mode` interaction — **write the two keys together and leave a comment**: with `nonconcurrent + auto_run_after_setup = true`, every newly-created workspace auto-starts the run and STEALS the shared singleton from whatever workspace was running it. That may be exactly what you want, but it's surprising — state it in a comment right above the keys, as in the template.
 
 Copy gitignored files each workspace needs (env, local config) with **`file_include_globs`** — a **multi-line string, one glob per line** (NOT a TOML array):
 
@@ -106,12 +106,12 @@ Each scaffolded choice below carries a one-line **why** — say it to the user a
 - **`CONTEXT.md`** (repo root) — the domain glossary. Format: `# {Project}` + a 1-2 sentence description, then `## Language` (each term as `**Term**:` + a one-sentence definition + `_Avoid_:` aliases, grouped under subheadings when clusters emerge), `## Relationships` (bold terms + cardinality), and `## Flagged ambiguities`. Opinionated, tight, domain-only — start small with the Step 1 terms; it grows via `/dobby:interview` and `/dobby:wrap`. *Why:* the work skills read the ubiquitous language from here — it's the single place a term is defined, so agents and humans mean the same thing.
 - **`CLAUDE.md`** (repo root) — the agent config, with these sections:
   - **Product** — what it is + who it's for.
-  - **Stack** — language, framework, data layer, key services, plus a short **Dev** note: the app runs via **Conductor** (`.conductor/settings.toml`; `auto_run_after_setup` auto-starts the run script in each workspace), and the run command wraps the dev command with **portless**. Do NOT pin a `npm run dev` command or a hardcoded dev URL here — the URL is branch-prefixed, so it is NOT hardcodable; `/dobby:execute`'s verifier obtains it via `portless get <name>` (deterministic, branch-prefixed).
+  - **Stack** — language, framework, data layer, key services, plus a short **Dev** note: the app runs via **Conductor** (`.conductor/settings.toml`; `auto_run_after_setup` auto-starts the run script in each workspace), and the run command wraps the dev command with **portless**. Do NOT pin a `npm run dev` command or a hardcoded dev URL here — the Workflow config section covers how the verifier obtains it.
   - **Module map** — one line per top-level feature/domain module, each linking to that module's own `CONTEXT.md`, e.g. `- [src/<area>/<module>/](src/<area>/<module>/CONTEXT.md) — what it owns`.
   - **Conventions** — encode deep, contained modules: organize by feature/domain (NO type-based `components/`/`services/`/`lib/` buckets); NO barrels — callers import by deep path, each file named by its role (the filename is the interface); co-locate the slice; inline by default; **each module carries its own `CONTEXT.md`** (purpose · Files · Interface · Invariants · What's NOT here). "What works for humans is also great for AI."
-  - **Workflow config** — the issue tracker (GitHub / Linear / local) and how the app runs: **via Conductor** (`.conductor/settings.toml`, `auto_run_after_setup`), with the run command wrapping the dev command in **portless**. Do NOT pin a hardcoded dev URL — `/dobby:execute`'s verifier obtains it via `portless get <name>` (deterministic, branch-prefixed via the worktree, so it is NOT hardcodable). For a no-dev-server project, say so (there's no run script → no dev URL; the verifier verifies programmatically).
+  - **Workflow config** — the issue tracker (GitHub / Linear / local) and how the app runs: **via Conductor**, run command wrapped in **portless**. Do NOT pin a hardcoded dev URL — `/dobby:execute`'s verifier obtains it via `portless get <name>` (deterministic, branch-prefixed via the worktree, so it is NOT hardcodable). For a no-dev-server project, say so (there's no run script → no dev URL; the verifier verifies programmatically).
 
-  *Why:* this is the adapter the generic work skills read from — Product/Stack orient every worker, the Module map + Conventions make the tree navigable to humans and agents alike, and Workflow config tells `/dobby:execute` how to run and verify. See `references/tracker-seeds.md` for the per-tracker Workflow-config seed to drop in, and the role→label table.
+  *Why:* this is the adapter the generic work skills read from — Product/Stack orient every worker, the Module map + Conventions make the tree navigable to humans and agents alike, and Workflow config tells `/dobby:execute` how to run and verify. When writing the Workflow-config section, read `references/tracker-seeds.md` for the seed matching the chosen tracker and the role→label table.
 - **docs/adr/** — create the directory (add `0001-...` only if the stack choice meets the three ADR criteria: hard to reverse · surprising · real trade-off). *Why:* durable architecture decisions get a numbered home from day one, so `/dobby:wrap` and `/dobby:improve-architecture` have somewhere to write and something to respect.
 - **.gitignore** — ensure `STATE.md` is ignored (the ephemeral work-session doc) and `.conductor/settings.local.toml` is ignored (machine-local Conductor secrets), plus the stack's standard ignores. Note: `.conductor/settings.toml`, `setup.sh`, and `archive.sh` ARE checked in — only `settings.local.toml` is ignored. *Why:* work-session scratch and machine-local secrets must never reach the remote; the checked-in Conductor config must, so every workspace scaffolds identically.
 
@@ -119,14 +119,14 @@ Don't scaffold per-module `CONTEXT.md` files now — each module gets its own wh
 
 ## Step 4: Set the commit contract
 
-Create `.claude/commit.config.yml` following `references/commit-config.md` — discovery (docs to sync + pre-commit checks, via a `dobby:researcher`), user confirmation, write. On a greenfield repo the doc list starts with the files just scaffolded and the checks come from the stack's own toolchain (typecheck/lint/test). This is the contract `/dobby:commit` reads — without it, commits skip doc-sync and checks. **No-clobber:** if `.claude/commit.config.yml` already exists, don't overwrite it — the file itself says to skip; merge in any missing docs/checks additively with the user's approval. *Why:* `/dobby:commit` gates every commit on this file — it's how doc-sync and pre-commit checks stay enforced without a separate hook manager.
+Create `.claude/commit.config.yml` following `references/commit-config.md` — discovery (docs to sync + pre-commit checks, via a `dobby:researcher`), user confirmation, write. On a greenfield repo the doc list starts with the files just scaffolded and the checks come from the stack's own toolchain (typecheck/lint/test). Step 3's no-clobber rule applies: an existing config gets missing docs/checks merged additively with the user's approval, never overwritten. *Why:* `/dobby:commit` gates every commit on this file — it's how doc-sync and pre-commit checks stay enforced without a separate hook manager.
 
 ## Step 5: Hand off
 
 Setup is done. End with a plain-text handoff: suggest the user TYPE `/dobby:scope <first goal>` (ask for the goal first if not already clear) — NO AskUserQuestion, NO Skill-tool auto-invoke; typed entry applies `/dobby:scope`'s own `model`/`effort`. Or stop here — they'll start a work session later.
 
 - **`/dobby:scope <first goal>`** *(Recommended)* — start the first work session.
-- **`/dobby:wizard`** *(if external services need manual setup)* — generate a guided wizard to create the DB, configure auth, and set CI secrets (only offer when Step 1 surfaced services that need one-time human setup).
+- **`/dobby:wizard`** *(only if Step 1 surfaced services needing one-time human setup)* — generate the guided external-service wizard.
 - **Stop here.**
 
 ## Language

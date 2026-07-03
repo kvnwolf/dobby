@@ -1,11 +1,11 @@
 ---
 name: data-processing
-description: The write-side conventions for this app — forms (useAppForm from @/shared, Zod validation, field + dialog anatomy) and mutation UX (submit-validated dialogs, optimistic in-place toggles, type-to-confirm, toasts). Use when creating, editing, migrating, or refactoring any form, input, validation, submit flow, or data mutation. Write-side partner to /dobby:data-fetching.
+description: The write-side conventions for this app — forms (useAppForm from @/shared, Zod validation, field + dialog anatomy) and mutation UX (submit-validated dialogs, optimistic in-place toggles, type-to-confirm, toasts). Use when touching any form, input, validation, submit flow, or data mutation. Write-side partner to /dobby:data-fetching.
 model: opus
 effort: medium
 ---
 
-This is the **write side** of the app — everything that changes server data, with forms as its primary surface. The read-side partner is `/dobby:data-fetching`. Form anatomy and validation come first; the **Mutations** section governs how a submit/toggle/delete behaves and feels.
+This is the **write side** of the app — everything that changes server data, with forms as its primary surface. The read-side partner is `/dobby:data-fetching`. The **Mutations** section governs how a submit/toggle/delete behaves and feels.
 
 ## Quick start
 
@@ -49,7 +49,7 @@ All components available inside the `form.AppField` render callback:
 
 ### Validation schema
 
-**Name fields and word messages in the project's glossary.** Field names AND the error-message copy must use the exact domain terms from the project's `CONTEXT.md` glossary — not synonyms or invented labels. If the entity is a `Member`, the field is `member` and the message is `"Member is required"`, never "user"/"account"/"person"; if the glossary says `Order`, don't validate a `purchase`. Because entity-bound forms `.pick()` from the entity schema (below), the schema is where a glossary term becomes the single source of BOTH the field name and its message — get it right in `schema.ts` and every form inherits the correct vocabulary. Standalone forms have no entity to borrow from, so match the glossary by hand. Mismatched validation copy (a message that says "user" where the domain says "member") is a glossary drift bug, not just a typo — the user reads these messages and they must speak the domain's language.
+**Name fields and word messages in the project's glossary.** Field names AND the error-message copy must use the exact domain terms from the project's `CONTEXT.md` glossary — not synonyms or invented labels: if the entity is a `Member`, the field is `member` and the message is `"Member is required"`, never "user"/"account"/"person". Entity-bound forms inherit both from the entity schema via `.pick()` (below); standalone forms have no entity to borrow from, so match the glossary by hand.
 
 Two cases — pick the right one:
 
@@ -261,7 +261,7 @@ How a write behaves once submitted. The default is **submit-validated**; optimis
 | In-place **faithful row toggle** — a boolean flip on a row already on screen (disable/reactivate, archive/unarchive) where the new UI state is fully known client-side and rollback is trivial | **Optimistic** — flip now, reconcile on response |
 | Everything else — create, delete, edits with server-computed results, anything that needs server authority (auth, permissions, uniqueness) | **Submit-validated** — await the server, then reflect. NO optimism |
 
-Optimism is justified only when the client already knows the exact post-state and a failure can cleanly roll back. A create can't (no server id yet); a permission-gated action can't (only the server knows the verdict). When unsure, submit-validated.
+A create can't be optimistic (no server id yet); a permission-gated action can't (only the server knows the verdict). When unsure, submit-validated.
 
 ```tsx
 // Optimistic in-place toggle: flip immediately, roll back on failure
@@ -284,9 +284,9 @@ async function toggleActive(row) {
 
 ## Testing
 
-Test a form through its **public interface** — the surface a user drives — and describe WHAT it does, never HOW it's wired. A form's behavior is: fill it, submit it, and observe the outcome (a validation error rendered through `field.ErrorMessage`, the trimmed payload handed to the mutation, the `toast.success`/`toast.error`, the optimistic flip and its rollback). Assert on those observable results, not on internal state — do NOT reach into `form.state`, the Zod schema object, TanStack Form internals, or a specific component's props. A good test reads like a rule from this skill ("submitting a blank required field shows its glossary message", "a failed optimistic toggle rolls the row back and toasts the revert").
+Test a form through its **public interface** — fill it, submit it, and assert on the observable outcome: a validation error rendered through `field.ErrorMessage`, the trimmed payload handed to the mutation, the `toast.success`/`toast.error`, the optimistic flip and its rollback. Do NOT reach into `form.state`, the Zod schema object, TanStack Form internals, or a specific component's props. A good test reads like a rule from this skill ("submitting a blank required field shows its glossary message", "a failed optimistic toggle rolls the row back and toasts the revert").
 
-The point is that these tests must **survive an internal refactor**: swapping `field.Control`'s underlying element, renaming a helper, or restructuring the submit handler changes HOW the form works, not WHAT it does — a behavior test stays green through all of them. If a test would break when you rename an internal function or re-lay-out the JSX without changing what the user sees, it tested implementation, not behavior — rewrite it against the observable outcome. (This is the same behavior-not-implementation discipline the build loop's test author and reviewer enforce — see `dobby:test-author`.)
+The checkable criterion: the test **survives an internal refactor** — swapping `field.Control`'s underlying element, renaming a helper, or restructuring the submit handler must leave it green. If it wouldn't, it tested implementation, not behavior — rewrite it against the observable outcome. (This is the same behavior-not-implementation discipline `dobby:test-author` enforces.)
 
 ## Acceptance checklist
 

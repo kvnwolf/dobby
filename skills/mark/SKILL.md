@@ -1,12 +1,12 @@
 ---
 name: mark
-description: Emit a portable pointer ("indicator") to the CURRENT Claude Code session so it can be mined later from the dobby repo to improve the kit. Use when you hit friction with a dobby skill while working in a consumer project and want to flag this session for /dobby:learn — not fix the kit now.
+description: Emit a portable pointer ("indicator") to the CURRENT Claude Code session. Use when you hit friction with a dobby skill while working in a consumer project and want to flag this session for /dobby:learn — not fix the kit now.
 argument-hint: "[one line: what was rough / what to improve]"
 model: haiku
 effort: low
 ---
 
-This is **kit self-improvement tooling**, not methodology or convention — it deliberately couples to the host (`~/.claude/projects`, `CLAUDE_CODE_SESSION_ID`). It runs in a *consumer* project: you used a dobby skill here, it was rough, and you want to capture *this* session so you can later improve the skill from the dobby repo with `/dobby:learn`. It captures a pointer; it changes nothing.
+This is **kit self-improvement tooling**, not methodology or convention — it deliberately couples to the host (`~/.claude/projects`, `CLAUDE_CODE_SESSION_ID`). It captures a pointer for `/dobby:learn`; it changes nothing.
 
 ## Step 1: Resolve this session's transcript
 
@@ -37,7 +37,7 @@ echo "repo=$REPO when=$WHEN skills=$SKILLS"; echo "root=$ROOT"; echo "state=$STA
 
 ## Step 3: Pick a suggested skill to audit (optional hint)
 
-`SKILLS` lists *every* `/dobby:*` skill the session touched; `/dobby:learn` still has to guess *which one* the friction is about. If `$ARGUMENTS` (the note) or the session clearly points at ONE skill, emit it as `suggested:` — a single `/dobby:<skill>` that pre-orients `learn` on which skill to audit first, so it doesn't have to re-derive the target or ask. This is a **hint, not a verdict**: `learn` mines the evidence and may land elsewhere. Rules:
+`/dobby:learn` still has to guess *which* skill in `SKILLS` the friction is about. If `$ARGUMENTS` (the note) or the session clearly points at ONE skill, emit it as `suggested:` — a single `/dobby:<skill>` that pre-orients `learn` on which skill to audit first. This is a **hint, not a verdict**: `learn` mines the evidence and may land elsewhere. Rules:
 
 - Prefer the skill named or implied in the `note:`. Otherwise, if exactly one skill in `SKILLS` was where the friction happened, suggest that one.
 - Must be one of the `SKILLS` values (never invent a skill the session didn't run).

@@ -1,6 +1,6 @@
 ---
 name: create-skill
-description: Creates or modifies agent skills, including single-workflow and multi-workflow (orchestrator) skills. Use when the user wants to create, write, author, scaffold, edit, update, fix, or refactor a skill, or migrate a skill from single to multi-workflow.
+description: Creates or modifies agent skills, single- or multi-workflow (orchestrator). Use when the user wants a skill created, edited, or migrated between single and multi-workflow.
 model: claude-fable-5[1m]
 effort: max
 ---
@@ -27,7 +27,7 @@ description: [What it does, third person]. Use when [activation triggers].
 - `disable-model-invocation: true` — only the user can invoke (`/name`); use for side-effect or deliberate skills.
 - `user-invocable: false` — hidden from the `/` menu; only the model invokes it (background knowledge).
 
-**Choosing invocation — the two loads.** Keeping a `description` makes the skill **model-invoked**: the agent can fire it autonomously and other skills can reach it, but it pays a **context load** — the description sits in the window every turn. Stripping it (`disable-model-invocation: true`) makes the skill **user-invoked**: zero context load, but it spends **cognitive load** — _you_ become the index that must remember it exists. Keep the description only when the agent must reach the skill on its own, or another skill must; if it only ever fires by hand, make it user-invoked and pay no context load.
+**Choosing invocation — the two loads.** Keeping a `description` makes the skill **model-invoked**: the agent can fire it autonomously and other skills can reach it, but it pays a **context load** — the description sits in the window every turn. Stripping it (`disable-model-invocation: true`) makes the skill **user-invoked**: zero context load, but it spends **cognitive load** — _you_ become the index that must remember it exists. Keep the description only when the agent must reach the skill on its own, or another skill must; if it only ever fires by hand, make it user-invoked and pay no context load. When user-invoked skills multiply past what you can remember, that piled-up cognitive load is cured by a **router skill**: one user-invoked skill that names the others and when to reach for each.
 - `argument-hint` / `arguments` — autocomplete hint and `$name` substitution in the body.
 - `allowed-tools` / `disallowed-tools` — pre-approve or remove tools while the skill is active.
 - `model` / `effort` — override model or reasoning effort (`low|medium|high|xhigh|max`) for the skill's turn.
@@ -38,14 +38,19 @@ Not skill fields: `version`, `license`, `metadata`, `min-version` belong to a pl
 ### Description rules
 
 - Third person always — "Generates X", never "I help" or "You can use"
-- First sentence = capability, second = "Use when [triggers]"
-- Include synonyms and colloquial phrasing to maximize activation surface
+- First sentence = capability, second = "Use when [triggers]" — and front-load the skill's **leading word**; the description is where it does its invocation work
+- **One trigger per branch.** Synonyms that rename a single branch are duplication ("create, write, author, scaffold" is one branch written four times) — collapse them; keep only genuinely distinct branches
+- Cut identity that's already in the body — keep the description to triggers, plus any "when another skill needs…" reach clause
 - Optionally add "Do not use for [X]" to reduce false positives
 - <200 chars ideal, 1024 max
+- **User-invoked skills** (`disable-model-invocation: true`): the description never enters the agent's context — write it human-facing, a one-line summary for the `/` menu, trigger lists stripped
 
 ```yaml
-# Good
-description: Generates conventional commit messages from staged changes. Use when committing code, writing commit messages, or preparing a release.
+# Good — one trigger per branch
+description: Generates conventional commit messages from staged changes. Use when committing or preparing a release.
+
+# Bad — synonyms renaming one branch
+description: Generates commit messages. Use when committing, writing a commit message, making a commit, or crafting commit text.
 
 # Bad — vague
 description: Helps with git stuff.
@@ -74,6 +79,8 @@ Content loads lazily — put each thing at the cheapest level:
 
 A **context pointer** is the phrase that points the body at a resource, and its _wording_ — not its target — decides when and how reliably the agent reaches the material. A must-have target behind a weakly-worded pointer is a variance bug: name the trigger condition sharply ("when a dispute turns on what a term means, read X") rather than gesturing ("see X for details"). If a must-have still fires unreliably, sharpen the wording first and inline the material only if that fails.
 
+**Branching is the cleanest disclosure test**: each distinct way the skill is used is a **branch** — different runs taking different paths. Inline what every branch needs; push behind a pointer what only some branches reach. And where the ladder decides how far _down_ a piece sits, **co-location** decides what sits _beside_ it: keep a concept's definition, rules, and caveats under one heading rather than scattered, so reading one part brings its neighbours with it.
+
 ### Format
 
 - `##` headings for steps or sections
@@ -101,7 +108,7 @@ See `examples/` for complete skill examples by type:
 
 ### Leading words
 
-A **leading word** is a compact concept already living in the model's pretraining that the agent thinks with while running the skill (e.g. _lesson_, _fog of war_, _tracer bullets_, _red_). Repeated as a token throughout the text, it accumulates a distributed definition and anchors a whole region of behaviour in the fewest tokens — recruiting priors the model already holds. It serves predictability twice: in the body it anchors _execution_ (the agent reaches for the same behaviour every time the word appears), and in the description it anchors _invocation_ (when the same word lives in your prompts, docs, and code, the agent links that shared language to the skill and fires it more reliably).
+A **leading word** is a compact concept already living in the model's pretraining that the agent thinks with while running the skill (e.g. _lesson_, _fog of war_, _tracer bullets_, _red_). Repeated as a token throughout the text (though a strong one may only need a single appearance), it accumulates a distributed definition and anchors a whole region of behaviour in the fewest tokens — recruiting priors the model already holds. It serves predictability twice: in the body it anchors _execution_ (the agent reaches for the same behaviour every time the word appears), and in the description it anchors _invocation_ (when the same word lives in your prompts, docs, and code, the agent links that shared language to the skill and fires it more reliably).
 
 - **Prefer an existing pretrained word over a coined one.** A made-up term recruits no priors — you pay in definition tokens what a pretrained word gives free. Coin your own only when no pretrained word fits, and then define it clearly.
 - **Hunt for restatements a leading word retires.** A quality spelled out three ways ("fast, deterministic, low-overhead") collapses into one pretrained word (a _tight_ loop); a fuzzy gate ("a loop you believe in") sharpens into a binary observable (the loop goes _red_, or it doesn't). Fewer tokens _and_ a sharper hook.
@@ -117,6 +124,8 @@ Hunt no-ops sentence by sentence, not just line by line. For each sentence in is
 Most skills are **single-workflow** — one SKILL.md covers one concern. Use this by default.
 
 A **multi-workflow skill** is needed when a single domain has multiple distinct procedures that share a description trigger. SKILL.md becomes a router that dispatches to internal flows based on the task. Each flow is a self-contained mini-skill inside `flows/`.
+
+**Any split must earn one of the two loads.** Split **by invocation** only when the piece has a distinct leading word that should trigger it on its own, or another skill must reach it — the new always-loaded description costs context load. Split **by sequence** when the steps still ahead (post-completion steps) tempt the agent to rush the one in front of it — hiding them buys legwork on the current task.
 
 Use multi-workflow when:
 - The domain has 3+ distinct procedures (e.g., setup, create route, data fetching)
@@ -189,7 +198,7 @@ Before finishing, scan the skill for the five named failure modes. Each has a de
 
 ## Acceptance checklist
 
-- [ ] Description: third person, specific, activation triggers
+- [ ] Description: third person, one trigger per branch (synonyms collapsed), leading word front-loaded; human-facing one-liner if user-invoked
 - [ ] Frontmatter uses only valid skill fields (see `references/frontmatter.md`); no plugin-only fields (version/license/metadata)
 - [ ] Only info the agent doesn't already know
 - [ ] Concise, scannable, no unnecessary prose
