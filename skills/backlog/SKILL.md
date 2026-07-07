@@ -31,13 +31,15 @@ File to GitHub Issues — always the repo `gh` is authenticated against (`gh rep
 
 ## Step 4: Create the issue
 
-The captured title/body are arbitrary text — treat them as DATA, never as shell code. Pass the body via a **single-quoted heredoc** (`<<'EOF'` disables all expansion) piped to `--body-file -`, and bind the title to a **single-quoted** shell variable (escaping any embedded single quote as `'\''`) — never interpolate raw captured text into a double-quoted `--title`:
+The captured title/body are arbitrary text — treat them as DATA, never as shell code. The body must never pass through shell parsing at all: **write it verbatim to a temp file with your Write tool** (e.g. a `mktemp` path or one under `$TMPDIR`), then hand that file to `gh` via `--body-file`. Do NOT build the body in a shell command (no heredoc, no `echo`/`printf`): a heredoc delimiter — fixed *or* "unique" — can be terminated early by a body line that happens to match it (e.g. a literal `EOF`), which spills the rest of the body back into the shell as code. Writing the file out-of-band with the Write tool removes the delimiter entirely. The title is a single line, so keep binding it to a **single-quoted** shell variable (escaping any embedded single quote as `'\''`) — that is already safe; never interpolate raw captured text into a double-quoted `--title`.
+
+1. Write the captured body **verbatim** to a temp path with the Write tool — call it `<body-file>` (e.g. `mktemp`, or `$TMPDIR/backlog-body.md`).
+2. Run:
 
 ```bash
 TITLE='<the captured title, single-quoted; escape embedded quotes>'
-gh issue create --title "$TITLE" --label <role> --body-file - <<'EOF'
-<the captured body text, verbatim>
-EOF
+gh issue create --title "$TITLE" --label <role> --body-file <body-file>
+rm -f <body-file>
 ```
 
 If `gh` rejects the label as unknown, create it idempotently (`gh label create <role> 2>/dev/null || true` — succeeds even if it already exists) and retry the `gh issue create`. If `gh` isn't installed or authenticated (`gh auth status` fails), fall back to appending the item to a `BACKLOG.md` at the repo root (create it lazily) and say which you used.
