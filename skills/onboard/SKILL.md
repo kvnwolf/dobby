@@ -17,7 +17,6 @@ One question at a time (AskUserQuestion where the options are anticipatable; pla
 - The core domain terms — the start of the ubiquitous language.
 - The stack (language, framework, data layer, key services). Use `/find-docs` to confirm the CURRENT setup commands for the chosen stack — don't rely on memory.
 - **The `run_mode`** — does the stack rely on shared singletons (one local DB, fixed ports, e.g. a local Supabase / Postgres you can only run once per machine)? **Yes → `nonconcurrent`** (a new Conductor workspace stops any other active run so they don't fight over the singleton). **No → `concurrent`** (each workspace runs its own dev server on its own per-workspace port). This decides Step 2's `settings.toml`.
-- The issue tracker (GitHub / Linear / local markdown).
 - Greenfield or existing repo? If greenfield, the first slice you'll build.
 
 ## Step 2: Make it runnable via Conductor
@@ -109,9 +108,9 @@ Each scaffolded choice below carries a one-line **why** — say it to the user a
   - **Stack** — language, framework, data layer, key services, plus a short **Dev** note: the app runs via **Conductor** (`.conductor/settings.toml`; `auto_run_after_setup` auto-starts the run script in each workspace), and the run command wraps the dev command with **portless**. Do NOT pin a `npm run dev` command or a hardcoded dev URL here — the Workflow config section covers how the verifier obtains it.
   - **Module map** — one line per top-level feature/domain module, each linking to that module's own `CONTEXT.md`, e.g. `- [src/<area>/<module>/](src/<area>/<module>/CONTEXT.md) — what it owns`.
   - **Conventions** — encode deep, contained modules: organize by feature/domain (NO type-based `components/`/`services/`/`lib/` buckets); NO barrels — callers import by deep path, each file named by its role (the filename is the interface); co-locate the slice; inline by default; **each module carries its own `CONTEXT.md`** (purpose · Files · Interface · Invariants · What's NOT here). "What works for humans is also great for AI."
-  - **Workflow config** — the issue tracker (GitHub / Linear / local) and how the app runs: **via Conductor**, run command wrapped in **portless**. Do NOT pin a hardcoded dev URL — `/dobby:execute`'s verifier obtains it via `portless get <name>` (deterministic, branch-prefixed via the worktree, so it is NOT hardcodable). For a no-dev-server project, say so (there's no run script → no dev URL; the verifier verifies programmatically).
+  - **Workflow config** — how the app runs: **via Conductor**, run command wrapped in **portless**. Do NOT pin a hardcoded dev URL — `/dobby:execute`'s verifier obtains it via `portless get <name>` (deterministic, branch-prefixed via the worktree, so it is NOT hardcodable). For a no-dev-server project, say so (there's no run script → no dev URL; the verifier verifies programmatically). The issue tracker is not configured here — `/dobby:backlog` and `/dobby:triage` always use the `gh`-authenticated repo.
 
-  *Why:* this is the adapter the generic work skills read from — Product/Stack orient every worker, the Module map + Conventions make the tree navigable to humans and agents alike, and Workflow config tells `/dobby:execute` how to run and verify. When writing the Workflow-config section, read `references/tracker-seeds.md` for the seed matching the chosen tracker and the role→label table.
+  *Why:* this is the adapter the generic work skills read from — Product/Stack orient every worker, the Module map + Conventions make the tree navigable to humans and agents alike, and Workflow config tells `/dobby:execute` how to run and verify.
 - **docs/adr/** — create the directory (add `0001-...` only if the stack choice meets the three ADR criteria: hard to reverse · surprising · real trade-off). *Why:* durable architecture decisions get a numbered home from day one, so `/dobby:wrap` and `/dobby:improve-architecture` have somewhere to write and something to respect.
 - **.gitignore** — ensure `STATE.md` is ignored (the ephemeral work-session doc) and `.conductor/settings.local.toml` is ignored (machine-local Conductor secrets), plus the stack's standard ignores. Note: `.conductor/settings.toml`, `setup.sh`, and `archive.sh` ARE checked in — only `settings.local.toml` is ignored. *Why:* work-session scratch and machine-local secrets must never reach the remote; the checked-in Conductor config must, so every workspace scaffolds identically.
 
@@ -135,13 +134,13 @@ Interview in the user's language. **Write all generated docs and code — CLAUDE
 
 ## Acceptance checklist
 
-- [ ] Interviewed: product, domain terms, stack (docs confirmed via /find-docs), `run_mode` (singletons? → concurrent/nonconcurrent), tracker, greenfield-or-existing
+- [ ] Interviewed: product, domain terms, stack (docs confirmed via /find-docs), `run_mode` (singletons? → concurrent/nonconcurrent), greenfield-or-existing
 - [ ] Conductor configured: `.conductor/settings.toml` written from the right template (`run_mode` AND `auto_run_after_setup` explicit); the `[scripts] run` command wraps the dev command with `portless run` (branch-prefixed URL, no `$CONDUCTOR_PORT`); `nonconcurrent + auto_run` interaction noted in a comment; no `[models]` table
 - [ ] No-dev-server project (lib/CLI/plugin): NO `[scripts] run`, and `auto_run_after_setup = false` (or omitted) — never `true` with no run target
 - [ ] `.conductor/setup.sh` + `.conductor/archive.sh` stubs written and `chmod +x`; `file_include_globs` (multi-line string) copies gitignored env files; secrets go in gitignored `.conductor/settings.local.toml`, not `settings.toml`
 - [ ] No-clobber respected: existing `CONTEXT.md` / `CLAUDE.md` / `AGENTS.md` / `.gitignore` / `.claude/commit.config.yml` were NOT overwritten — merged additively with user approval; an existing `AGENTS.md` was extended, not shadowed by a new `CLAUDE.md`
 - [ ] CONTEXT.md scaffolded (initial glossary) — in English; domain terms keep their real-world form
-- [ ] CLAUDE.md scaffolded (product, stack, module map, deep-module conventions, workflow config) — in English; each scaffolded choice explained in plain language; Workflow config seeded from `references/tracker-seeds.md` for the chosen tracker, with the role→label vocabulary; Dev/Workflow note says the app runs via Conductor with the run command wrapping the dev command in portless, and the verifier obtains the dev URL via `portless get <name>` (no hardcoded URL)
+- [ ] CLAUDE.md scaffolded (product, stack, module map, deep-module conventions, workflow config) — in English; each scaffolded choice explained in plain language; Dev/Workflow note says the app runs via Conductor with the run command wrapping the dev command in portless, and the verifier obtains the dev URL via `portless get <name>` (no hardcoded URL)
 - [ ] docs/adr/ created; `.gitignore` ignores `STATE.md` and `.conductor/settings.local.toml`
 - [ ] `.claude/commit.config.yml` created (docs to sync + pre-commit checks, user-confirmed)
 - [ ] `/dobby:wizard` offered (plain text, not auto-invoked) if Step 1 surfaced external services needing one-time manual setup (DB/auth/CI secrets)

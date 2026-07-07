@@ -1,7 +1,7 @@
 ---
 name: scope
-description: Start a work session — normalize the goal (free-text prompt, Linear ticket, or GitHub issue) and ground it in the codebase before interviewing or planning. Use at the start of any feature, fix, or refactor, or when handed a ticket to work on.
-argument-hint: "[goal, Linear ticket id/URL, or GitHub issue]"
+description: Start a work session — normalize the goal (free-text prompt or GitHub issue) and ground it in the codebase before interviewing or planning. Use at the start of any feature, fix, or refactor, or when handed a ticket to work on.
+argument-hint: "[goal, or GitHub issue #/URL]"
 model: opus
 effort: high
 ---
@@ -13,8 +13,14 @@ The front door of a work session. Normalize the goal, create the shared work-ses
 The argument (or conversation) is one of:
 
 - **Free-text prompt** — use it as the goal directly.
-- **Linear ticket** (an id like `ABC-123` or a Linear URL) — fetch it via the Linear MCP (authenticate if needed) and use its title + description as the goal.
-- **GitHub issue** (`#123` or a URL) — fetch it via `gh` and use it as the goal.
+- **GitHub issue** (`#123` or a URL) — fetch it via `gh` and use it as the goal. You're starting work on it, so **claim it** — ensure the label exists BEFORE the edit, so on a fresh repo the edit doesn't fail on an unknown label and drop the in-progress signal:
+
+  ```bash
+  gh label create status:in-progress 2>/dev/null || true
+  gh issue edit <n> --add-assignee @me --add-label status:in-progress
+  ```
+
+  This signals "someone's on it" so a parallel session doesn't double-take it, and lets `/dobby:commit` add `Closes #<n>` so the merge closes it.
 
 If the input is empty, ask in plain text (not AskUserQuestion) what the user wants to work on.
 
@@ -29,7 +35,7 @@ Create an ephemeral `STATE.md` at the repo root with this skeleton — the share
 <the goal>
 
 ## Source
-<prompt | Linear ABC-123 | GitHub #123>
+<prompt | GitHub #123>
 
 ## Exploration
 _pending_
@@ -80,7 +86,8 @@ Interact with the user in their language. Write what you persist — `STATE.md` 
 
 ## Acceptance checklist
 
-- [ ] Goal normalized (prompt / Linear / GitHub); asked if empty
+- [ ] Goal normalized (prompt / GitHub); asked if empty
+- [ ] If the goal is a GitHub issue: claimed it (`--add-assignee @me --add-label status:in-progress`, label created lazily)
 - [ ] `STATE.md` created at the repo root (and gitignored) with the skeleton; `## Goal` + `## Source` filled
 - [ ] Codebase explored with a `researcher` agent; `CONTEXT.md` + ADRs read if present
 - [ ] Researcher cross-referenced the goal's claims against the code and surfaced contradictions (not just a file map)

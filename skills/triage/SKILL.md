@@ -10,7 +10,7 @@ effort: high
 
 You are the coordinator/architect. You run the tracker/PR mechanics (`gh`/`git`) yourself, read for synthesis, and **delegate the doing** — verification goes to a `dobby:researcher`, and any resulting build work is a downstream `/dobby:scope` goal, never inline edits by you. Take an incoming issue or external PR from "reported" to a decision the maintainer signs off on, backed by a durable brief or an out-of-scope record.
 
-**Scope of this skill (portable half):** verify-the-claim, the behavioral agent brief, and the out-of-scope KB. The full role/state-machine — tracker labels, canonical role names, discovery queries, state transitions — is **out of scope here** (no issue tracker is wired into this repo yet). Triage what the maintainer points you at; don't invent a labeling machine.
+**Scope of this skill (portable half):** verify-the-claim, the behavioral agent brief, and the out-of-scope KB. The tracker is always the `gh`-authenticated repo, but building out a full role/state-machine — canonical role names, discovery queries, elaborate label transitions — is **out of scope here**. Triage what the maintainer points you at; don't invent a labeling machine.
 
 **Triage vs. address-review.** This skill triages **incoming requests** — an issue or an *external* PR proposing a change. Review-bot / reviewer comments on **your own open PR** (Greptile, CodeRabbit, humans) belong to `/dobby:address-review` — if the user hands you review threads on their active PR, point them there.
 
@@ -62,8 +62,8 @@ The one hard rule: **describe interfaces and behavioral contracts — never file
 When the maintainer decides not to action a request:
 
 - **Already implemented** — the behavior already exists. Post a comment pointing to where it lives. Do **NOT** write to `docs/out-of-scope/` — that KB is for *rejected* requests only; recording a built feature there poisons the dedup checks with a false rejection.
-- **Rejected bug** — a polite explanation comment, then close. No KB entry (the KB is enhancements only).
-- **Rejected enhancement** — this is the only case that writes to the KB. Record it in `docs/out-of-scope/` following `references/out-of-scope-kb.md`: one file per **concept** (kebab-case), deduped by concept not keyword — append to an existing concept file's "Prior requests" rather than creating a near-duplicate. Then post a comment linking the record (AI disclaimer first) and close.
+- **Rejected bug** — a polite explanation comment, then close as not-planned (`gh issue close <n> --reason "not planned"`). No KB entry (the KB is enhancements only).
+- **Rejected enhancement** — this is the only case that writes to the KB. Record it in `docs/out-of-scope/` following `references/out-of-scope-kb.md`: one file per **concept** (kebab-case), deduped by concept not keyword — append to an existing concept file's "Prior requests" rather than creating a near-duplicate. Then post a comment linking the record (AI disclaimer first) and close as not-planned (`gh issue close <n> --reason "not planned"`).
 
 ## Next step
 
@@ -83,6 +83,7 @@ Interact with the user in their language. The brief, out-of-scope records, and a
 - [ ] Claim verified by a dispatched `dobby:researcher` → verdict is confirmed / failed / insufficient, reported to the maintainer
 - [ ] Actionable outcome → behavioral brief written per `references/agent-brief.md` (interfaces & contracts, NEVER paths/line numbers)
 - [ ] Wontfix-rejected **enhancement** → recorded in `docs/out-of-scope/` per `references/out-of-scope-kb.md`, deduped by concept; already-implemented and rejected-bug outcomes write NO KB entry
+- [ ] Rejected outcomes (bug or enhancement) closed as not-planned (`gh issue close <n> --reason "not planned"`)
 - [ ] Every posted comment starts with the AI disclaimer
 - [ ] gh/git mechanics reused from `../address-review/references/github-api.md`; architect delegated verification and did no inline code edits
 - [ ] Next step handed off in plain text (brief → `/dobby:scope`)
