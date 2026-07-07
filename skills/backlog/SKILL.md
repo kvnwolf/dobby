@@ -1,6 +1,6 @@
 ---
 name: backlog
-description: Quick-capture a follow-up, bug, or tech-debt item to the project tracker (Linear). Use when you spot something worth tracking mid-work and want it logged, not triaged now.
+description: Quick-capture a follow-up, bug, or tech-debt item to the project tracker (GitHub Issues). Use when you spot something worth tracking mid-work and want it logged, not triaged now.
 argument-hint: "[the item to capture]"
 model: sonnet
 effort: medium
@@ -10,7 +10,7 @@ This is quick-capture, NOT triage — log the item, then stop.
 
 ## Step 1: Dedup by concept
 
-Before writing anything, check whether this is already tracked. Match by **domain concept, not keyword** — "night theme" and "dark mode" are the same item; a request to "not double-charge on retry" and one about "idempotent payments" are the same concept. Scan the obvious surfaces the project actually uses: the project's Linear team/project (if one is documented — see Step 3), an existing `BACKLOG.md`, and — if the project runs triage — `docs/out-of-scope/*.md` for a matching *rejected* concept.
+Before writing anything, check whether this is already tracked. Match by **domain concept, not keyword** — "night theme" and "dark mode" are the same item; a request to "not double-charge on retry" and one about "idempotent payments" are the same concept. Scan the obvious surfaces: open GitHub issues (`gh issue list --state open --search "<concept>"`), an existing `BACKLOG.md`, and — if the project runs triage — `docs/out-of-scope/*.md` for a matching *rejected* concept.
 
 If a live item already covers the concept, say so and stop (don't file a near-duplicate). If it matches a concept in `docs/out-of-scope/`, surface that it was previously rejected and ask once whether to file anyway — don't silently re-open a settled decision. Only when nothing matches do you proceed to capture.
 
@@ -25,16 +25,13 @@ Take the item from `$ARGUMENTS`, or from what was just spotted in the conversati
 
 Don't over-describe — enough to act on later, not a full spec (that's `/dobby:scope`'s job). If it grows past a paragraph or two, it's really a task, not a quick-capture.
 
-## Step 3: Pick the target
+## Step 3: Pick the label
 
-- If the project documents a default Linear team/project (in `CLAUDE.md`'s workflow config or similar), use it.
-- Otherwise ask once (plain text or AskUserQuestion) which team/project, and reuse that for the rest of the session.
-
-Add labels/priority only if obvious; don't interrogate.
+File to GitHub Issues — always the repo `gh` is authenticated against (`gh repo view`). Apply exactly **one role label** matching what the item *is*: `bug` (broken), `feature` (new capability), `chore` (maintenance/deps/config), or `docs` (docs only). One stable vocabulary is what lets a later reader dedup by concept. Skip priority/assignee — don't interrogate.
 
 ## Step 4: Create the issue
 
-Create the issue via the Linear MCP (authenticate if needed). If Linear isn't available, fall back to appending the item to a `BACKLOG.md` at the repo root (create it lazily) and say which you used.
+`gh issue create --title "<title>" --body "<body>" --label <role>`. If `gh` rejects the label as unknown, create it (`gh label create <role>`) and retry. If `gh` isn't installed or authenticated (`gh auth status` fails), fall back to appending the item to a `BACKLOG.md` at the repo root (create it lazily) and say which you used.
 
 ## Step 5: Confirm
 

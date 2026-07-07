@@ -36,6 +36,5 @@ There is intentionally no `.claude/` self-install in this repo: the plugin is en
 
 ## Workflow config
 
-- **Issue tracker**: none for now — `/dobby:backlog` has no destination in this repo yet; capture follow-ups in conversation until one is chosen.
 - **Dev command**: `claude --plugin-dir .` (no dev server or URL — this is a Claude Code plugin, not an app). `/dobby:execute`'s verifier exercises skills through that host session.
 - **Commit contract**: `.claude/commit.config.yml` — doc-sync rules (README/CLAUDE/CONTEXT) + pre-commit checks (manifest parse, frontmatter model/effort). Read by `/dobby:commit`.

@@ -66,7 +66,7 @@ When in doubt, prefer `tree`: it's the safe default (a passing tree is always co
 
 **Body:** explain **why** — motivation, trade-offs, decisions. State breaking changes explicitly.
 
-**References:** issue/ticket refs on their own line (e.g., `Closes #142`).
+**References:** if the session traces to a GitHub issue — from `## Source` in `STATE.md` if it still exists (`/dobby:wrap` disposes of it), else evident from the conversation — put `Closes #<n>` on its own line. Don't fabricate a number you can't source.
 
 Execute with HEREDOC:
 
@@ -97,7 +97,7 @@ Only if branch was pushed in step 8.
    git log <base-branch>..HEAD --oneline
    git diff <base-branch>...HEAD
    ```
-3. Create PR:
+3. Create PR. If the session traces to a GitHub issue (same source as step 7), put `Closes #<n>` in the **body** — that's the reliable close-on-merge anchor (it survives a squash-merge, unlike a per-commit trailer):
    ```bash
    gh pr create --title "<title>" --body "$(cat <<'EOF'
    ## Summary
@@ -105,6 +105,8 @@ Only if branch was pushed in step 8.
 
    ## Test plan
    <checklist>
+
+   Closes #<n>   <!-- only if the session started from an issue; omit the line otherwise -->
    EOF
    )"
    ```
@@ -116,4 +118,4 @@ Only if branch was pushed in step 8.
 - [ ] Pre-commit checks ran green (or none configured), each at its declared `scope`; commit aborted on any failure
 - [ ] Commit message follows semantic format with body
 - [ ] Changes pushed to remote
-- [ ] PR created (if not on main)
+- [ ] PR created (if not on main); `Closes #<n>` in the PR body if the session traces to a GitHub issue
