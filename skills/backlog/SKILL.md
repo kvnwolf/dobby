@@ -31,7 +31,16 @@ File to GitHub Issues — always the repo `gh` is authenticated against (`gh rep
 
 ## Step 4: Create the issue
 
-`gh issue create --title "<title>" --body "<body>" --label <role>`. If `gh` rejects the label as unknown, create it (`gh label create <role>`) and retry. If `gh` isn't installed or authenticated (`gh auth status` fails), fall back to appending the item to a `BACKLOG.md` at the repo root (create it lazily) and say which you used.
+The captured title/body are arbitrary text — treat them as DATA, never as shell code. Pass the body via a **single-quoted heredoc** (`<<'EOF'` disables all expansion) piped to `--body-file -`, and bind the title to a **single-quoted** shell variable (escaping any embedded single quote as `'\''`) — never interpolate raw captured text into a double-quoted `--title`:
+
+```bash
+TITLE='<the captured title, single-quoted; escape embedded quotes>'
+gh issue create --title "$TITLE" --label <role> --body-file - <<'EOF'
+<the captured body text, verbatim>
+EOF
+```
+
+If `gh` rejects the label as unknown, create it idempotently (`gh label create <role> 2>/dev/null || true` — succeeds even if it already exists) and retry the `gh issue create`. If `gh` isn't installed or authenticated (`gh auth status` fails), fall back to appending the item to a `BACKLOG.md` at the repo root (create it lazily) and say which you used.
 
 ## Step 5: Confirm
 
