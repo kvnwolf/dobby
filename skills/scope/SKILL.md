@@ -13,7 +13,14 @@ The front door of a work session. Normalize the goal, create the shared work-ses
 The argument (or conversation) is one of:
 
 - **Free-text prompt** — use it as the goal directly.
-- **GitHub issue** (`#123` or a URL) — fetch it via `gh` and use it as the goal. You're starting work on it, so **claim it**: `gh issue edit <n> --add-assignee @me --add-label status:in-progress` (create the label lazily if missing: `gh label create status:in-progress 2>/dev/null || true`). This signals "someone's on it" so a parallel session doesn't double-take it, and lets `/dobby:commit` add `Closes #<n>` so the merge closes it.
+- **GitHub issue** (`#123` or a URL) — fetch it via `gh` and use it as the goal. You're starting work on it, so **claim it** — ensure the label exists BEFORE the edit, so on a fresh repo the edit doesn't fail on an unknown label and drop the in-progress signal:
+
+  ```bash
+  gh label create status:in-progress 2>/dev/null || true
+  gh issue edit <n> --add-assignee @me --add-label status:in-progress
+  ```
+
+  This signals "someone's on it" so a parallel session doesn't double-take it, and lets `/dobby:commit` add `Closes #<n>` so the merge closes it.
 
 If the input is empty, ask in plain text (not AskUserQuestion) what the user wants to work on.
 

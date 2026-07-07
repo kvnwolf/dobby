@@ -10,7 +10,12 @@ This is quick-capture, NOT triage — log the item, then stop.
 
 ## Step 1: Dedup by concept
 
-Before writing anything, check whether this is already tracked. Match by **domain concept, not keyword** — "night theme" and "dark mode" are the same item; a request to "not double-charge on retry" and one about "idempotent payments" are the same concept. Scan the obvious surfaces: open GitHub issues (`gh issue list --state open --search "<concept>"`), an existing `BACKLOG.md`, and — if the project runs triage — `docs/out-of-scope/*.md` for a matching *rejected* concept.
+Before writing anything, check whether this is already tracked. Match by **domain concept, not keyword** — "night theme" and "dark mode" are the same item; a request to "not double-charge on retry" and one about "idempotent payments" are the same concept. Scan the obvious surfaces: open GitHub issues, an existing `BACKLOG.md`, and — if the project runs triage — `docs/out-of-scope/*.md` for a matching *rejected* concept. The concept is user-derived text, so treat it as DATA: bind it to a **single-quoted** shell variable (escaping any embedded single quote as `'\''`) and pass it out-of-band — never interpolate raw concept text into the command, or an embedded quote / `$(...)` / backtick gets evaluated or word-split by the shell. Same rule as Step 4's title/body: any user-derived text placed in a `gh` command must be single-quoted (or passed out-of-band). Search open issues with:
+
+```bash
+CONCEPT='<the concept, single-quoted; escape embedded quotes>'
+gh issue list --state open --search "$CONCEPT"
+```
 
 If a live item already covers the concept, say so and stop (don't file a near-duplicate). If it matches a concept in `docs/out-of-scope/`, surface that it was previously rejected and ask once whether to file anyway — don't silently re-open a settled decision. Only when nothing matches do you proceed to capture.
 
