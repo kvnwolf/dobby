@@ -2,8 +2,6 @@
 name: wizard
 description: Generate an interactive bash wizard that guides a human through a manual procedure — opening URLs, capturing values, and writing .env files and GitHub Actions secrets.
 disable-model-invocation: true
-model: opus
-effort: high
 ---
 
 A **wizard** is a bash script that walks a human, step by step, through a manual procedure that's tedious to do by hand and tedious to re-explain to an AI every time — configuring a third-party service (Better Auth, Neon, CI secrets), running a one-off migration, or moving the project from one state to another. It opens each URL, says exactly what to click and copy, captures the values, and writes them where they belong (`.env`, GitHub secrets).
@@ -52,11 +50,13 @@ The implementor static-verifies and reports back; confirm the wizard is sound:
 
 ## Next step
 
-End with a plain-text handoff for the user to TYPE — NO AskUserQuestion, NO Skill-tool auto-invoke; typed entry re-applies the next skill's own `model`/`effort`.
+Present an **AskUserQuestion** (one question) that restates the wizard is built and verified, and offers:
 
-- **Run the wizard** *(Recommended)* — give the exact command; the user drives it in their own terminal (it opens browsers and prompts for input, so it can't run inside the session).
+- **Run the wizard** *(Recommended)* — give the exact command; the user drives it in their own terminal (it opens browsers and prompts for input, so it can't run inside the session). This selection ends the turn with the command shown — nothing to chain.
 - `/dobby:commit` — if it's a repeatable setup path worth keeping in the repo.
 - **Stop here** — the wizard is scoped for one run and can be deleted once the job's done.
+
+On the user's selection, act on it directly; when the choice is `/dobby:commit`, invoke it via the Skill tool (chaining runs on the session's current model/effort). "Run the wizard" and "Stop here" end the turn.
 
 ## Language
 
@@ -70,7 +70,7 @@ Interact with the user in their language. Write the wizard's code, comments, and
 - [ ] Honest `TOTAL_STAGES` / `TOTAL_MINUTES`; library helpers used; secrets hidden, persisted values written, only CI-needed values `set_secret`
 - [ ] Static-verify ONLY (`bash -n`, `shellcheck` if available, `chmod +x`) — never run end-to-end
 - [ ] Ephemeral by default; committed only if the user wants a repeatable path
-- [ ] Next step handed off in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)
+- [ ] Next step offered via an AskUserQuestion gate (run the wizard recommended / `/dobby:commit` / stop here); `/dobby:commit` invoked through the Skill tool on selection
 
 ---
 *Adapted from [mattpocock/skills](https://github.com/mattpocock/skills) `in-progress/wizard`.*

@@ -36,6 +36,32 @@ Two roles, never mixed:
 
 The payoff: your context stays clean for thinking, implementation quality is enforced by independent review, and "done" means *proven against the running app*, not "the code looks right".
 
+## Where it runs: two execution hosts
+
+dobby runs on one of **two named execution hosts**, and it figures out which by itself — you don't configure it. Detection is by environment variable:
+
+| Host | Detected when | Who owns the worktree | Who runs the app |
+| --- | --- | --- | --- |
+| **Conductor** | `CONDUCTOR_WORKSPACE_PATH` is set | Conductor (one worktree per workspace) | Conductor auto-runs it (`auto_run_after_setup`) |
+| **Terminal** | that env var is absent | dobby — `/dobby:scope` creates it, `/dobby:finish` removes it | dobby starts it lazily at `/dobby:execute` |
+
+The **terminal host** is a plain `claude` session — including over ssh, and inside **cmux** (the manaflow-ai native macOS terminal). It exists so you can run the kit remotely. When it detects **cmux** (`CMUX_WORKSPACE_ID` is set in every cmux pane), it enriches the run: the dev server gets its own named pane, a browser pane opens at the app URL, and the verifier drives the UI through cmux's browser CLI. Plain ssh/tmux (no cmux) degrades gracefully — the app runs as a background job, no panes.
+
+**What changes for you** between the two:
+
+- On **Conductor**, nothing changes from before: the workspace *is* the worktree, the app is already running, and `/dobby:scope`…`/dobby:commit` is the whole cycle. `/dobby:finish` is a no-op (Conductor archives the workspace itself).
+- On the **terminal host**, `/dobby:scope` first creates and enters a per-goal git worktree, and after your PR merges you run `/dobby:finish` to tear it down. Everything in between is identical.
+
+On **both** hosts, the coordinator and verifier reach the running app the same way — `portless get <name>` resolves a stable per-worktree dev URL and a curl health-check confirms it's live. The only difference is who starts the app.
+
+### Terminal-host prerequisites
+
+Only needed if you run on the terminal host (Conductor users can skip this):
+
+- **Node 24+** — required by `portless`.
+- **`portless`** — added as a pinned devDependency by `/dobby:onboard`, plus a one-time `portless trust` (it needs sudo once to install a local CA and bind `:443`).
+- **Claude Code** recent enough for native worktrees: `EnterWorktree`/`ExitWorktree` land in **≥ 2.1.72**; transcript relocation (so `/dobby:mark`/`/dobby:learn` still resolve a session after the worktree moves) lands in **≥ 2.1.198**.
+
 ## The lifecycle
 
 A work session moves through six stages. Each stage ends by telling you which command to type next — **nothing advances until you type it**. Handoffs are typed on purpose: typed entry is what applies each stage's own model and effort (an auto-invoked skill would ride the previous stage's override):
@@ -54,7 +80,11 @@ A work session moves through six stages. Each stage ends by telling you which co
 /dobby:wrap         human smoke test, docs/ADRs, STATE.md disposed
       │
 /dobby:commit       branch, commit, push, PR
+      │
+/dobby:finish       (terminal host, after the PR merges) tear down the worktree
 ```
+
+`/dobby:finish` is the post-merge closing step **on the terminal host**: once your PR is merged, it runs the config's teardown, closes the cmux panes it opened, removes the per-goal worktree + branch, and pulls the main checkout. On Conductor it's a no-op — the host archives the workspace for you. It's typed like every other stage; nothing runs until you type it.
 
 Side paths, available at any point:
 
@@ -120,13 +150,13 @@ The architect turns decisions + research into a build plan and **prints it in fu
 /dobby:execute
 ```
 
-Conductor already auto-ran the app (`auto_run_after_setup`); the coordinator resolves the dev URL with `portless get` and confirms the app is up, then launches the build loop. Per task, **separate agents** run a state machine:
+The coordinator makes sure the app is up — on Conductor it was already auto-run, on the terminal host `/dobby:execute` starts it now (in a named cmux pane, or a background job) — resolves the dev URL with `portless get`, confirms it's live, then launches the build loop. Per task, **separate agents** run a state machine:
 
 ```
 (test-author) → implement → code review → (findings? fix → re-review) → verify → (fail? restart) → done
 ```
 
-The implementor never reviews itself; the reviewer never implements; the verifier checks the *running app* (the one Conductor is already serving) against the task's verify recipe. The leading test step is conditional: when the repo has a test suite and the spec marked a task test-first, a `dobby:test-author` writes the failing tests before the implementor touches the code; repos without a suite degrade to the classic three-step loop. Independent tasks run in parallel waves. A task that exhausts its retries is flagged `needs-human` instead of thrashing forever.
+The implementor never reviews itself; the reviewer never implements; the verifier checks the *running app* against the task's verify recipe. The leading test step is conditional: when the repo has a test suite and the spec marked a task test-first, a `dobby:test-author` writes the failing tests before the implementor touches the code; repos without a suite degrade to the classic three-step loop. Independent tasks run in parallel waves. A task that exhausts its retries is flagged `needs-human` instead of thrashing forever.
 
 **You'll see:** live workflow progress, then a status table per task, and the work log appended to `STATE.md`.
 
@@ -139,6 +169,20 @@ The implementor never reviews itself; the reviewer never implements; the verifie
 The closing pass: a short **human smoke test** (the few cross-task behaviors machines can't prove — you answer Pass/Fail/Skip, failures get dispatched to an implementor and re-presented), project docs reconciled (`CONTEXT.md` glossary terms the work introduced, ADRs the decisions earned), and `STATE.md` disposed — it's ephemeral by design.
 
 Then you type `/dobby:commit`: pre-commit checks, branch, conventional commit, push, PR.
+
+### 7. Finish (terminal host only)
+
+```
+/dobby:finish
+```
+
+On Conductor you're done at commit. **On the terminal host**, the whole session ran inside a per-goal worktree that `/dobby:scope` created — so after your PR merges on GitHub, one more step retires it:
+
+```
+/dobby:scope … → interview → research → spec → execute → wrap → commit → (merge on GitHub) → /dobby:finish
+```
+
+`/dobby:finish` confirms the PR is actually **merged** (if it's still open, closed, or the tree is dirty, it shows the state and asks before destroying anything), runs the config's teardown commands, closes the cmux panes it opened, removes the worktree and its branch, and pulls your main checkout. If the original session died and left an **orphaned** worktree behind, run `/dobby:finish` anyway — it falls back to a raw-git cleanup after verifying the branch was merged and confirming with you.
 
 ## When to use what
 
@@ -158,7 +202,9 @@ Then you type `/dobby:commit`: pre-commit checks, branch, conventional commit, p
 | Context is getting long, or you want to branch a fresh session off a clean summary | `/dobby:handoff` — an ephemeral fork document |
 | A merge/rebase left conflict markers you need to reconcile without losing either side | `/dobby:resolve-conflicts` |
 | A brand-new empty repo | `/dobby:onboard` |
+| A repo still on the legacy `.claude/commit.config.yml` | `/dobby:migrate-config` — convert it to `dobby.config.json`, one-time |
 | Work is done, ship it | `/dobby:commit` |
+| Terminal host: the PR merged and the worktree needs retiring | `/dobby:finish` |
 | A review bot or reviewer left comments on your PR | `/dobby:address-review` |
 | Structuring or refactoring a module's files | `/dobby:module-conventions` (auto-activates) |
 | Building a form or wiring a data mutation | `/dobby:data-processing` (auto-activates) |
@@ -212,6 +258,9 @@ These couple to Claude Code's session storage (`~/.claude/projects`) on purpose 
 | Skill edits not picked up (local dev) | Only `SKILL.md` hot-reloads | `/reload-plugins` for agents/hooks changes |
 | Post-edit check hook never fires | By design outside vite-plus projects | Gate = `vite.config.ts` at project root **and** `vp` on PATH |
 | Execute re-authored the workflow and lost the loop logic | The build-loop script must be used verbatim | Re-run `/dobby:execute`; the skill's `references/build-workflow.md` is the canonical script |
+| `portless` prompts for sudo / fails to bind `:443` on first run (terminal host) | First-time CA install + privileged port | Run `portless trust` once (surfaced by `/dobby:onboard`); it's a one-time setup, later runs don't need it |
+| An old session died and left a worktree in `.claude/worktrees/` (terminal host) | The session couldn't run `/dobby:finish` before exiting | Run `/dobby:finish` anyway — it detects the orphan, verifies the branch merged, confirms with you, and cleans up via raw git |
+| `/dobby:scope` stops on the terminal host ("open a new pane") | Nesting — THIS session is already inside a worktree, and the native tool can't nest (parallel worktrees from OTHER sessions are fine and don't trigger this) | Open a new cmux pane / `claude` session for the new goal and run `/dobby:scope <goal>` there — one goal per pane, no nesting |
 
 ## Recovery quick reference
 

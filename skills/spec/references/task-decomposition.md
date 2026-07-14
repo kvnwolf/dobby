@@ -12,7 +12,7 @@ Decompose the work into a task table the executor can dispatch from.
 - **Affected areas** — each task declares which modules/directories it touches. Used to decide parallelism: overlapping areas run sequentially, non-overlapping run in parallel.
 - **Dependencies** — express which tasks depend on which.
 - **Verify recipe** — each task declares how it will be verified against the running app: for UI work, what to drive in the browser and what to observe; for backend/data work, the programmatic check (a query under the right role, a build/type-check, or firing a seam and observing the effect). This makes verification planned, not improvised.
-- **Name the approach** — state the libraries, patterns, and approach each task must follow (from the research brief), plus the specific docs the executor should follow. Name the affected modules/areas; leave exact file-by-file implementation to the executor.
+- **Name the approach** — state the libraries, patterns, and approach each task must follow (from the research brief), plus the specific docs the executor should follow. When a task touches a domain governed by a convention/design skill the brief's Reuse section surfaced, name that skill AND the specific dictate to follow (the data/mutation pattern, file-role structure, or design direction the brief extracted) — so the plan tells the implementor exactly which convention primitive to use, not just "follow the conventions." This closes the gap where a silent plan lets the implementor pick the wrong primitive despite build-time auto-activation. Name the skill + its dictate only; the implementor loads the full recipe at build. Name the affected modules/areas; leave exact file-by-file implementation to the executor.
 
 ## Anti-patterns
 

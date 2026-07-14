@@ -2,15 +2,13 @@
 name: commit
 description: Wraps up work by running the project's pre-commit checks, syncing documentation, committing, pushing, and opening a pull request. Use when committing code, finishing a task, pushing changes, or creating a PR.
 allowed-tools: Bash(git diff *), Bash(git log *), Bash(git add *), Bash(git branch)
-model: opus
-effort: medium
 ---
 
 # Commit
 
 ## Step 1: Require Commit Config
 
-Check if `.claude/commit.config.yml` exists. If it exists, continue to step 2.
+Check if `dobby.config.json` exists. If it exists, continue to step 2.
 
 If not, the project hasn't been set up for harness-driven commits — that config (doc-sync rules + pre-commit checks) is created by `/dobby:onboard`, which can't be auto-invoked. Offer with AskUserQuestion:
 
@@ -32,7 +30,7 @@ Run each command separately:
 
 ## Step 4: Sync Documentation
 
-1. Read `files` from `.claude/commit.config.yml`
+1. Read `files` from `dobby.config.json`
 2. Find staged `*.md` files not in the config that could be documentation (excluding `skills/`), detect their update condition, register them
 3. For each tracked file, evaluate whether `update_when` is met by staged changes
 4. Read and update every file whose condition is met
@@ -46,7 +44,7 @@ git add <updated-doc-files>
 
 ## Step 6: Run Pre-commit Checks
 
-The `checks` list in `.claude/commit.config.yml` is the project's pre-commit gate — the harness runs it, replacing git pre-commit hooks.
+The `checks` list in `dobby.config.json` is the project's pre-commit gate — the harness runs it, replacing git pre-commit hooks.
 
 **Check schema.** Each entry has `name`, `run`, and an optional `scope` that classifies *what the check reads*:
 
@@ -111,9 +109,16 @@ Only if branch was pushed in step 8.
    )"
    ```
 
+## Next step
+
+The PR is open. Present the next stage as an **AskUserQuestion** — one question that restates commit just finished (the PR is open, waiting on merge) — with the options below (recommended first, then Stop here). On the user's selection, invoke the chosen `/dobby:<skill>` via the Skill tool; "Stop here" ends the turn.
+
+- **`/dobby:finish`** *(Recommended, after the PR is merged)* — on the **terminal host** (the kit created a worktree for this goal at `/dobby:scope`), tear down the worktree: close the dev server, remove the worktree + branch, and pull main up to date. Under Conductor there's nothing to tear down (archive the workspace from Conductor instead).
+- **Stop here** — the PR still needs to merge first; come back to `/dobby:finish` once it's merged.
+
 ## Acceptance checklist
 
-- [ ] Commit config exists at `.claude/commit.config.yml` (or the user explicitly chose a one-off contract-less commit; `/dobby:onboard` suggested)
+- [ ] Commit config exists at `dobby.config.json` (or the user explicitly chose a one-off contract-less commit; `/dobby:onboard` suggested)
 - [ ] Documentation synced with staged changes
 - [ ] Pre-commit checks ran green (or none configured), each at its declared `scope`; commit aborted on any failure
 - [ ] Commit message follows semantic format with body

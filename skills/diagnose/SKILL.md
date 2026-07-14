@@ -2,8 +2,6 @@
 name: diagnose
 description: Disciplined diagnosis loop for hard bugs — build a fast deterministic feedback loop, rank falsifiable hypotheses, instrument one variable at a time. Use when something is failing, a bug is intermittent or non-obvious, or there's a performance regression.
 argument-hint: "[the bug or symptom]"
-model: claude-fable-5[1m]
-effort: max
 ---
 
 For hard bugs (intermittent, non-obvious, performance regression). For a trivial bug, just fix it. The rule: **don't patch and pray**.
@@ -15,7 +13,7 @@ This skill is also the `dobby:verifier`'s named downstream: when verification hi
 **This is the skill.** Everything else is mechanical once you have a fast, deterministic, agent-runnable pass/fail signal for the bug. Be aggressive and creative; try in roughly this order:
 
 1. Failing test at whatever seam reaches the bug.
-2. `curl` / HTTP script against a running dev server (the dev URL comes from `portless get`).
+2. `curl` / HTTP script against a running dev server (resolve the dev URL the same way `/dobby:execute` Step 2 does — `portless get`, identical on both execution hosts; if the run isn't up on the terminal host, Step 2's recipe is how you start it).
 3. CLI invocation with a fixture input, diff stdout vs known-good.
 4. Headless browser script driving the UI.
 5. Replay a captured trace (real request / payload / event log saved to disk) through the code path in isolation.
@@ -75,7 +73,7 @@ If a correct seam exists: turn the minimised repro into a failing test there, wa
 - Throwaway harnesses deleted or clearly marked.
 - The winning hypothesis stated in the handoff / commit message, so the next debugger learns.
 
-**Then, a timed post-mortem (a couple of minutes, not a retro): "what would have prevented this bug?"** Ask it **after** the fix is in — you know far more now than when you started. If the answer is a local hygiene fix (a missing assertion, an unhandled case), note it in the handoff. But if the answer is **architectural** — no correct seam existed (the Step 5 finding), tangled callers, hidden coupling, a shape that keeps producing this class of bug — escalate it: hand off to `/dobby:improve-architecture` with the specifics. This is a typed suggestion, not an auto-invoke; the fix ships first, the architectural recommendation follows separately.
+**Then, a timed post-mortem (a couple of minutes, not a retro): "what would have prevented this bug?"** Ask it **after** the fix is in — you know far more now than when you started. If the answer is a local hygiene fix (a missing assertion, an unhandled case), note it in the handoff. But if the answer is **architectural** — no correct seam existed (the Step 5 finding), tangled callers, hidden coupling, a shape that keeps producing this class of bug — escalate it: suggest `/dobby:improve-architecture` with the specifics — the fix ships first, the architectural recommendation follows separately.
 
 ## Acceptance checklist
 

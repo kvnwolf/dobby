@@ -2,8 +2,6 @@
 name: spec
 description: Turn an aligned task and its research into a concrete build plan with a vertical-slice task table and per-task verify recipes. Use after interviewing/researching a task, or to plan a feature and break it into tasks. No plan mode.
 argument-hint: "[task to plan]"
-model: claude-fable-5[1m]
-effort: max
 ---
 
 Produce a plan detailed enough to execute with zero prior context. Work from the shared understanding (interview decisions) and the research brief already in context — don't re-interview or re-research here.
@@ -21,9 +19,9 @@ Write it yourself from the in-context decisions — this preserves the interview
 - **Goals** / **Non-goals** — what it achieves; what's explicitly out of scope.
 - **Constraints** — technical or business.
 - **Decisions** — key technical decisions from the interview, including any flagged as ADR candidates (these are written at wrap-up, not here). Prose, not code — file paths and snippets go stale. **Snippet exception:** if a decision is encoded more tightly by a snippet than by prose — a state machine, reducer, schema, or type shape — inline it *within* that decision, trimmed to the decision-rich parts (not a working demo, just the bits that pin the decision down), and note where it came from (e.g. a prototype).
-- **Testing Decisions** — where and what to test, what makes a good test here, and which tasks are **test-first**; decide all of it per `references/testing-decisions.md`, and confirm the seams with the user before writing the plan. This section feeds `/dobby:execute`'s per-task test-author gate.
+- **Testing Decisions** — where and what to test, what makes a good test here, and which tasks are **test-first**; decide all of it per `references/testing-decisions.md`, and confirm the seams with the user before writing the plan. It also records the **Manual verify setup** (auth session / seed data / feature flags a human must prepare before verification, or `none`) that `/dobby:execute` gates on. This section feeds `/dobby:execute`'s per-task test-author gate and its pre-verification setup gate.
 - **Edge cases** — each edge case + how it's handled.
-- **Module structure** — for each module the work creates or changes: its name, location, and **file surface** (which files callers import by deep path, and what each exposes), and why it's shaped that way (this is what the module's own `CONTEXT.md` will record). Module boundaries are an architectural decision the user approves HERE — executors don't improvise them. Shape the modules per the "Module structure" section of `references/architecture-vocab.md`. Decide the module and its interface; leave intra-module implementation to the executor.
+- **Module structure** — for each module the work creates or changes: its name, location, and **file surface** (which files callers import by deep path, and what each exposes), and why it's shaped that way (this is what the module's own `CONTEXT.md` will record). Module boundaries are an architectural decision the user approves HERE — executors don't improvise them. Shape each module's file surface and boundary around the plan-shaping dictates the research brief's Reuse section surfaced from the applicable convention/design skills (the project's module/file-role taxonomy, its data/mutation patterns, its design direction) — not just the generic vocabulary. The structure the user approves here must already conform to those conventions, so the plan comes out convention-correct rather than leaving it to build-time auto-activation. Also keep it consistent with the "Module structure" section of `references/architecture-vocab.md`. Decide the module and its interface; leave intra-module implementation to the executor.
 - **Tasks** — build the table per `references/task-decomposition.md` (prefactor slices, test-first markers, and the column layout all live there); the affected-areas column references the modules decided above, and the test-first markers come from Testing Decisions.
 
 **Mandate nothing structural.** Default to the minimal plan. Do NOT add extra waves, parallelism, checks, or agents unless the plan itself *proves* they're needed (a real dependency, a real seam, a real risk).
@@ -34,7 +32,7 @@ When naming or structuring code in the plan, use the vocabulary in `references/a
 
 **Print the FULL plan as message text in the conversation first.** A plan that lives only in your reasoning or in `STATE.md` has NOT been presented — the user can only approve what they can read on screen. (Real failure: spec once jumped straight to an Approve/Revise dialog without ever printing the plan; the user had nothing to approve.) The dialog comes AFTER the full plan is on screen, never instead of it — this is non-negotiable.
 
-Then take approval with **one AskUserQuestion** so the user approves with a single tap instead of typing — restate the context in the question (which plan), one topic. Options: **Aprobar** (proceed to write the spec and hand off) and **Ajustar** (describe changes — free-form, via the dialog's own text field; regenerate with that feedback before anyone executes). Do NOT enter plan mode. This gate is internal to the spec stage — it is NOT the Next-step handoff, so a dialog here is fine (the handoff below must stay typed).
+Then take approval with **one AskUserQuestion** so the user approves with a single tap instead of typing — restate the context in the question (which plan), one topic. Options: **Aprobar** (proceed to write the spec and hand off) and **Ajustar** (describe changes — free-form, via the dialog's own text field; regenerate with that feedback before anyone executes). Do NOT enter plan mode. This gate is internal to the spec stage — separate from the Next-step handoff below (which is its own AskUserQuestion gate).
 
 ## Step 4: Write the spec into the work-session doc
 
@@ -44,7 +42,7 @@ That doc is the durable contract AND the shared context `/dobby:execute`'s subag
 
 ## Next step
 
-Once the plan is approved and written to `## Spec`, end with a plain-text handoff — NO AskUserQuestion for this gate, NO Skill-tool auto-invoke: the next stage must be TYPED by the user (typed entry applies its own `model`/`effort`). Recommend `/dobby:execute`; on stop, note `STATE.md` holds the approved plan.
+Once the plan is approved and written to `## Spec`, present the next stage as an **AskUserQuestion** — one question that restates spec just finished — with the options below (recommended first, then revise, then Stop here). On the user's selection, invoke the chosen `/dobby:<skill>` via the Skill tool; "Stop here" ends the turn (note `STATE.md` holds the approved plan).
 
 - **`/dobby:execute`** *(Recommended)* — build the approved task plan.
 - `/dobby:spec` again — to revise the plan further.
@@ -66,4 +64,4 @@ Interact with the user in their language. Write all plan content in English; kee
 - [ ] Architecture vocabulary used consistently
 - [ ] Full plan printed in the conversation BEFORE the approval ask; approval taken via a single AskUserQuestion (Aprobar / Ajustar); plan approved by the user (no plan mode); no code written
 - [ ] Approved plan written into the work-session doc's `## Spec` section (`STATE.md`)
-- [ ] Next step handed off in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)
+- [ ] Next step offered via an AskUserQuestion gate (recommended route first, alternatives + Stop here); chosen route invoked via the Skill tool

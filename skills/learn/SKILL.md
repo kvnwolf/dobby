@@ -2,8 +2,6 @@
 name: learn
 description: Mine a marked session (a /dobby:mark indicator, or a raw path to a session .jsonl from any project) into concrete edits to dobby's skills, from how they actually behaved in the field. Use in the dobby repo when you have a session pointer to mine.
 argument-hint: "[indicator block or .jsonl path] — which skill/area to improve"
-model: claude-fable-5[1m]
-effort: max
 ---
 
 This is **kit self-improvement tooling**. You work in the dobby repo and improve a kit skill using evidence from a real session run in some *other* project. You are the architect: you delegate the transcript digest to a `dobby:researcher`, then turn its findings into skill edits via a worker. You do NOT read the multi-MB transcript yourself.

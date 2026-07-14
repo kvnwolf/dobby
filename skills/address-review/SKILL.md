@@ -3,8 +3,6 @@ name: address-review
 description: Address external code-review findings on the current PR — triage with a human gate, delegate fixes, resolve threads, re-trigger review, report merge-readiness. Use when a review bot (Greptile, CodeRabbit) or human reviewer left comments on a PR and you want the feedback addressed and the review green, or to rebut a stale finding.
 argument-hint: "[PR number (optional)]"
 allowed-tools: Bash(gh *), Bash(git add *), Bash(git commit *), Bash(git push *), Bash(git diff *), Bash(git log *)
-model: opus
-effort: high
 ---
 
 You are the coordinator/architect. You run the PR mechanics (`gh`/`git`) yourself, but you NEVER edit code — every fix goes to a worker. Take the review findings on the current PR from "posted" to "addressed + threads resolved + re-reviewed", with a human triage gate. The tool-specific surface is one adapter (`references/adapters.md`); everything else is generic GitHub (`references/github-api.md`).
@@ -64,11 +62,11 @@ If the tool posts a confidence-gated status check, read the current confidence a
 
 ## Next step
 
-Plain-text handoff — no AskUserQuestion, no Skill-tool auto-invoke:
+Present an **AskUserQuestion** restating where the review pass landed, with the applicable next-step routes as options (recommended first, plus **Stop here**). On selection, invoke the chosen `/dobby:<skill>` via the Skill tool; **Stop here** ends the turn.
 
 - **More fixes needed** → loop back to Step 2, re-triaging ONLY the NEW residual concerns from the bot's UPDATED summary — not every open thread. Deferred threads stay `isResolved=false` on purpose; don't re-present a decision the user already made.
-- **Gate met** → ready to merge.
-- **Part of a larger session** → suggest the user TYPE `/dobby:wrap` to reconcile docs and write any ADRs.
+- **Gate met** → ready to merge. Stop here.
+- **Part of a larger session** → **`/dobby:wrap`** to reconcile docs and write any ADRs.
 
 ## Language
 
@@ -83,4 +81,4 @@ Interact with the user in their language. Code, comments, commit messages, ADRs,
 - [ ] Decision-grade findings evaluated for ADRs; offered and written on approval
 - [ ] Fixes committed + pushed; `fix` / `dismiss` / `outdated` threads resolved EXPLICITLY; `deferred` threads left open and replied with rationale + bot @-mention
 - [ ] Review re-triggered (unless human/unknown); thread state AND summary reconciled; stale summary rebutted where warranted
-- [ ] Merge-readiness reported against the confidence gate; next step handed off in plain text
+- [ ] Merge-readiness reported against the confidence gate; next step handed off via an AskUserQuestion gate

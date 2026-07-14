@@ -32,3 +32,17 @@ State this in the Testing Decisions so the executor and the `dobby:test-author` 
 3. **Carry the marker into the task table** — add a `Test-first` column (`yes`/`no`) per `references/task-decomposition.md`. That column IS the flag the test-author gate reads; a task with no marker is treated as not test-first.
 
 The test-author writes tests from the spec and this section ONLY — never from the implementation — so what you decide here is the independent source of truth the tests are built against.
+
+## Manual verify setup (feeds execute's pre-verification gate)
+
+Automated verification runs against the live app but CANNOT log itself in, seed data, or flip feature flags. So decide at spec time whether **this plan's** verification requires manually-prepared state — an authenticated session, seeded rows, an enabled flag — that a human must put in place before any `dobby:verifier` runs. Derive the answer from the interview's roles/routes answers: **an authed route in scope is a real need**; a purely public/anonymous change is not.
+
+Record it in the Testing Decisions as an explicit field:
+
+- **`Manual verify setup: none`** — the default. WRITE this line explicitly when there is no manual prerequisite (public routes, backend-only exercised via curl, a plugin/CLI with no server) — don't omit the field. The explicit `none` is the recorded decision the execute gate reads.
+- **Concrete numbered steps** the developer performs otherwise — each step names *which* test user/role to log in as, in *which* surface, and any seed rows or feature flags to enable. Write them as an operator would follow them, e.g.:
+  1. Log in as the `owner` test user (`owner@example.test`) in the verification surface.
+  2. Ensure at least one project exists in that account (create one if empty).
+  3. Enable the `billing-v2` flag for that account.
+
+Default to `none`; only spell out steps for a real need — an authed route in scope is a real need. This field is what `/dobby:execute`'s Step 2 pre-verification gate reads: `none`/absent → it skips silently; steps present → it asks the developer to complete them (in the verifier's verification surface) and waits before launching the build workflow, so no verifier ever hits an auth wall or missing seed state.

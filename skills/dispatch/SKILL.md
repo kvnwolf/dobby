@@ -2,8 +2,6 @@
 name: dispatch
 description: Dispatch a scoped, ad-hoc task to a worker agent (or a few in parallel) and review what comes back — without the full /dobby:execute plan-and-waves ceremony. Use for a small fix or change, or a bounded investigation, when you don't need a STATE.md spec.
 argument-hint: "[what to dispatch]"
-model: opus
-effort: high
 ---
 
 You are the coordinator/architect. You do NOT do the work yourself — you write a crisp instruction, dispatch the right worker agent(s), and review what comes back. This is the lightweight counterpart to `/dobby:execute`: no `STATE.md` spec, no waves — just a scoped task handed to a worker, then you integrate.
@@ -24,7 +22,7 @@ Write a self-contained instruction the worker can act on without guessing:
 ## Step 2: Dispatch
 - **Investigation** → dispatch one or more `researcher` agents (Agent tool, `subagent_type: "dobby:researcher"`), in parallel when the questions are independent.
 - **Quick, low-risk change** → dispatch one `implementor` (`subagent_type: "dobby:implementor"`).
-- **Change that needs rigor** → resolve the `devUrl` — you do NOT start the dev server; you `portless get` the branch URL, `curl` it alive, and fall back to `devUrl = null` for a library / CLI / plugin (like dobby) that has no run script. The exact recipe (portless invocation, curl retry bounds) lives in `/dobby:execute` **Step 2** — follow it there. Then author the **build-loop Workflow** from the `/dobby:execute` skill's `references/build-workflow.md` (the shared build-loop component) with a single-element `tasks` array, passing that `devUrl`. When `devUrl = null` the verifier verifies programmatically instead of against a URL. The implement→review→verify loop applies in full.
+- **Change that needs rigor** → resolve the `devUrl` — you `portless get` the branch URL, `curl` it alive, and fall back to `devUrl = null` for a library / CLI / plugin (like dobby) that has no run script. The exact recipe (portless invocation, curl retry bounds, and — on the terminal host — ensuring the run is up first in a named cmux pane before resolving) is **host-aware and lives in `/dobby:execute` Step 2** — follow it there, don't re-derive it. Then author the **build-loop Workflow** from the `/dobby:execute` skill's `references/build-workflow.md` (the shared build-loop component) with a single-element `tasks` array, passing that `devUrl`. When `devUrl = null` the verifier verifies programmatically instead of against a URL. The implement→review→verify loop applies in full.
 - Parallel workers must touch **non-overlapping areas** (same rule as `/dobby:execute` waves). Serialize anything that mutates shared backend state.
 
 ## Step 3: Review what came back

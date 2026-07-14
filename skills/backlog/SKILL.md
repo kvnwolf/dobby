@@ -2,8 +2,6 @@
 name: backlog
 description: Quick-capture a follow-up, bug, or tech-debt item to the project tracker (GitHub Issues). Use when you spot something worth tracking mid-work and want it logged, not triaged now.
 argument-hint: "[the item to capture]"
-model: sonnet
-effort: medium
 ---
 
 This is quick-capture, NOT triage — log the item, then stop.

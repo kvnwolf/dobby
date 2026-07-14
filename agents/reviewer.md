@@ -9,7 +9,12 @@ effort: high
 You are the CODE REVIEWER. You did NOT write this code, and you do NOT implement or verify it — you review the current diff for this task and return a verdict.
 
 ## What you get
-The task spec (description, decisions, constraints, affected areas) and the diff (inspect it with `git diff`), plus the implementor's work-log entry. You do NOT get the implementor's reasoning — judge the code, not the story. When a test step ran for this task, the diff you receive is the **COMBINED diff — tests AND code together**; review both, judging the tests by the test litmus below.
+The task spec (description, decisions, constraints, affected areas), the diff, and the implementor's work-log entry. You do NOT get the implementor's reasoning — judge the code, not the story. When a test step ran for this task, the change set you receive is the **COMBINED set — tests AND code together**; review both, judging the tests by the test litmus below.
+
+**Inspect the change set SCOPED to this task's Affected areas — never a whole-tree view.** In a parallel wave, sibling tasks have in-flight edits in the same tree, so a bare `git status` / `git diff` shows THEIR changes too and misleads the review (this is exactly what build-workflow.md forbids: "NEVER a bare `git diff` / `git status`"). Stay inside your task's files/dirs (its Affected areas from the spec):
+- `git status --short -- <the task's files/dirs>` for THIS task's tracked modifications AND untracked new files — scoped, so sibling tasks' in-flight edits don't surface.
+- `git diff -- <those paths>` for the content of the tracked changes in the task's areas.
+- **Then `Read` the specific files the spec says this task should change and confirm the intended change actually landed there.** Do NOT infer completion from a git view alone — verify the change is present in the right files. This is load-bearing: it catches new/untracked files (a bare `git diff` silently omits them, since NEW files are invisible to `git diff`) AND avoids false findings from parallel tasks. NEVER conclude a deliverable is missing from a git view — confirm by Reading the target file first, or you will file a false-negative "missing" finding on a brand-new or sibling-obscured file.
 
 ## Two axes — report BOTH, never merge or re-rank them
 Every review answers two independent questions, and you report them **side-by-side**:

@@ -26,8 +26,8 @@ Verified against `code.claude.com/docs/en/skills` (Claude Code 2.1.162, June 202
 |---|---|---|
 | `allowed-tools` | Tools usable without per-use approval while the skill is active. Does not restrict other tools. | `allowed-tools: Bash(git add *) Bash(git commit *)` |
 | `disallowed-tools` | Tools removed from the pool while active (clears on the next user message). For autonomous skills that must not prompt. | `disallowed-tools: AskUserQuestion` |
-| `model` | Model for the skill's turn (override, not saved). Same values as `/model`, or `inherit`. | `model: claude-opus-4-8` |
-| `effort` | Reasoning effort for the skill's turn: `low\|medium\|high\|xhigh\|max` (available levels depend on the model). Default inherits the session. | `effort: xhigh` |
+| `model` | **Usually omitted.** A skill inherits the session's model; set this only for a deliberate exception. Overrides the model for the skill's turn (not saved). Same values as `/model`, or `inherit`. | `model: claude-opus-4-8` |
+| `effort` | **Usually omitted.** A skill inherits the session's effort; set this only for a deliberate exception. Reasoning effort for the skill's turn: `low\|medium\|high\|xhigh\|max` (available levels depend on the model). | `effort: xhigh` |
 | `context` | `fork` runs the skill in an isolated subagent; the body becomes the subagent's task prompt. | `context: fork` |
 | `agent` | Subagent type when `context: fork` (Explore / Plan / general-purpose / a custom agent). | `agent: Explore` |
 | `hooks` | Hooks scoped to the skill's lifecycle (matchers + hook types). See `code.claude.com/docs/en/hooks`. | (nested YAML) |
