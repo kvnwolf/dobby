@@ -1,3 +1,6 @@
 *.local*
 .DS_Store
 STATE.md
+node_modules/
+cli/dist/
+cli/*.tgz

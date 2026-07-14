@@ -1,0 +1,5 @@
+{
+  "name": "monorepo-dedupe",
+  "private": true,
+  "workspaces": ["packages/*", "packages/db"]
+}

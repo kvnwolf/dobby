@@ -1,0 +1,8 @@
+{
+  "name": "@kvnwolf/dobby",
+  "version": "0.1.0",
+  "bin": {
+    "dobby": "./src/index.ts"
+  },
+  "type": "module"
+}

@@ -1,0 +1,8 @@
+{
+  "name": "monorepo-omit-empty-member",
+  "private": true,
+  "workspaces": ["pkgs/*"],
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}
