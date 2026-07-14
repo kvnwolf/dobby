@@ -2,8 +2,6 @@
 name: improve-architecture
 description: Review the architecture of a module, subsystem, or repo and propose prioritized improvements. Use to assess structural health, find module-boundary smells, or plan a refactor — it reports opportunities, it doesn't change code.
 argument-hint: "[module/path/subsystem, or blank for the whole repo]"
-model: claude-fable-5[1m]
-effort: high
 ---
 
 Assess structural health and propose improvements — you report and prioritize; you do NOT change code (hand a chosen refactor to `/dobby:scope`). The bar is the deep, contained-module ideal: a module owns one feature/domain slice end-to-end, its files named by role and imported by deep path (no barrel).
@@ -39,7 +37,7 @@ The deliverable is a **self-contained visual HTML report** — the diagrams carr
 
 ## Next step
 
-End with a plain-text handoff — NO AskUserQuestion for this gate, NO Skill-tool auto-invoke. The next stage must be TYPED by the user: typed entry applies the next skill's own `model`/`effort`; an auto-invoked skill rides the current turn's override instead. State the recommended command first (with why), then the alternatives; on stop, point to the echoed report path (the HTML file in the OS temp dir — it stands on its own).
+Present an **AskUserQuestion** restating that the architecture review is done, with the next-step commands as options (recommended first, with why, plus **Stop here**). On selection, invoke the chosen `/dobby:<skill>` via the Skill tool; on **Stop here** end the turn and point to the echoed report path (the HTML file in the OS temp dir — it stands on its own).
 
 - **`/dobby:scope`** *(Recommended)* — start a work session on the top improvement (it becomes the goal).
 - **Stop here** — the report stands; act later.

@@ -3,8 +3,6 @@ name: handoff
 description: Compact the current session into an ephemeral fork document a fresh Claude Code session can pick up.
 argument-hint: "What will the next session focus on?"
 disable-model-invocation: true
-model: opus
-effort: medium
 ---
 
 Write a handoff document a fresh Claude Code session can start from. This is a **side-path**, not a lifecycle stage — it never chains a Next-step and never disposes `STATE.md`.
@@ -51,7 +49,12 @@ Before the file is final, scrub secrets and PII: API keys, tokens, passwords, co
 
 ## Next step
 
-This is a side-path — there is **no lifecycle Next-step**. Tell the user the handoff is written, echo its absolute path, and suggest they start a fresh Claude Code session and open it (e.g. by passing the path to the new session). Then stop.
+This is a side-path — there is **no lifecycle Next-step**. Tell the user the handoff is written and echo its absolute path, then present an **AskUserQuestion** (one question) that restates the handoff is complete and offers:
+
+- **Open in a fresh session** *(Recommended)* — start a fresh Claude Code session and open the handoff (e.g. by passing the path to the new session); explain this is a manual step the user does in their own terminal, then stop.
+- **Stop here** — end the turn.
+
+Both selections end the turn — the handoff hands off to a *new* session, so there is no `/dobby:*` skill to chain into.
 
 ## Language
 

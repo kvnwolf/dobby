@@ -1,10 +1,8 @@
 ---
 name: onboard
-description: Set up a repo (greenfield or existing) for the work skills — interview, scaffold the base files, write the Conductor config. Run once.
+description: Set up a repo (greenfield or existing) for the work skills — interview, scaffold the base files, write the dobby.config.json contract + the Conductor config. Run once.
 disable-model-invocation: true
 argument-hint: "[project idea, if greenfield]"
-model: claude-fable-5[1m]
-effort: max
 ---
 
 Set up a project so `/dobby:scope → /dobby:interview → /dobby:research → /dobby:spec → /dobby:execute → /dobby:wrap` can run in it. Run once. This lays down the adapter the generic skills read from.
@@ -98,7 +96,7 @@ set -euo pipefail
 
 ## Step 3: Scaffold the base files
 
-**No-clobber rule — never overwrite an existing file the user already wrote.** For each file below (`CONTEXT.md`, `CLAUDE.md`/`AGENTS.md`, `.gitignore`, `.claude/commit.config.yml`), check whether it already exists first. If it does NOT exist, scaffold it fresh. If it DOES exist, do NOT overwrite it — read it, then *merge additively*: add only the missing sections, and leave the user's existing content untouched. Show the user the diff (or the sections you propose to append) and get approval before writing. An existing repo often already carries a hand-written `CLAUDE.md` or `AGENTS.md`; blindly regenerating it is a data-loss bug, not setup. (Some repos use `AGENTS.md` as the agent-config filename instead of `CLAUDE.md` — if one already exists, extend THAT file; don't create a second, competing one.)
+**No-clobber rule — never overwrite an existing file the user already wrote.** For each file below (`CONTEXT.md`, `CLAUDE.md`/`AGENTS.md`, `.gitignore`, `dobby.config.json`, `.worktreeinclude`), check whether it already exists first. If it does NOT exist, scaffold it fresh. If it DOES exist, do NOT overwrite it — read it, then *merge additively*: add only the missing sections, and leave the user's existing content untouched. Show the user the diff (or the sections you propose to append) and get approval before writing. An existing repo often already carries a hand-written `CLAUDE.md` or `AGENTS.md`; blindly regenerating it is a data-loss bug, not setup. (Some repos use `AGENTS.md` as the agent-config filename instead of `CLAUDE.md` — if one already exists, extend THAT file; don't create a second, competing one.)
 
 Each scaffolded choice below carries a one-line **why** — say it to the user as you write, so setup teaches the shape of the kit instead of dropping opaque files:
 
@@ -116,13 +114,26 @@ Each scaffolded choice below carries a one-line **why** — say it to the user a
 
 Don't scaffold per-module `CONTEXT.md` files now — each module gets its own when `/dobby:execute` builds it.
 
-## Step 4: Set the commit contract
+## Step 4: Write the dobby.config.json contract
 
-Create `.claude/commit.config.yml` following `references/commit-config.md` — discovery (docs to sync + pre-commit checks, via a `dobby:researcher`), user confirmation, write. On a greenfield repo the doc list starts with the files just scaffolded and the checks come from the stack's own toolchain (typecheck/lint/test). Step 3's no-clobber rule applies: an existing config gets missing docs/checks merged additively with the user's approval, never overwritten. *Why:* `/dobby:commit` gates every commit on this file — it's how doc-sync and pre-commit checks stay enforced without a separate hook manager.
+Create `dobby.config.json` at the **repo root** (JSON — NOT `.claude/`, NOT `.dobby/`) following `references/dobby-config.md` — discovery (via a `dobby:researcher`), user confirmation, write. The config carries FIVE sections: `files` (docs to sync) + `checks` (pre-commit checks) always, plus `setup` (worktree install commands, run by `/dobby:scope`), `run` (single dev command wrapping `portless run <name> -- …`, started lazily by `/dobby:execute`), and `teardown` (optional cleanup commands, run by `/dobby:finish`) **for a project with an app**.
+
+- **No-app project** (a library, CLI, or plugin — like dobby itself): OMIT `setup`/`run`/`teardown` entirely (`files` + `checks` only). No `run` → no dev URL → the `devUrl = null` convention holds.
+- **App project**: also add a run-sync `files[]` entry for `dobby.config.json` itself — an `update_when` trigger reminding that `.conductor/settings.toml`'s `[scripts.run]` and this `run` carry the SAME `portless` command and must change together (accepted duplication). The recipe file has the exact entry.
+- On a greenfield repo the doc list starts with the files just scaffolded and the checks come from the stack's own toolchain (typecheck/lint/test). Step 3's no-clobber rule applies: an existing `dobby.config.json` gets missing entries merged additively with the user's approval, never overwritten.
+
+*Why:* this is the single kit-owned per-project contract — `/dobby:commit` gates every commit on `files`/`checks`, and `/dobby:scope` / `/dobby:execute` / `/dobby:finish` read `setup`/`run`/`teardown` to drive the per-session worktree on the terminal host. It's how doc-sync, pre-commit checks, and the worktree lifecycle stay enforced without a separate hook manager.
+
+### portless devDependency + .worktreeinclude
+
+Two more artifacts for a project with an app (skip both for a no-app project):
+
+- **Pin `portless` as a devDependency** in `package.json` `devDependencies` (not `npx`, not a global install) — the `run` command wraps the dev command with it, and `/dobby:execute` resolves the dev URL via `portless get <name>`. Surface the one-time **`portless trust`** setup in plain text: the first run needs sudo to install a local CA and bind port 443 (once per machine), so the first `/dobby:execute` doesn't fail on it.
+- **Scaffold `.worktreeinclude`** at the repo root (gitignore syntax) — one glob per line listing the gitignored env/config files a fresh worktree needs (e.g. `.env`, `.env.local`). Claude Code copies these into each new `EnterWorktree` worktree so the app can run there; `/dobby:scope` re-materializes them if the native copy didn't run. Discover the set the same way as the rest of onboard's discovery (inspect the repo's `.gitignore` + `.env*` files); apply the no-clobber rule if the file already exists. Skip if the project has no gitignored env files.
 
 ## Step 5: Hand off
 
-Setup is done. End with a plain-text handoff: suggest the user TYPE `/dobby:scope <first goal>` (ask for the goal first if not already clear) — NO AskUserQuestion, NO Skill-tool auto-invoke; typed entry applies `/dobby:scope`'s own `model`/`effort`. Or stop here — they'll start a work session later.
+Setup is done. End with an **AskUserQuestion** gate offering "Start a work session — `/dobby:scope <first goal>`" *(Recommended)* (ask for the goal first if not already clear, then invoke `/dobby:scope` via the Skill tool on selection) and "Stop here" (start a session later).
 
 - **`/dobby:scope <first goal>`** *(Recommended)* — start the first work session.
 - **`/dobby:wizard`** *(only if Step 1 surfaced services needing one-time human setup)* — generate the guided external-service wizard.
@@ -138,10 +149,11 @@ Interview in the user's language. **Write all generated docs and code — CLAUDE
 - [ ] Conductor configured: `.conductor/settings.toml` written from the right template (`run_mode` AND `auto_run_after_setup` explicit); the `[scripts] run` command wraps the dev command with `portless run` (branch-prefixed URL, no `$CONDUCTOR_PORT`); `nonconcurrent + auto_run` interaction noted in a comment; no `[models]` table
 - [ ] No-dev-server project (lib/CLI/plugin): NO `[scripts] run`, and `auto_run_after_setup = false` (or omitted) — never `true` with no run target
 - [ ] `.conductor/setup.sh` + `.conductor/archive.sh` stubs written and `chmod +x`; `file_include_globs` (multi-line string) copies gitignored env files; secrets go in gitignored `.conductor/settings.local.toml`, not `settings.toml`
-- [ ] No-clobber respected: existing `CONTEXT.md` / `CLAUDE.md` / `AGENTS.md` / `.gitignore` / `.claude/commit.config.yml` were NOT overwritten — merged additively with user approval; an existing `AGENTS.md` was extended, not shadowed by a new `CLAUDE.md`
+- [ ] No-clobber respected: existing `CONTEXT.md` / `CLAUDE.md` / `AGENTS.md` / `.gitignore` / `dobby.config.json` / `.worktreeinclude` were NOT overwritten — merged additively with user approval; an existing `AGENTS.md` was extended, not shadowed by a new `CLAUDE.md`
 - [ ] CONTEXT.md scaffolded (initial glossary) — in English; domain terms keep their real-world form
 - [ ] CLAUDE.md scaffolded (product, stack, module map, deep-module conventions, workflow config) — in English; each scaffolded choice explained in plain language; Dev/Workflow note says the app runs via Conductor with the run command wrapping the dev command in portless, and the verifier obtains the dev URL via `portless get <name>` (no hardcoded URL)
 - [ ] docs/adr/ created; `.gitignore` ignores `STATE.md` and `.conductor/settings.local.toml`
-- [ ] `.claude/commit.config.yml` created (docs to sync + pre-commit checks, user-confirmed)
+- [ ] `dobby.config.json` created at the repo root (JSON; `files` + `checks` always; `setup`/`run`/`teardown` + the run-sync `files[]` rule for an app project, OMITTED for a no-app lib/CLI/plugin), user-confirmed
+- [ ] App project: `portless` pinned as a devDependency (not npx/global); one-time `portless trust` surfaced; `.worktreeinclude` scaffolded with the gitignored env files a fresh worktree needs
 - [ ] `/dobby:wizard` offered (plain text, not auto-invoked) if Step 1 surfaced external services needing one-time manual setup (DB/auth/CI secrets)
 - [ ] Next step handed off in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)

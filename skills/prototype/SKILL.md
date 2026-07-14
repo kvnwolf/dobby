@@ -2,8 +2,6 @@
 name: prototype
 description: Build a throwaway prototype to answer a design question before committing — an interactive terminal app for state/business-logic questions, or several UI variants on one route with a switcher. Use when the user wants to prototype something, compare UI variants, or sanity-check a data model or state machine; or when /dobby:interview or /dobby:research hits a question only answerable by playing with it.
 argument-hint: "[the question the prototype answers]"
-model: opus
-effort: high
 ---
 
 A prototype is **throwaway code that answers a question**. The question decides the shape. You stay the architect: define the question, pick the branch, and spec the variants/actions — the `dobby:implementor` agent writes the code.
@@ -28,7 +26,7 @@ Read the branch reference and turn it into a concrete build instruction: the que
 ## Step 3: Hand it over — the play session
 
 - **Logic branch** → give the user the one run command.
-- **UI branch** → give the URL on the **already-running dev server** (the Conductor run — the dev URL comes from `portless get`; never start a second server) + the `?variant=` keys.
+- **UI branch** → give the URL on the **already-running dev server** (resolve it the way `/dobby:execute` Step 2 does — `portless get`, identical on both execution hosts; on the terminal host that recipe also ensures the run is up first; never start a second server) + the `?variant=` keys.
 
 The user drives. The interesting moments are "wait, that shouldn't be possible" and "I want the header from B with the sidebar from C" — those are the answer forming. Iterate through the implementor as the user asks for new actions, adjustments, or another variant.
 
@@ -52,7 +50,7 @@ Then **delete or absorb** (via the implementor): fold the winning variant or val
 
 ## Next step
 
-Once the answer is captured, end with a plain-text handoff back to the stage that sent you here: tell the user to TYPE it (e.g. `/dobby:interview`) — NO AskUserQuestion, NO Skill-tool auto-invoke; typed entry re-applies that stage's own `model`/`effort`. If the prototype was standalone, suggest `/dobby:spec` or stopping here.
+Once the answer is captured, present an **AskUserQuestion** restating that the prototype is done, with the handoff routes back to the stage that sent you here as options (recommended first, plus **Stop here**). On selection, invoke the chosen `/dobby:<skill>` via the Skill tool; **Stop here** ends the turn.
 
 - **Resume the calling stage** *(Recommended)* — `/dobby:interview` (continue with the answer as a settled decision) or `/dobby:research` (fold it into the brief).
 - `/dobby:spec` — if the prototype settled the last open question and the task is ready to plan.
@@ -70,7 +68,7 @@ Interact with the user in their language. Write prototype code, comments, and th
 - [ ] User drove the prototype; iterations applied through the implementor
 - [ ] Answer captured (STATE.md section of the calling stage, or NOTES.md standalone); ADR candidate flagged if warranted
 - [ ] Prototype deleted or absorbed via the normal flow; no rot left behind
-- [ ] Next step handed off in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)
+- [ ] Next step handed off via an AskUserQuestion gate (calling-stage resume / `/dobby:spec` / Stop here)
 
 ---
 *Adapted from [mattpocock/skills](https://github.com/mattpocock/skills) `engineering/prototype`.*

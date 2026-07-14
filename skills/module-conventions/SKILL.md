@@ -1,8 +1,6 @@
 ---
 name: module-conventions
 description: Per-module file-type convention for this stack (TanStack Start + Drizzle/Neon + Better Auth) — which role file each piece of code belongs in (.server.ts · functions.ts · .browser.ts · schema.gen.ts), deep-path imports (no barrels), eager instances, env as single source. Use when creating or refactoring a module or feature slice, deciding where a piece of code goes (a server function, a server-only instance, a browser client), or co-locating a Drizzle schema.
-model: opus
-effort: medium
 ---
 
 Every module is a deep, contained folder reached by **deep path** — there is NO `index.ts` barrel. Files are named by their ROLE, so the layout is identical across modules and **the filename is the interface**. The `.server.ts`/`.browser.ts` suffixes are framework-enforced compile boundaries, not naming habits.

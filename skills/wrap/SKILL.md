@@ -2,8 +2,6 @@
 name: wrap
 description: Close out a work session — final human smoke test, doc/ADR reconciliation, optional skill packaging, then dispose the ephemeral STATE.md and hand off to /dobby:commit. Use when finishing a feature or session, or wrapping up before committing.
 argument-hint: ""
-model: opus
-effort: high
 ---
 
 Turn a finished work session into durable project memory, confirm it works and the user understands it, then clean up. Read `STATE.md` (goal, findings, spec, work log) to know what shipped.
@@ -35,7 +33,7 @@ The durable bits now live in CONTEXT.md / CLAUDE.md / docs/adr/. Delete the ephe
 
 ## Next step
 
-The session is wrapped. End with a plain-text handoff: suggest the user TYPE `/dobby:commit` — NO AskUserQuestion, NO Skill-tool auto-invoke; typed entry applies `/dobby:commit`'s own `model`/`effort`. Or stop here.
+The session is wrapped. Present the next stage as an **AskUserQuestion** — one question that restates wrap just finished — with the options below (recommended first, then Stop here). On the user's selection, invoke the chosen `/dobby:<skill>` via the Skill tool; "Stop here" ends the turn (commit later).
 
 - **`/dobby:commit`** *(Recommended)* — sync docs, commit, push, open the PR.
 - **Stop here** — commit later.
@@ -51,4 +49,4 @@ Interact with the user in their language. Write docs / ADRs / CONTEXT in English
 - [ ] ADR candidates offered + written (with approval) for decisions meeting the 3 criteria
 - [ ] Reusable-skill packaging evaluated and offered if warranted
 - [ ] `STATE.md` disposed; final summary presented; no commits (handed to `/dobby:commit`)
-- [ ] Next step handed off in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)
+- [ ] Next step offered via an AskUserQuestion gate (recommended route first, Stop here); chosen route invoked via the Skill tool

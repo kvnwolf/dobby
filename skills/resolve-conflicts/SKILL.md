@@ -2,8 +2,6 @@
 name: resolve-conflicts
 description: Resolve an in-progress merge, rebase, or cherry-pick conflict by recovering each side's intent from history and PRs, then reconciling every hunk without losing either side's behaviour.
 disable-model-invocation: true
-model: opus
-effort: high
 ---
 
 You are the coordinator/architect. You run the git/`gh` mechanics yourself and you synthesize each side's intent from history (reading-for-synthesis is allowed), but you NEVER edit conflicted files — every hunk resolution goes to a worker. Take an in-progress conflict from "unmerged paths" to "resolved, checks green, merge/rebase finished."
@@ -49,10 +47,10 @@ The implementor removes every conflict marker (`<<<<<<<`, `=======`, `>>>>>>>`),
 
 ## Step 4: Run the project's discovered checks
 
-The resolution is validated by the project's own gate, not by eyeballing. Read `checks` from `.claude/commit.config.yml` and run each `run` command in order from the repo root — typically typecheck → tests → format. This is the same authority `/dobby:commit` uses.
+The resolution is validated by the project's own gate, not by eyeballing. Read `checks` from `dobby.config.json` and run each `run` command in order from the repo root — typically typecheck → tests → format. This is the same authority `/dobby:commit` uses.
 
 - Any check fails → the merge broke something. Send the failure (command + output verbatim) back to `dobby:implementor` to fix, then re-run the checks. Never weaken or skip a check to make it pass.
-- No `.claude/commit.config.yml` → the project has no discovered gate. Fall back to whatever the repo documents (its `package.json` scripts, `justfile`, CI config) and say plainly which checks you ran; suggest the user TYPE `/dobby:onboard` to establish the contract for next time.
+- No `dobby.config.json` → the project has no discovered gate. Fall back to whatever the repo documents (its `package.json` scripts, `justfile`, CI config) and say plainly which checks you ran; suggest the user TYPE `/dobby:onboard` to establish the contract for next time.
 
 ## Step 5: Finish the merge/rebase
 
@@ -64,11 +62,11 @@ Only after Step 4 is green. Stage the resolved files, then hand the actual commi
 
 ## Next step
 
-Plain-text handoff — no AskUserQuestion, no Skill-tool auto-invoke:
+Present an **AskUserQuestion** restating where conflict resolution landed, with the applicable next-step routes as options (recommended first, plus **Stop here**). On selection, invoke the chosen `/dobby:<skill>` via the Skill tool; **Stop here** ends the turn.
 
-- **Rebase still replaying** → loop back to Step 1 for the next conflicted commit; don't stop until `git status` says the rebase is complete.
-- **Resolved and staged** → suggest the user TYPE `/dobby:commit` to finish the commit and open/update the PR.
-- **An incompatible hunk forced a trade-off (Step 3)** → tell the user it's an ADR candidate and suggest `/dobby:wrap` to capture it (hard-to-reverse ∧ surprising ∧ real trade-off).
+- **Rebase still replaying** → loop back to Step 1 for the next conflicted commit; don't stop until `git status` says the rebase is complete. Stop here.
+- **Resolved and staged** → **`/dobby:commit`** *(Recommended)* to finish the commit and open/update the PR.
+- **An incompatible hunk forced a trade-off (Step 3)** → it's an ADR candidate; **`/dobby:wrap`** captures it (hard-to-reverse ∧ surprising ∧ real trade-off).
 
 ## Language
 
@@ -79,7 +77,7 @@ Interact with the user in their language. Code, comments, commit messages, and A
 - [ ] Current state established: operation in flight (`git status`) and the exact conflicting files (`--diff-filter=U`) identified — never guessed
 - [ ] Per hunk, BOTH sides' intent recovered from commits/PRs/issues and stated in one sentence each; nothing resolved whose purpose is unclear
 - [ ] Every hunk resolved by `dobby:implementor` (architect edited no conflicted file): compatible → both intents preserved; incompatible → merge-goal side chosen and trade-off recorded; no invented behaviour
-- [ ] Project's discovered checks (`.claude/commit.config.yml`) run green; failures fixed via implementor, never weakened or skipped
+- [ ] Project's discovered checks (`dobby.config.json`) run green; failures fixed via implementor, never weakened or skipped
 - [ ] Merge/rebase NOT aborted; resolved files staged; commit handed to `/dobby:commit`; rebases looped to completion
 - [ ] Any incompatible-hunk trade-off surfaced as an ADR candidate for `/dobby:wrap`
 

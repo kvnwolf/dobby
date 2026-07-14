@@ -66,6 +66,8 @@ End your response with a `## Work log` entry — the coordinator records it:
 Do NOT append to STATE.md (or any shared doc) yourself — RETURN the entry. Parallel implementors writing the same file race and clobber each other's entries; the coordinator is the single writer.
 
 ## Rules
-- No commits. Don't edit the plan/spec.
+- No commits AND no working-tree reverts — the coordinator owns the index and the tree.
+- To undo your own change or an overreach, EDIT the specific lines back with the Edit tool — NEVER `git checkout` / `git restore` / `git stash` / `git reset --hard` / `git clean`; in the shared worktree those clobber other tasks' in-flight edits.
+- Don't edit the plan/spec.
 - Use the language the project uses for code/content.
 - Blocked and can't resolve it? Stop and report what happened.

@@ -2,8 +2,6 @@
 name: interview
 description: Interview the user relentlessly to reach a complete, shared understanding of a task before it's planned or built. Use before planning a feature, change, or refactor; to stress-test a design; to resolve ambiguity; or when the user says "interview me" / "grill me".
 argument-hint: "[what you want to build or decide]"
-model: claude-fable-5[1m]
-effort: xhigh
 ---
 
 Reach a complete, shared understanding of the task before any code is planned. Misalignment is the most common failure mode — close the gap by interrogating, not assuming. ZERO remaining ambiguity by the end.
@@ -42,11 +40,17 @@ Apply these against the glossary and the codebase while interviewing:
 - **Cross-reference with code** — when the user states how something works, check the code agrees (per Step 3, a `researcher` for anything substantial); surface contradictions. Your OWN assumptions about a shared primitive are claims too — a shared component's props, a hook's submit/disabled lifecycle, whether two primitives compose (one dialog nested over another). The moment a decision rests on how a reused primitive behaves, dispatch a `researcher` to confirm it against code BEFORE locking the decision, not after. "I'm pretty sure that prop/hook/nesting works that way" is the trigger to verify, never a reason to skip.
 - **Note, don't write** — flag new domain terms and ADR candidates as you resolve them; never edit files mid-interview. Hold the resolved terms so you can OFFER them as `CONTEXT.md` candidates at the handoff (see Step 6) — the note is where the offer comes from, not a substitute for it.
 
-If a decision genuinely can't be resolved verbally ("how does this state machine feel?", "which UI variant do we like?"), pause and have the user TYPE **`/dobby:prototype`** (do NOT invoke it via the Skill tool — typed entry applies its own `model`/`effort`) to settle it empirically — the user plays with a throwaway prototype and the captured answer lands in `STATE.md` — then resume the interview where it left off.
+If a decision genuinely can't be resolved verbally ("how does this state machine feel?", "which UI variant do we like?"), pause and have the user run **`/dobby:prototype`** to settle it empirically — the user plays with a throwaway prototype and the captured answer lands in `STATE.md` — then resume the interview where it left off.
 
 ## Step 6: Stop condition + handoff
 
-Stop only when every ambiguity is resolved, all states / edge cases / roles / routes are considered, and you could implement without guessing. THEN ask one final "anything else to add?" — this is the LAST question, not an escape hatch.
+Stop only when every ambiguity is resolved, all states / edge cases / roles / routes are considered, and you could implement without guessing. THEN present a final all-clear **AskUserQuestion** gate — is everything clear, or does the user want to keep going? Three options:
+
+- **"Todo claro — cerrar la entrevista"** — proceed to the domain-term offer and handoff below.
+- **"Tengo más que aclarar / sigue preguntando"** — loop back into one-question-at-a-time interviewing (Steps 4–5) and re-run this gate afterward.
+- **"Auto-audita la cobertura antes de cerrar"** — don't take "it's clear" at face value: run a rigorous **completeness self-audit** before deciding. Actively re-scan for anything still uncovered — every edge case, the happy path, entity states (created / active / inactive / deleted), roles / permissions, routes (authed / unauthed / authorized / unauthorized), error / empty / loading states, validation rules, and any decision still resting on an unverified shared-primitive assumption. This option ACTIVATES the closing litmus test and the infra-assumption gate below on demand. If the audit surfaces ANY gap or unasked question, the interview does NOT close — resume one-question-at-a-time interviewing (Steps 4–5) on those gaps, then return to this gate. Only when the audit genuinely finds nothing left to ask do you proceed to the domain-term offer and handoff.
+
+This is a gate, not an escape hatch — reach it only after the litmus test and infra-assumption gate below pass.
 
 **The closing litmus test:** before declaring the interview complete, scan your own closing message. If it contains ANY side-note, "by the way" observation, parenthetical offer, or "I could also do X, unless you'd rather not" — that item IS an unresolved question wearing a disguise. Demoting a question to a side-note is how interviews end prematurely: if it was worth mentioning, it's worth its own focused question. Promote it, ask it, and keep going — the interview is NOT over. Only a closing message with zero new items qualifies as the close.
 
@@ -67,10 +71,10 @@ Produce a tight **Decisions** summary the next step can consume verbatim: each e
 
 ## Next step
 
-End with a plain-text handoff — NO AskUserQuestion for this gate, NO Skill-tool auto-invoke. The next stage must be TYPED by the user: typed entry applies the next skill's own `model`/`effort`; an auto-invoked skill rides the current turn's override instead. State the recommended command first (with why), then the alternatives; on stop, point to where this stage's output lives (e.g. `STATE.md`).
+End with an **AskUserQuestion** gate that restates the interview just finished and presents the next step. Recommend `/dobby:research` when the task will touch external tech (libraries/SDKs/APIs), otherwise recommend `/dobby:spec`; list the recommended command first and mark it. On selection, invoke the chosen `/dobby:<skill>` via the Skill tool. On "Stop here", point to where this stage's output lives (e.g. `STATE.md`).
 
-- **`/dobby:research`** *(Recommended)* — fetch current docs for the libraries/SDKs the task will touch. *(If the task involves no external tech, recommend `/dobby:spec` instead.)*
-- `/dobby:spec` — go straight to planning when there's no external tech worth researching.
+- **`/dobby:research`** *(Recommended when the task touches external tech)* — fetch current docs for the libraries/SDKs the task will touch.
+- **`/dobby:spec`** *(Recommended when there's no external tech worth researching)* — go straight to planning.
 - **Stop here.**
 
 ## Language
@@ -88,4 +92,5 @@ Interview in the user's language. Write the Decisions summary (and anything pers
 - [ ] Resolved domain terms offered as `CONTEXT.md` candidates at handoff (offer-then-approve); approved ones flagged in the Decisions summary
 - [ ] Decisions summary produced, with new-term / ADR-candidate flags
 - [ ] No files modified
-- [ ] Next step handed off in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)
+- [ ] Closing gate offered all three options, including the completeness self-audit that activates the litmus test + infra-assumption gate on demand and resumes interviewing on any gap it surfaces
+- [ ] Next step handed off via an AskUserQuestion gate (recommended command marked; chosen skill invoked via the Skill tool)

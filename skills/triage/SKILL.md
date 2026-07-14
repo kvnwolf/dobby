@@ -4,8 +4,6 @@ description: Triage an incoming issue or external PR — verify the claim, then 
 argument-hint: "[issue/PR number or what to triage]"
 disable-model-invocation: true
 allowed-tools: Bash(gh *), Bash(git *)
-model: opus
-effort: high
 ---
 
 You are the coordinator/architect. You run the tracker/PR mechanics (`gh`/`git`) yourself, read for synthesis, and **delegate the doing** — verification goes to a `dobby:researcher`, and any resulting build work is a downstream `/dobby:scope` goal, never inline edits by you. Take an incoming issue or external PR from "reported" to a decision the maintainer signs off on, backed by a durable brief or an out-of-scope record.
@@ -67,11 +65,11 @@ When the maintainer decides not to action a request:
 
 ## Next step
 
-Plain-text handoff — no AskUserQuestion, no Skill-tool auto-invoke:
+Present an **AskUserQuestion** restating that triage is done, with the applicable next-step routes as options (recommended first, plus **Stop here**). On selection, invoke the chosen `/dobby:<skill>` via the Skill tool; **Stop here** ends the turn.
 
-- **Briefed and ready to build** → suggest the user TYPE `/dobby:scope` with the brief as the goal to open a work session.
-- **Wontfix-rejected an enhancement** → the concept is now recorded under `docs/out-of-scope/`; future triage will surface it.
-- **Verification came back `insufficient`** → the maintainer goes back to the reporter for specifics; re-triage when they reply.
+- **Briefed and ready to build** → **`/dobby:scope`** *(Recommended)* with the brief as the goal, to open a work session.
+- **Wontfix-rejected an enhancement** → the concept is now recorded under `docs/out-of-scope/`; future triage will surface it. Stop here.
+- **Verification came back `insufficient`** → the maintainer goes back to the reporter for specifics; re-triage when they reply. Stop here.
 
 ## Language
 
@@ -86,7 +84,7 @@ Interact with the user in their language. The brief, out-of-scope records, and a
 - [ ] Rejected outcomes (bug or enhancement) closed as not-planned (`gh issue close <n> --reason "not planned"`)
 - [ ] Every posted comment starts with the AI disclaimer
 - [ ] gh/git mechanics reused from `../address-review/references/github-api.md`; architect delegated verification and did no inline code edits
-- [ ] Next step handed off in plain text (brief → `/dobby:scope`)
+- [ ] Next step handed off via an AskUserQuestion gate (brief → `/dobby:scope`, or Stop here)
 
 ---
 

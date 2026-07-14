@@ -3,8 +3,6 @@ name: teach
 description: Learn a topic in-session — taught from trusted resources, verified with a tight feedback loop, recorded as evidence of understanding.
 disable-model-invocation: true
 argument-hint: "What would you like to learn about?"
-model: opus
-effort: high
 ---
 
 The user asked you to teach them something. This is a **light, on-demand** capability — one topic, in-session, conversational. You are the architect and the teacher: teaching is interaction, not code work, so you do it yourself (no worker dispatch). Do NOT build a persistent lesson workspace (no HTML lessons, no asset library, no print machinery) — that weight is out of scope. Produce understanding, verify it, record the evidence — the four steps below, every time.
@@ -47,7 +45,14 @@ If the topic has its own nomenclature, maintain a tight glossary as the user's u
 
 ## Next step
 
-Teaching is a side-path, not a work-session stage — it has no lifecycle successor. End by offering to continue in plain text (no AskUserQuestion, no Skill-tool auto-invoke): another pass on the next slice, a harder retrieval round, or make the mission/glossary/records durable if the user wants to keep learning across sessions. If the user came here from a work session, remind them to TYPE the stage command to resume it (typed entry re-applies that stage's `model`/`effort`).
+Teaching is a side-path, not a work-session stage — it has no lifecycle successor. End by presenting an **AskUserQuestion** (one question) that restates the teaching pass is done and offers to continue:
+
+- **Another pass** *(Recommended)* — a fresh slice or a harder retrieval round; loop back into teaching.
+- **Make it durable** — persist the mission/glossary/records so learning carries across sessions.
+- **Resume the work session** — if the user came here from a stage, route back to it via `/dobby:<stage>`.
+- **Stop here** — end the turn.
+
+On the user's selection, act on it directly; when the choice is a `/dobby:<skill>`, invoke it via the Skill tool (chaining runs on the session's current model/effort). "Stop here" ends the turn.
 
 ## Language
 
@@ -61,7 +66,7 @@ Interact with the user in their language. Write any durable artifacts (mission, 
 - [ ] A tight feedback loop ran — immediate feedback; quiz answers equal-length (anti-cueing) and recall-not-recognition
 - [ ] Demonstrated understanding (not mere coverage) recorded as evidence; glossary kept tight if the topic has nomenclature
 - [ ] No persistent lesson workspace built (no HTML lessons/assets/print machinery); no worker dispatched
-- [ ] Next step offered in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)
+- [ ] Next step offered via an AskUserQuestion gate (another pass / make it durable / resume the work session / stop here); the chosen `/dobby:<skill>` invoked through the Skill tool
 
 ---
 *Adapted from [mattpocock/skills](https://github.com/mattpocock/skills) `productivity/teach`.*

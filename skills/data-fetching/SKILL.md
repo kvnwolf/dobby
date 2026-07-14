@@ -1,8 +1,6 @@
 ---
 name: data-fetching
 description: Recipe for client-side data fetching with TanStack DB — server function → Drizzle-derived query collection → LiveQuery. Use when adding data fetching, a new collection, or a list/table view.
-model: opus
-effort: medium
 ---
 
 ## Quick start
@@ -97,6 +95,7 @@ import { booksCollection } from "@/books/collection.browser";
 - `fallback` serves BOTH SSR (ClientOnly) and loading (Suspense) — build the skeleton to mirror the final layout (row count, line heights, paddings) so data arrival causes no layout shift.
 - `children` receives `data` typed from the query and ALWAYS defined — no ready/loading checks.
 - Page UI lives in the route file; the module exports only the data slice (server fn + collection).
+- **`<LiveQuery>` is the boundary for EVERY read — even a single value in one cell.** ALWAYS consume collection data through the `<LiveQuery>` component, not just for full lists/tables. To render ONE derived value (e.g. looking up a related record's name for a cell or section), render a `<LiveQuery>` whose `children` returns that one value — empty/loading handled exactly the same way. Do NOT call the underlying `useLiveQuery` / `useLiveSuspenseQuery` hook directly in a component: the component boundary is what handles SSR (ClientOnly), loading (Suspense `fallback`), empty, and error/retry; the raw hook bypasses all of that and produces stuck-skeleton / error-loop / 404 render bugs.
 
 ## The collection is a wide interface — state its whole contract
 

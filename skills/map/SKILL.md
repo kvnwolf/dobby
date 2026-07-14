@@ -3,8 +3,6 @@ name: map
 description: Turn a loose, multi-session idea into a durable decision-map of dependency-linked investigation tickets, then drive it toward a plan one ticket per cycle.
 argument-hint: "[loose idea, or path to an existing map (+ optional ticket slug)]"
 disable-model-invocation: true
-model: claude-fable-5[1m]
-effort: xhigh
 ---
 
 Some ideas are too large to interview-then-plan in one sitting: the open decisions block each other and each needs its own investigation. A **decision-map** makes that tractable — a durable, git-tracked file of dependency-linked tickets you resolve one per cycle, pushing back the fog until the path to a plan is clear. You stay the architect: you build and update the map and synthesize each answer, but you **dispatch the actual investigation** to a worker or a stage — you never do the digging yourself.
@@ -72,30 +70,25 @@ Parallel sessions may work other unblocked tickets, so expect the map to have mo
 
 ## Next steps (the Handoff)
 
-Every cycle ends here. Pair with `/dobby:handoff` to clear context, then close with a typed **Next steps** block the user copy-pastes into fresh session(s) — plain text, NO AskUserQuestion, NO Skill-tool auto-invoke (typed entry re-applies this skill's own `model`/`effort`). Two cases:
+Every cycle ends here. Present an **AskUserQuestion** restating that a map cycle just finished, with the next-step commands as options (recommended one first, plus a **Stop here** option). On selection, invoke the chosen `/dobby:<skill>` via the Skill tool; **Stop here** ends the turn. Two cases:
 
-**Open tickets remain.** List the currently-unblocked tickets, then give a bare command (you pick the next) plus one pinned command per unblocked ticket for running them in parallel — one line per fresh window.
+**Open tickets remain.** List the currently-unblocked tickets. Because parallel sessions may work them independently, still surface the copy-paste block for opening fresh windows — but drive the gate through AskUserQuestion:
 
-> **Next steps** — 3 tickets unblocked: `auth-strategy`, `cache-layer`, `rate-limits`. Run `/dobby:handoff`, clear the context, then open fresh session(s):
->
-> **One session** — resolves the next unblocked ticket:
-> ```
-> /dobby:map docs/maps/<effort-slug>.md
-> ```
->
-> **Parallel** — paste one line per window, up to all 3:
+> **A map cycle just finished — 3 tickets unblocked: `auth-strategy`, `cache-layer`, `rate-limits`.** Pair with `/dobby:handoff` to clear context, and to run them in parallel paste one line per fresh window:
 > ```
 > /dobby:map docs/maps/<effort-slug>.md auth-strategy
 > /dobby:map docs/maps/<effort-slug>.md cache-layer
 > /dobby:map docs/maps/<effort-slug>.md rate-limits
 > ```
 
-**No open tickets remain.** The fog is pushed back — the path to a plan is clear and the map is done. (The initial interview may also surface no fog at all, in which case there was never a map to build.) Hand off to **`/dobby:spec`** to turn the resolved map into a build plan.
+Then ask (options):
+- **`/dobby:map docs/maps/<effort-slug>.md`** *(Recommended)* — resolve the next unblocked ticket in this session.
+- **`/dobby:handoff`** — clear context before opening fresh session(s).
+- **Stop here** — pause the map; resume later.
 
-> **Next steps** — the map is fully resolved; the path is clear. Run:
-> ```
-> /dobby:spec
-> ```
+**No open tickets remain.** The fog is pushed back — the path to a plan is clear and the map is done. (The initial interview may also surface no fog at all, in which case there was never a map to build.) Ask (options):
+- **`/dobby:spec`** *(Recommended)* — turn the resolved map into a build plan.
+- **Stop here** — the map is complete; plan later.
 
 ## Language
 
@@ -109,7 +102,7 @@ Interact with the user in their language. Write the map, tickets, and captured a
 - [ ] Ticket claimed (`in-progress` + saved) before any work; exactly ONE ticket resolved this cycle
 - [ ] Investigation dispatched by `Type` (Research→`dobby:researcher`, Prototype→`/dobby:prototype`, Grilling→`/dobby:interview`); architect synthesized, did NOT dig in the main thread
 - [ ] Answer recorded, `Status: resolved`, frontier pushed (new tickets + edges added; invalidated ones pruned)
-- [ ] Ended with a typed **Next steps** block (`/dobby:map …`, or `/dobby:spec` when no tickets remain); `/dobby:handoff` referenced for the cross-session boundary
+- [ ] Ended with an AskUserQuestion gate (`/dobby:map …`, or `/dobby:spec` when no tickets remain, plus Stop here); `/dobby:handoff` referenced for the cross-session boundary
 
 ---
 *Adapted from [mattpocock/skills](https://github.com/mattpocock/skills) `in-progress/decision-mapping`.*

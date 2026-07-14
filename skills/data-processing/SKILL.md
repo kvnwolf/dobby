@@ -1,8 +1,6 @@
 ---
 name: data-processing
 description: The write-side conventions for this app — forms (useAppForm from @/shared, Zod validation, field + dialog anatomy) and mutation UX (submit-validated dialogs, optimistic in-place toggles, type-to-confirm, toasts). Use when touching any form, input, validation, submit flow, or data mutation. Write-side partner to /dobby:data-fetching.
-model: opus
-effort: medium
 ---
 
 This is the **write side** of the app — everything that changes server data, with forms as its primary surface. The read-side partner is `/dobby:data-fetching`. The **Mutations** section governs how a submit/toggle/delete behaves and feels.

@@ -1,8 +1,6 @@
 ---
 name: create-skill
 description: Creates or modifies agent skills, single- or multi-workflow (orchestrator). Use when the user wants a skill created, edited, or migrated between single and multi-workflow.
-model: claude-fable-5[1m]
-effort: max
 ---
 
 A skill exists to wrangle determinism out of a stochastic system; **predictability** — the agent taking the same _process_ every run, not producing the same output — is the root virtue, and every rule below is a lever on it. The craft vocabulary that names those levers lives in `references/craft-glossary.md`; reach for it when a review or a dispute turns on what a term means.
@@ -30,7 +28,7 @@ description: [What it does, third person]. Use when [activation triggers].
 **Choosing invocation — the two loads.** Keeping a `description` makes the skill **model-invoked**: the agent can fire it autonomously and other skills can reach it, but it pays a **context load** — the description sits in the window every turn. Stripping it (`disable-model-invocation: true`) makes the skill **user-invoked**: zero context load, but it spends **cognitive load** — _you_ become the index that must remember it exists. Keep the description only when the agent must reach the skill on its own, or another skill must; if it only ever fires by hand, make it user-invoked and pay no context load. When user-invoked skills multiply past what you can remember, that piled-up cognitive load is cured by a **router skill**: one user-invoked skill that names the others and when to reach for each.
 - `argument-hint` / `arguments` — autocomplete hint and `$name` substitution in the body.
 - `allowed-tools` / `disallowed-tools` — pre-approve or remove tools while the skill is active.
-- `model` / `effort` — override model or reasoning effort (`low|medium|high|xhigh|max`) for the skill's turn.
+- `model` / `effort` — optional overrides, usually omitted; the skill runs on the session's model/effort unless you pin one deliberately (`effort` values: `low|medium|high|xhigh|max`).
 - `paths` — globs that limit auto-activation to matching files; `context: fork` (+ `agent`) runs it in an isolated subagent.
 
 Not skill fields: `version`, `license`, `metadata`, `min-version` belong to a plugin's `plugin.json`, not `SKILL.md`.

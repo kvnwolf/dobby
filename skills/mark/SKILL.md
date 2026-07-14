@@ -2,8 +2,6 @@
 name: mark
 description: Emit a portable pointer ("indicator") to the CURRENT Claude Code session. Use when you hit friction with a dobby skill while working in a consumer project and want to flag this session for /dobby:learn — not fix the kit now.
 argument-hint: "[one line: what was rough / what to improve]"
-model: haiku
-effort: low
 ---
 
 This is **kit self-improvement tooling**, not methodology or convention — it deliberately couples to the host (`~/.claude/projects`, `CLAUDE_CODE_SESSION_ID`). It captures a pointer for `/dobby:learn`; it changes nothing.

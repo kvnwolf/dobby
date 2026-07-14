@@ -1,6 +1,6 @@
 # Conductor as the execution host
 
-**Status:** accepted
+**Status:** superseded by [0005](./0005-two-named-execution-hosts.md)
 
 The kit originally reached the running app through a generic, host-agnostic path: `bootstrap` wired **portless** directly and generated a per-project "run skill"; `execute`/`dispatch` started the dev server and passed a URL; the verifier hit that URL. We replaced this with a **Conductor-only** model: `onboard` (renamed from `bootstrap`) writes `.conductor/settings.toml`, and Conductor auto-runs the app (`auto_run_after_setup`) via a run script that wraps portless. The coordinator + verifier reach the running app by resolving its dev URL with `portless get <name>` (deterministic — portless branch-prefixes the host in a worktree and can be name-overridden, so `portless get` is the source of truth), confirming liveness with a curl health-check against that URL, and driving the UI via claude-in-chrome. We chose this because the user runs every project inside Conductor, and the old URL-pinning was in fact wrong for real repos (the URL isn't a static constant — but it *is* deterministically resolvable through `portless get`, so no terminal parsing is needed).
 
