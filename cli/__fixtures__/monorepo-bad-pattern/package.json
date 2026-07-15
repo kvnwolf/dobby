@@ -1,0 +1,5 @@
+{
+  "name": "monorepo-bad-pattern",
+  "private": true,
+  "workspaces": ["**/nested"]
+}

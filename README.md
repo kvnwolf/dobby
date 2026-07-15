@@ -1,6 +1,6 @@
 # dobby
 
-Kevin Wolf's agentic engineering kit for Claude Code, packaged as a plugin. dobby doesn't make Claude Code smarter — it makes it **disciplined**: the main thread stays an architect that frames, asks, decides, and reviews but never writes code, while four worker agents do the hands-on work. Every change is implemented, code-reviewed, and verified by **separate** agents before it counts as done.
+Kevin Wolf's agentic engineering kit for Claude Code, shipped as two surfaces from one repo: the **plugin** (skills + agents + hooks) and the **`@kvnwolf/dobby` CLI**. dobby doesn't make Claude Code smarter — it makes it **disciplined**: the main thread stays an architect that frames, asks, decides, and reviews but never writes code, while four worker agents do the hands-on work. Every change is implemented, code-reviewed, and verified by **separate** agents before it counts as done.
 
 ## Install
 
@@ -18,6 +18,10 @@ Then start your first session from any project:
 ```
 
 **Prerequisites**: the [`ctx7` CLI](https://context7.com) (the `researcher` agent fetches current library docs through it), and `vp` (vite-plus) on PATH if you want the post-edit check hook to do anything.
+
+### The CLI
+
+The repo also ships **`@kvnwolf/dobby`**, a zero-dependency Bun CLI. `dobby capabilities` prints the capabilities it detects for the current project **from its installed dependencies — no manifest file**: `vite`, `tanstack-start`, `neon`, `expo`. In a monorepo it reports per workspace package, grouped by relative path. Install today: `bun link` from `cli/` in a checkout (npm publish planned; releases are cut with the repo's `/release` skill, versioned in lockstep with the plugin).
 
 ## The mental model
 
@@ -272,7 +276,7 @@ These couple to Claude Code's session storage (`~/.claude/projects`) on purpose 
 ## Local development
 
 ```
-claude --plugin-dir .
+claude --plugin-dir ./plugin
 ```
 
 Skill edits hot-reload; agents and hooks need `/reload-plugins`.

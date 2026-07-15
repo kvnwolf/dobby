@@ -1,6 +1,6 @@
 # dobby — working on this repo
 
-This repo is a Claude Code plugin AND its own marketplace: the root is the plugin. `README.md` is the consumer-facing doc; this file is for evolving the kit itself.
+This repo is a Bun monorepo shipping two surfaces: **`plugin/`** — the Claude Code plugin (skills, agents, hooks) — and **`cli/`** — the `@kvnwolf/dobby` CLI. The repo is ALSO its own marketplace: `.claude-plugin/marketplace.json` stays at root and points at `./plugin`. `README.md` is the consumer-facing doc; this file is for evolving the kit itself.
 
 The domain glossary lives in [`CONTEXT.md`](./CONTEXT.md) — use those terms exactly.
 
@@ -8,10 +8,13 @@ The domain glossary lives in [`CONTEXT.md`](./CONTEXT.md) — use those terms ex
 
 ## Structure
 
-- `.claude-plugin/` — `plugin.json` (the plugin manifest) + `marketplace.json` (points at `./`, making the repo installable directly).
-- `skills/` — the kit's skills, one directory per skill (`SKILL.md` + optional `references/` / `examples/`).
-- `agents/` — the five worker agents (`researcher`, `test-author`, `implementor`, `reviewer`, `verifier`). `test-author` writes tests from the spec only (never seeing the implementation) and runs at the front of the build loop; see [`CONTEXT.md`](./CONTEXT.md) for the build-loop shape.
-- `hooks/` — `hooks.json` (auto-loaded when the plugin is enabled) + the scripts it runs via `${CLAUDE_PLUGIN_ROOT}`.
+- `.claude-plugin/marketplace.json` — the marketplace manifest, kept at root; its `plugins[0].source` is `./plugin`, making the repo installable directly.
+- `plugin/` — the Claude Code plugin itself (self-contained; cache-copied on install, so it can never reference `../cli`):
+  - `plugin/.claude-plugin/plugin.json` — the plugin manifest.
+  - `plugin/skills/` — the kit's skills, one directory per skill (`SKILL.md` + optional `references/` / `examples/`).
+  - `plugin/agents/` — the five worker agents (`researcher`, `test-author`, `implementor`, `reviewer`, `verifier`). `test-author` writes tests from the spec only (never seeing the implementation) and runs at the front of the build loop; see [`CONTEXT.md`](./CONTEXT.md) for the build-loop shape.
+  - `plugin/hooks/` — `hooks.json` (auto-loaded when the plugin is enabled) + the scripts it runs via `${CLAUDE_PLUGIN_ROOT}`.
+- `cli/` — the `@kvnwolf/dobby` Bun CLI workspace (the monorepo's `workspaces` member). Module doc: [`cli/CONTEXT.md`](./cli/CONTEXT.md).
 - `docs/` — the kit's **durable artifacts** written by skills as work proceeds: `adr/` (architecture decision records from `/dobby:wrap` + `/dobby:address-review`), `maps/` (decision-maps from `/dobby:map`), `out-of-scope/` (the out-of-scope KB from `/dobby:triage`, one file per concept), `learn-discarded/` (the discarded-frictions KB from `/dobby:learn`). Committed and git-tracked; the KB dirs are created lazily by their skills (no empty dirs committed). STATE.md stays ephemeral at the repo root — it is NOT a durable artifact.
 - `README.md` — the FULL consumer doc: install, mental model, lifecycle, first-session walkthrough, decision table, troubleshooting. Behavior changes to skills/agents must keep it in sync.
 
@@ -30,11 +33,13 @@ There is intentionally no `.claude/` self-install in this repo: the plugin is en
 
 ## Dev loop
 
-- Test locally: `claude --plugin-dir .` from any project, then exercise the skills there.
-- `SKILL.md` edits hot-reload; changes to `agents/` or `hooks/` need `/reload-plugins`.
-- Manifest sanity: both JSON files in `.claude-plugin/` must stay parseable; the marketplace `source` stays `./`.
+- Test locally: `claude --plugin-dir ./plugin` from any project, then exercise the skills there.
+- `SKILL.md` edits hot-reload; changes to `plugin/agents/` or `plugin/hooks/` need `/reload-plugins`.
+- Manifest sanity: root `.claude-plugin/marketplace.json` and `plugin/.claude-plugin/plugin.json` must both stay parseable; the marketplace `source` stays `./plugin`.
+- Aggregate gate: `vpr validate` from the repo root (= `vpr check && vpr unused && vpr test` — format/lint/type + knip + vitest, which discovers `cli/`'s tests from the root) is the whole-repo check, mirrored by CI and `/dobby:commit`. The root `vite.config.ts` is the ONLY vp config — `cli/` deliberately has none.
 
 ## Workflow config
 
-- **Dev command**: `claude --plugin-dir .` (no dev server or URL — this is a Claude Code plugin, not an app). `/dobby:execute`'s verifier exercises skills through that host session.
+- **Dev command**: `claude --plugin-dir ./plugin` (no dev server or URL — this is a Claude Code plugin, not an app). `/dobby:execute`'s verifier exercises skills through that host session.
 - **Commit contract**: `dobby.config.json` — doc-sync rules (README/CLAUDE/CONTEXT) + pre-commit checks (manifest parse, frontmatter model/effort (agents only)). Read by `/dobby:commit`.
+- **Releases**: `/release` (project skill, `.claude/skills/release/`) cuts an npm release of `cli/` — main checkout only, per [ADR-0008](./docs/adr/0008-zero-framework-portable-cli.md).

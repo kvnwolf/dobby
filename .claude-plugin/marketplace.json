@@ -5,6 +5,6 @@
     "email": "hi@kvnwolf.com"
   },
   "plugins": [
-    { "name": "dobby", "source": "./" }
+    { "name": "dobby", "source": "./plugin" }
   ]
 }

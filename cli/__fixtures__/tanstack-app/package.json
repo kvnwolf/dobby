@@ -1,0 +1,11 @@
+{
+  "name": "tanstack-app",
+  "private": true,
+  "dependencies": {
+    "@tanstack/react-start": "^1.0.0",
+    "@neondatabase/serverless": "^0.9.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}

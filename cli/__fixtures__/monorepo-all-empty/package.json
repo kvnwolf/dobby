@@ -1,0 +1,8 @@
+{
+  "name": "monorepo-all-empty",
+  "private": true,
+  "workspaces": ["pkgs/*"],
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
