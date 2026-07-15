@@ -14,8 +14,8 @@ From the repo root, ALL must pass:
 1. **Main checkout, not a worktree**: `[ "$(git rev-parse --git-dir)" = "$(git rev-parse --git-common-dir)" ]` → true.
 2. **On main, clean, current**: `git rev-parse --abbrev-ref HEAD` → `main`; `git status --porcelain` → empty; `git pull --ff-only` succeeds.
 3. **CI green on HEAD**: `gh run list --branch main --limit 1` → completed/success (if still running, `gh run watch` it to completion first).
-4. **npm auth**: `bunx npm whoami` prints a user. If it fails, ask the user to run `bunx npm login` and wait — this is theirs to do.
-5. **Registry sanity**: `bunx npm view @kvnwolf/dobby version` — note the published version (an E404 means first release; fine).
+4. **npm auth**: `npm whoami` prints a user. Note `whoami` passing does NOT guarantee publish rights: an interactive-login token fails at publish time with `EOTP` (the account's 2FA demands a per-publish one-time password). The working setup is a **granular access token with write access** in `~/.npmrc` (npmjs.com → Access Tokens → Granular; bypasses the per-publish OTP — field-proven on v0.1.0). If publish later hits `EOTP`, have the user create one and replace the token — theirs to do.
+5. **Registry sanity**: `npm view @kvnwolf/dobby version` — note the published version (an E404 means first release; fine).
 
 ## Step 2: Infer the bump and apply it
 
@@ -47,13 +47,13 @@ Edit `cli/package.json`: `"bin": { "dobby": "./dist/index.js" }` and add `"files
 
 ## Step 6: Publish
 
-- `cd cli && bun publish --access public` (scoped package needs public access; add `--tag next` for a prerelease).
-- Gate: `bunx npm view @kvnwolf/dobby version` → `<V>`. Registry propagation can lag — retry for up to ~60s before calling it a failure.
+- `cd cli && npm publish --access public` (scoped package needs public access; add `--tag next` for a prerelease). Plain `npm` — NOT `bun publish`: bun 1.3.x does not read `~/.npmrc`'s `_authToken` for publish and dies with "missing authentication" (field-hit on v0.1.0). `npm` is on PATH via the vite-plus toolchain.
+- Gate: `npm view @kvnwolf/dobby version` → `<V>`. Propagation can lag MINUTES on a first publish — the package may 404 even authenticated while npm processes it (it shows on the npmjs.com web page first). Don't panic on the 404 if `npm publish` printed `+ @kvnwolf/dobby@<V>`; Step 9's global install is the definitive smoke.
 
 ## Step 7: Restore, tag, push
 
 - `git checkout -- cli/package.json` (reverts the flip; the bump is already committed).
-- `rm -rf cli/dist cli/*.tgz`
+- `rm -rf cli/dist && find cli -maxdepth 1 -name '*.tgz' -delete` (find, not a bare glob — zsh aborts the whole command when `cli/*.tgz` has no match).
 - `git tag v<V> && git push origin main v<V>`
 - Gate: `git status --porcelain` → empty.
 
@@ -65,10 +65,11 @@ Edit `cli/package.json`: `"bin": { "dobby": "./dist/index.js" }` and add `"files
 - `gh release create v<V> --title "v<V>" --notes "<notes>"`
 - Gate: `gh release view v<V>` exits 0.
 
-## Step 9: Post-release smoke
+## Step 9: Reinstall the global bin + smoke
 
-- `cd $(mktemp -d) && bunx @kvnwolf/dobby@<V> --version` → prints `<V>` (proves the consumer install path end-to-end).
-- Report to the user: version published, inferred bump + reasoning, tarball contents, tag + GitHub release links, smoke result.
+- `bun install -g @kvnwolf/dobby@<V>` — refresh this machine's global `dobby` to the just-published version (the machine runs the latest release; `bun link` is only for hacking on the CLI itself). On a fresh publish the registry may still 404 — retry every ~20s for a few minutes before declaring failure.
+- Gate: `dobby --version` → prints `<V>` (proves the consumer install path end-to-end).
+- Report to the user: version published, inferred bump + reasoning, tarball contents, tag + GitHub release links, global-install smoke result.
 
 ## Acceptance checklist
 
@@ -77,7 +78,7 @@ Edit `cli/package.json`: `"bin": { "dobby": "./dist/index.js" }` and add `"files
 - [ ] Bump committed as `release: v<V>` with plugin.json mirrored to the same version (lockstep); nothing pushed before the publish succeeded
 - [ ] `dist/index.js` line 1 is the node shebang and the bundle runs under plain Node printing `<V>`
 - [ ] Tarball inspected: `dist/` shipped, `src/` absent
-- [ ] Published with `--access public`; registry shows `<V>`
+- [ ] Published with plain `npm publish --access public` (never `bun publish`); registry shows `<V>` (first-publish propagation can take minutes)
 - [ ] package.json restored to bin → src, `dist`/tgz cleaned, `v<V>` tag pushed with main, tree clean
 - [ ] GitHub release `v<V>` created with the changelog grouped by surface (Plugin/CLI/Kit) from the same commit range as the bump
-- [ ] `bunx` smoke from a temp dir printed `<V>`
+- [ ] Global bin refreshed with `bun install -g @kvnwolf/dobby@<V>` and `dobby --version` printed `<V>`

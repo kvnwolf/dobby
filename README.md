@@ -21,7 +21,7 @@ Then start your first session from any project:
 
 ### The CLI
 
-The repo also ships **`@kvnwolf/dobby`**, a zero-dependency Bun CLI. `dobby capabilities` prints the capabilities it detects for the current project **from its installed dependencies — no manifest file**: `vite`, `tanstack-start`, `neon`, `expo`. In a monorepo it reports per workspace package, grouped by relative path. Install today: `bun link` from `cli/` in a checkout (npm publish planned; releases are cut with the repo's `/release` skill, versioned in lockstep with the plugin).
+The repo also ships **`@kvnwolf/dobby`**, a zero-dependency Bun CLI. `dobby capabilities` prints the capabilities it detects for the current project **from its installed dependencies — no manifest file**: `vite`, `tanstack-start`, `neon`, `expo`. In a monorepo it reports per workspace package, grouped by relative path. Install: `bun install -g @kvnwolf/dobby`. Releases are cut with the repo's `/release` skill, versioned in lockstep with the plugin (`bun link` from `cli/` only when hacking on the CLI itself).
 
 ## The mental model
 
