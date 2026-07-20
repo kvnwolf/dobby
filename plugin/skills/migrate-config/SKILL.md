@@ -67,14 +67,14 @@ Report what happened, in three plain buckets:
 - **Deleted** — `.claude/commit.config.yml` removed; which dead CLAUDE.md lines (e.g. a removed linter, an abandoned CI hook) were dropped.
 - **Left** — the CLAUDE.md project knowledge kept untouched; the single pointer line added.
 
-Note whether this is an **app project that still needs `setup` / `run` / `teardown`** — if so, tell the user those weren't fabricated and suggest `/dobby:onboard` to discover them.
+Note whether this is an **app project that still needs `setup` / `run` / `teardown`** — if so, tell the user those weren't fabricated and suggest `/dobby:onboard` to discover them. **Also flag a deferred/incomplete `tracker`** — if Step 4 mechanized an issue-tracker line whose value wasn't fully specified (a Linear line without a trivially-derivable `team`, or any tracker not fully pinned), say so and tell the user to run `/dobby:onboard` to complete the `tracker` key (especially the Linear `team`) **before using the work skills** — otherwise the project has no usable tracker selection and new work would be recorded against the default GitHub backend.
 
 ## Next step
 
 The migration is done. End by presenting an **AskUserQuestion** (one question) that restates the config cutover is complete and offers:
 
 - `/dobby:commit` *(Recommended)* — commit the cutover (the new `dobby.config.json`, the deleted legacy file, and the CLAUDE.md edits); its own checks run green against the migrated config, proving the move end-to-end.
-- `/dobby:onboard` — first, if the summary flagged missing `setup`/`run`/`teardown`.
+- `/dobby:onboard` — first, if the summary flagged missing `setup`/`run`/`teardown` or an incomplete `tracker` (e.g. a Linear line whose `team` was deferred).
 - **Stop here** — end the turn.
 
 On the user's selection, invoke the chosen `/dobby:<skill>` via the Skill tool (chaining runs on the session's current model/effort). "Stop here" ends the turn.
