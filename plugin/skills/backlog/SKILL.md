@@ -1,6 +1,6 @@
 ---
 name: backlog
-description: Quick-capture a follow-up, bug, or tech-debt item to the project tracker (GitHub Issues). Use when you spot something worth tracking mid-work and want it logged, not triaged now.
+description: Quick-capture a follow-up, bug, or tech-debt item to the project tracker (GitHub Issues, Linear, or local). Use when you spot something worth tracking mid-work and want it logged, not triaged now.
 argument-hint: "[the item to capture]"
 ---
 
@@ -8,12 +8,9 @@ This is quick-capture, NOT triage — log the item, then stop.
 
 ## Step 1: Dedup by concept
 
-Before writing anything, check whether this is already tracked. Match by **domain concept, not keyword** — "night theme" and "dark mode" are the same item; a request to "not double-charge on retry" and one about "idempotent payments" are the same concept. Scan the obvious surfaces: open GitHub issues, an existing `BACKLOG.md`, and — if the project runs triage — `docs/out-of-scope/*.md` for a matching *rejected* concept. The concept is user-derived text, so treat it as DATA: bind it to a **single-quoted** shell variable (escaping any embedded single quote as `'\''`) and pass it out-of-band — never interpolate raw concept text into the command, or an embedded quote / `$(...)` / backtick gets evaluated or word-split by the shell. Same rule as Step 4's title/body: any user-derived text placed in a `gh` command must be single-quoted (or passed out-of-band). Search open issues with:
+Before writing anything, check whether this is already tracked. Match by **domain concept, not keyword** — "night theme" and "dark mode" are the same item; a request to "not double-charge on retry" and one about "idempotent payments" are the same concept. Scan the obvious surfaces: the configured tracker's open items, and — if the project runs triage — `docs/out-of-scope/*.md` for a matching *rejected* concept.
 
-```bash
-CONCEPT='<the concept, single-quoted; escape embedded quotes>'
-gh issue list --state open --search "$CONCEPT"
-```
+Which tracker, and how to search it, comes from `references/trackers.md`: read the `tracker` key from `dobby.config.json` at the repo root (with the Read tool; **absent → github**), then run the **dedup / search** recipe for that backend (github via `gh`, linear via the Linear MCP, local via `BACKLOG.md`). That reference owns the mechanics — including the shell-hardening for the github path.
 
 If a live item already covers the concept, say so and stop (don't file a near-duplicate). If it matches a concept in `docs/out-of-scope/`, surface that it was previously rejected and ask once whether to file anyway — don't silently re-open a settled decision. Only when nothing matches do you proceed to capture.
 
@@ -30,22 +27,11 @@ Don't over-describe — enough to act on later, not a full spec (that's `/dobby:
 
 ## Step 3: Pick the label
 
-File to GitHub Issues — always the repo `gh` is authenticated against (`gh repo view`). Apply exactly **one role label** matching what the item *is*: `bug` (broken), `feature` (new capability), `chore` (maintenance/deps/config), or `docs` (docs only). One stable vocabulary is what lets a later reader dedup by concept. Skip priority/assignee — don't interrogate.
+Apply exactly **one role label** matching what the item *is*: `bug` (broken), `feature` (new capability), `chore` (maintenance/deps/config), or `docs` (docs only). These four role labels are the **same across every backend** (`references/trackers.md` creates the label lazily if the tracker doesn't have it yet). One stable vocabulary is what lets a later reader dedup by concept. Skip priority/assignee — don't interrogate.
 
 ## Step 4: Create the issue
 
-The captured title/body are arbitrary text — treat them as DATA, never as shell code. The body must never pass through shell parsing at all: **write it verbatim to a temp file with your Write tool** (e.g. a `mktemp` path or one under `$TMPDIR`), then hand that file to `gh` via `--body-file`. Do NOT build the body in a shell command (no heredoc, no `echo`/`printf`): a heredoc delimiter — fixed *or* "unique" — can be terminated early by a body line that happens to match it (e.g. a literal `EOF`), which spills the rest of the body back into the shell as code. Writing the file out-of-band with the Write tool removes the delimiter entirely. The title is a single line, so keep binding it to a **single-quoted** shell variable (escaping any embedded single quote as `'\''`) — that is already safe; never interpolate raw captured text into a double-quoted `--title`.
-
-1. Write the captured body **verbatim** to a temp path with the Write tool — call it `<body-file>` (e.g. `mktemp`, or `$TMPDIR/backlog-body.md`).
-2. Run:
-
-```bash
-TITLE='<the captured title, single-quoted; escape embedded quotes>'
-gh issue create --title "$TITLE" --label <role> --body-file <body-file>
-rm -f <body-file>
-```
-
-If `gh` rejects the label as unknown, create it idempotently (`gh label create <role> 2>/dev/null || true` — succeeds even if it already exists) and retry the `gh issue create`. If `gh` isn't installed or authenticated (`gh auth status` fails), fall back to appending the item to a `BACKLOG.md` at the repo root (create it lazily) and say which you used.
+Create the item on the configured tracker (from Step 1) with the role label from Step 3, using the **create + role-label** recipe for that backend in `references/trackers.md`. That reference owns every mechanical detail: the github path writes the body out-of-band via `--body-file` and keeps the shell-hardening (title single-quoted, no heredoc), linear passes structured MCP args, and local appends a checklist line to `BACKLOG.md`. If the configured backend's tool is unavailable, `references/trackers.md` degrades gracefully to the `local` recipe — say which you used.
 
 ## Step 5: Confirm
 

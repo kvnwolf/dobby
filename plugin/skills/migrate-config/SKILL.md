@@ -38,8 +38,8 @@ The consumer's `CLAUDE.md` typically carries a "Workflow config" section (or sca
 
 Scan `CLAUDE.md` for kit-workflow prose and **classify each hit**:
 
-- **MECHANIZE** — content that maps to a config field: dev/run commands, setup instructions, textual pre-commit checks, doc-sync rules, or the old commit-contract pointer (e.g. "read by `/dobby:commit`" / a `.claude/commit.config.yml` reference). → Propose moving it into the matching `dobby.config.json` field (`run` / `setup` / `checks` / `files`). If it's a `run`/`setup` field this migration doesn't own (Step 2 only carried `files`+`checks`), note it belongs in the config and defer the actual discovery to `/dobby:onboard` rather than fabricating a value.
-- **DELETE** — dead kit config that nothing reads any more. The canonical example is an **"Issue tracker" line** (e.g. naming Linear or a project board): the kit standardized on **GitHub Issues** repo-wide, so `/dobby:backlog` and `/dobby:triage` always use the `gh`-authenticated repo and nothing reads a configured tracker. → Propose removing it outright.
+- **MECHANIZE** — content that maps to a config field: dev/run commands, setup instructions, textual pre-commit checks, doc-sync rules, an **issue-tracker line** (e.g. naming Linear, GitHub Issues, or a local tracker), or the old commit-contract pointer (e.g. "read by `/dobby:commit`" / a `.claude/commit.config.yml` reference). → Propose moving it into the matching `dobby.config.json` field (`run` / `setup` / `checks` / `files` / `tracker`). If it's a `run`/`setup`/`tracker` value this migration doesn't own (Step 2 only carried `files`+`checks`), note it belongs in the config and defer the actual discovery to `/dobby:onboard` rather than fabricating a value. For an issue-tracker line, record that it belongs in the top-level `tracker` key (`{ "type": "github" | "linear" | "local" }`); a `linear` tracker also needs a `team` **key** (e.g. `VON`) — defer that to `/dobby:onboard` when it isn't trivially derivable from the CLAUDE.md line, and **never fabricate a `team` key**.
+- **DELETE** — dead kit config that nothing reads any more: e.g. a reference to a tool the project no longer uses at all (a removed linter, an abandoned CI hook), or kit prose describing a workflow the kit dropped. → Propose removing it outright. (An **issue-tracker line** naming Linear or a local tracker is NOT dead — the `tracker` key is real config again, so it MECHANIZES into `tracker` per the rule above. Only a tracker reference to a tool the project has genuinely stopped using stays DELETE.)
 - **KEEP** — anything that is genuine project knowledge (product description, module map, stack conventions, architecture notes). Leave it exactly as the user wrote it. When in doubt, KEEP — deleting the user's prose is the costly mistake.
 
 **Every proposed CLAUDE.md edit is shown as a diff for explicit user approval before applying.** This is an in-stage gate (not a stage handoff), so `AskUserQuestion` per group of related edits — or free-text approval — is fine. Present the exact before/after so the user sees what leaves and what stays; never rewrite CLAUDE.md silently. Apply only the edits the user approves.
@@ -64,17 +64,17 @@ Prove the migration didn't break the commit gate:
 Report what happened, in three plain buckets:
 
 - **Moved** — `files` + `checks` migrated into `dobby.config.json` (counts); which CLAUDE.md prose was mechanized into which config field.
-- **Deleted** — `.claude/commit.config.yml` removed; which dead CLAUDE.md lines (e.g. the issue-tracker line) were dropped.
+- **Deleted** — `.claude/commit.config.yml` removed; which dead CLAUDE.md lines (e.g. a removed linter, an abandoned CI hook) were dropped.
 - **Left** — the CLAUDE.md project knowledge kept untouched; the single pointer line added.
 
-Note whether this is an **app project that still needs `setup` / `run` / `teardown`** — if so, tell the user those weren't fabricated and suggest `/dobby:onboard` to discover them.
+Note whether this is an **app project that still needs `setup` / `run` / `teardown`** — if so, tell the user those weren't fabricated and suggest `/dobby:onboard` to discover them. **Also flag a deferred/incomplete `tracker`** — if Step 4 mechanized an issue-tracker line whose value wasn't fully specified (a Linear line without a trivially-derivable `team`, or any tracker not fully pinned), say so and tell the user to run `/dobby:onboard` to complete the `tracker` key (especially the Linear `team`) **before using the work skills** — otherwise the project has no usable tracker selection and new work would be recorded against the default GitHub backend.
 
 ## Next step
 
 The migration is done. End by presenting an **AskUserQuestion** (one question) that restates the config cutover is complete and offers:
 
 - `/dobby:commit` *(Recommended)* — commit the cutover (the new `dobby.config.json`, the deleted legacy file, and the CLAUDE.md edits); its own checks run green against the migrated config, proving the move end-to-end.
-- `/dobby:onboard` — first, if the summary flagged missing `setup`/`run`/`teardown`.
+- `/dobby:onboard` — first, if the summary flagged missing `setup`/`run`/`teardown` or an incomplete `tracker` (e.g. a Linear line whose `team` was deferred).
 - **Stop here** — end the turn.
 
 On the user's selection, invoke the chosen `/dobby:<skill>` via the Skill tool (chaining runs on the session's current model/effort). "Stop here" ends the turn.
@@ -90,7 +90,7 @@ Interact with the user in their language. Write the migrated `dobby.config.json`
 - [ ] `files` + `checks` converted YAML → JSON verbatim (paths, `update_when` strings, and every `run` command byte-identical); `setup`/`run`/`teardown` NOT fabricated; schema per `../onboard/references/dobby-config.md`
 - [ ] `dobby.config.json` written at the repo ROOT (not `.claude/`, not `.dobby/`)
 - [ ] Legacy `.claude/commit.config.yml` deleted; the rest of `.claude/` left untouched
-- [ ] CLAUDE.md scanned; each hit classified MECHANIZE / DELETE / KEEP; genuine project knowledge kept; the dead issue-tracker line (GitHub-Issues standardization) removed
+- [ ] CLAUDE.md scanned; each hit classified MECHANIZE / DELETE / KEEP; genuine project knowledge kept; an issue-tracker line naming Linear/local MECHANIZED into the top-level `tracker` key (value — including any `team` key — deferred to `/dobby:onboard` when not trivially derivable; nothing fabricated), not deleted
 - [ ] Every CLAUDE.md edit shown as a diff and applied only on explicit user approval (in-stage gate); a single pointer line to `dobby.config.json` remains
 - [ ] Verified: `jq .` parses `dobby.config.json`; every `checks[].run` command runs green from it, proving the gate survived
 - [ ] Summary reported (moved / deleted / left); app projects still needing `setup`/`run`/`teardown` were told to run `/dobby:onboard`

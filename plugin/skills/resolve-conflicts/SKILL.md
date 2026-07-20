@@ -29,7 +29,7 @@ For every conflicting hunk, understand *why* each side made its change — the i
 
 - `git log --oneline -L <start>,<end>:<file>` or `git log -p --follow -- <file>` — the commits that produced each side of the hunk, with their messages.
 - `git log --merge -p -- <file>` — only the commits that differ between the two sides for that file (the ones actually in conflict).
-- PRs and issues carry the *why* the commit message compresses out. Per `../address-review/references/github-api.md`: `gh pr list --search "<commit-sha>" --state all`, then `gh pr view <N> --comments --json title,body,comments,reviews` for the discussion; `gh issue view <N> --comments` for the ticket the PR closes.
+- PRs and issues carry the *why* the commit message compresses out. Per `../address-review/references/github-api.md`: `gh pr list --search "<commit-sha>" --state all`, then `gh pr view <N> --comments --json title,body,comments,reviews` for the discussion. For the ticket the PR closes, read it via the **view goal** recipe in `../backlog/references/trackers.md` (github: `gh issue view <N> --comments`; linear: the MCP tool that fetches the issue by identifier; local: the matching `BACKLOG.md` line) — so a Linear project recovers intent from Linear issues via the MCP.
 
 Write down, per hunk: **their intent**, **our intent**, and whether the two are **compatible** (both can hold) or **incompatible** (only one can).
 

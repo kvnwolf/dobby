@@ -2,7 +2,7 @@
 
 Creates `dobby.config.json` at the **consumer repo root** (next.config.js style — NOT in `.dobby/`, NOT in `.claude/`). This is the single kit-owned contract the work skills read: which docs to keep in sync, which pre-commit checks gate a commit, and — for projects with an app — how to **set up**, **run**, and **tear down** the per-session worktree.
 
-**Format is JSON** (future-proof for jq-parsing hooks). Readers: `/dobby:commit` (`files` + `checks`), `/dobby:resolve-conflicts` (`checks`), `/dobby:scope` (`setup`), `/dobby:execute` (`run`), `/dobby:finish` (`teardown`). Writer: `/dobby:onboard`. Run as part of `/dobby:onboard`.
+**Format is JSON** (future-proof for jq-parsing hooks). Readers: `/dobby:commit` (`files` + `checks` + `tracker`), `/dobby:resolve-conflicts` (`checks` + `tracker`), `/dobby:scope` (`setup` + `tracker`), `/dobby:execute` (`run`), `/dobby:finish` (`teardown`), `/dobby:backlog` (`tracker`), `/dobby:triage` (`tracker`). Writer: `/dobby:onboard`. Run as part of `/dobby:onboard`.
 
 ## The five sections
 
@@ -15,6 +15,20 @@ Creates `dobby.config.json` at the **consumer repo root** (next.config.js style 
 | `teardown` | array of commands (optional) | finish | cleanup run inside the worktree before it's removed |
 
 **`setup` / `run` / `teardown` are OMITTED for no-app projects** (a library, CLI, or plugin — like dobby itself). With no `run` there is no dev URL, so the `devUrl = null` convention holds: `/dobby:execute`'s verifier verifies programmatically instead of driving a browser, `/dobby:scope` skips setup, and `/dobby:finish` skips teardown. Only `files` + `checks` are authored for those repos.
+
+## The optional `tracker` key
+
+`tracker` is an **optional top-level key** — a sibling of the five sections, not nested inside them — that selects which issue tracker the backlog skills talk to. Shape:
+
+```json
+{ "type": "github" | "linear" | "local", "team"?: "<KEY>" }
+```
+
+- **ABSENT → `github`** — the zero-config default (the repo `gh` is authenticated against). Most projects never write this key; dobby itself omits it.
+- `team` is required **only for `linear`**: the human team **key** (e.g. `VON`), not a UUID — the Linear MCP resolves key → id. Omit `team` for `github` and `local`.
+- It is **independent of `files` / `checks` / `setup` / `run` / `teardown`** — it says nothing about how docs sync, checks run, or the app installs/runs/tears down; it only names the backlog backend.
+
+The full per-backend operation recipes (dedup, create, view, claim, close, PR-link) live in the backlog skill's `references/trackers.md`; this key just selects the column. Read by `/dobby:backlog`, `/dobby:scope`, `/dobby:commit`, `/dobby:triage`, and `/dobby:resolve-conflicts`.
 
 ## Discover
 

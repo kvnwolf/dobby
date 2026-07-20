@@ -95,7 +95,11 @@ Only if branch was pushed in step 8.
    git log <base-branch>..HEAD --oneline
    git diff <base-branch>...HEAD
    ```
-3. Create PR. If the session traces to a GitHub issue (same source as step 7), put `Closes #<n>` in the **body** — that's the reliable close-on-merge anchor (it survives a squash-merge, unlike a per-commit trailer):
+3. **PR-body lifecycle link.** Wire the PR to the goal so merging closes it, using the tracker's **lifecycle-link** recipe in [`../backlog/references/trackers.md`](../backlog/references/trackers.md). Read the `tracker` key from `dobby.config.json` narratively (absent → `github`) and the issue id from `STATE.md`'s `## Source` (same source as step 7). The link is a plain-text **magic word in the PR body** — the reliable close-on-merge anchor (it survives a squash-merge, unlike a per-commit trailer). Per that recipe:
+   - **github** — `Closes #<n>` in the body (unchanged).
+   - **linear** — the `Fixes VON-123` magic word in the body. Linear's native GitHub integration then moves the issue to In Review on PR-open and to Done on merge — the kit relies on that and does **not** push those transitions via the MCP. Make **no** MCP call here; the magic word text is the entire linear responsibility.
+   - **local** — nothing; there is no PR linkage. Omit the line.
+
    ```bash
    gh pr create --title "<title>" --body "$(cat <<'EOF'
    ## Summary
@@ -104,7 +108,7 @@ Only if branch was pushed in step 8.
    ## Test plan
    <checklist>
 
-   Closes #<n>   <!-- only if the session started from an issue; omit the line otherwise -->
+   <lifecycle-link magic word for the configured tracker — Closes #<n> (github) / Fixes VON-123 (linear) / nothing (local); omit the line entirely when there's no linkage or the session didn't start from a tracked goal>
    EOF
    )"
    ```
@@ -123,4 +127,4 @@ The PR is open. Present the next stage as an **AskUserQuestion** — one questio
 - [ ] Pre-commit checks ran green (or none configured), each at its declared `scope`; commit aborted on any failure
 - [ ] Commit message follows semantic format with body
 - [ ] Changes pushed to remote
-- [ ] PR created (if not on main); `Closes #<n>` in the PR body if the session traces to a GitHub issue
+- [ ] PR created (if not on main); the tracker's lifecycle-link magic word in the PR body per [`../backlog/references/trackers.md`](../backlog/references/trackers.md) — `Closes #<n>` (github) / `Fixes VON-123` (linear) / nothing (local), and no MCP call
