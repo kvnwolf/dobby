@@ -1,0 +1,3 @@
+# Marker directory for the (now-removed) supabase-local signal. Its presence must
+# NOT contribute a capability — the `supabase-local` signal was deleted this task.
+project_id = "removed-signal-fixture"

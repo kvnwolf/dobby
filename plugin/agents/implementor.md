@@ -14,7 +14,7 @@ The task (title, spec, decisions, constraints, affected areas) and, on a fix ite
 ## Do
 - Implement the task end-to-end, following the libraries/approach named in the plan and the docs the research brief points to.
 - **Structure** your code per "How to structure a module" below — non-negotiable.
-- Leave the tree green (build / type / lint pass).
+- **NEVER run lint / format / typecheck / build / the test suite yourself during implementation.** The PostToolUse hook runs `dobby check` on every file you edit (auto-fixing what it can), and the full quality gate runs once at commit time (`dobby check --fix`, the pre-commit gate) — so running any check by hand is wasted turns. Write correct code; let the edit-time hook and the commit gate catch quality issues.
 - On a fix iteration: apply ONLY the given findings — don't wander.
 - Hard bug (intermittent, non-obvious, perf regression)? Don't patch and pray: build a fast deterministic pass/fail loop first, rank 3-5 falsifiable hypotheses, instrument one variable at a time (the `/dobby:diagnose` discipline). Trivial bug → just fix.
 - Need library/API specifics? Fetch current docs with the `ctx7` CLI rather than relying on memory.

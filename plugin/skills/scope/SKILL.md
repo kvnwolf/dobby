@@ -4,7 +4,7 @@ description: Start a work session — normalize the goal (free-text prompt or Gi
 argument-hint: "[goal, or GitHub issue #/URL]"
 ---
 
-The front door of a work session. Normalize the goal, put the session in its own worktree (on the terminal host — Conductor already provides one), create the shared work-session doc, and map the relevant code — so every later stage (interview → research → spec → execute → wrap) runs isolated on a goal-named branch with grounding and one place to persist its output.
+The front door of a work session. Normalize the goal, put the session in its own worktree, create the shared work-session doc, and map the relevant code — so every later stage (interview → research → spec → execute → wrap) runs isolated on a goal-named branch with grounding and one place to persist its output.
 
 ## Step 1: Normalize the input into a goal
 
@@ -22,22 +22,11 @@ The argument (or conversation) is one of:
 
 If the input is empty, ask in plain text (not AskUserQuestion) what the user wants to work on.
 
-## Step 2: Set up the work-session worktree (host-gated)
+## Step 2: Set up the work-session worktree
 
-Before anything else touches the codebase, put the session in its own worktree so the whole goal — every stage after this — runs isolated on a goal-named branch. This step is **host-dependent** and runs entirely before STATE.md is created (STATE.md lands at the worktree root, which becomes the session's repo root once you enter it).
+Before anything else touches the codebase, put the session in its own worktree so the whole goal — every stage after this — runs isolated on a goal-named branch. This step runs entirely before STATE.md is created (STATE.md lands at the worktree root, which becomes the session's repo root once you enter it).
 
-### 2a. Detect the execution host
-
-Check the environment for `CONDUCTOR_WORKSPACE_PATH`:
-
-```bash
-[ -n "$CONDUCTOR_WORKSPACE_PATH" ] && echo conductor || echo terminal
-```
-
-- **`CONDUCTOR_WORKSPACE_PATH` present → Conductor host.** The Conductor workspace *is* the worktree and Conductor already ran setup. **SKIP this entire step** — do nothing here and go straight to Step 3. All of 2b–2f are terminal-host only.
-- **Absent → terminal host.** You (the kit) own the worktree lifecycle for this goal. Continue with 2b.
-
-### 2b. One session per goal — guard against nesting, not parallelism
+### 2a. One session per goal — guard against nesting, not parallelism
 
 The invariant is **one session per goal**: each `claude` session/pane owns ONE goal and its worktree. It is **not** "one worktree on the machine." **Parallel worktrees for independent goals are fine and expected** — git supports multiple worktrees, and cmux runs one goal per pane, so `.claude/worktrees/` legitimately holds worktrees from OTHER sessions/panes. Do **not** refuse just because other worktrees exist there.
 
@@ -45,9 +34,9 @@ The only thing to block here is **nesting** — the native `EnterWorktree` tool 
 
 - If THIS session is **already inside** a `.claude/worktrees/<slug>/` path (you ran `/dobby:scope` earlier in this same session, so it already owns a goal's worktree), **soft-STOP the stage** with a plain-text note (not AskUserQuestion): this session already owns a goal's worktree and the native tool can't nest — open a **new cmux pane / `claude` session** and run `/dobby:scope <new goal>` there (one goal per pane, no nesting). Do **not** auto-exit, auto-remove, or stack a second worktree.
 
-(The other blocker, slug/branch collision, is checked in 2c once the slug is derived.)
+(The other blocker, slug/branch collision, is checked in 2b once the slug is derived.)
 
-### 2c. Create and enter the worktree
+### 2b. Create and enter the worktree
 
 Derive a short **slug** from the normalized goal yourself — a few kebab-case words capturing the goal (e.g. `add-csv-export`). No prompt, no confirmation; just pick a sensible slug.
 
@@ -57,27 +46,23 @@ Then **use the `EnterWorktree` tool** with that (collision-free) slug as its `na
 
 - `EnterWorktree({ name: "<slug>" })` creates and enters `.claude/worktrees/<slug>/` on branch `worktree-<slug>`, based on the default `fresh` ref (`origin/HEAD`). The session's working directory is now the worktree root.
 
-### 2d. Re-materialize env files (belt-and-suspenders)
+### 2c. Bring the workspace up (blocking)
 
-If a `.worktreeinclude` exists in the repo, the native `.worktreeinclude` copy on the `EnterWorktree` path is ambiguous in the docs — it may or may not have run. Make it idempotently correct: for each gitignored file the `.worktreeinclude` patterns match (e.g. `.env`), verify it exists in the fresh worktree and, if missing, copy it from the main checkout. This is a no-op when the native copy already ran, and fills the gap when it didn't. Skip silently if there is no `.worktreeinclude`.
+If `dobby.config.json` exists at the repo root, run **`bunx dobby up`** from the worktree root. This is the single mechanical step that makes the worktree usable — `dobby up` owns it end-to-end: a **setup phase** (installs dependencies via `bun install`, re-materializes the gitignored env/config files a fresh worktree needs — the `.worktreeinclude` set, idempotently, belt-and-suspenders over the native `EnterWorktree` copy — then runs any `setup[]` extras from the config), followed by a **run phase** that starts the app (liveness-first). The worktree comes up **running** — or, for a no-app project (a library / CLI / plugin like dobby itself), `up` finishes the setup phase and reports **'no app to run'**, exiting cleanly. Run it directly (Bash); it blocks until the workspace is up, in parallel with the exploration researcher you dispatch in Step 4. (`up` is idempotent, so `/dobby:execute` Step 2 re-runs it later without double-starting.)
 
-### 2e. Run setup (blocking)
+**Bring-up failure blocks the stage** — "worktree usable or nothing." If `bunx dobby up` fails (a non-zero exit — including because `dobby` isn't installed in the repo, meaning it was never onboarded/migrated):
 
-If `dobby.config.json` exists at the (main-checkout) repo root and carries a `setup` array, run each `setup` command in order from the worktree root — this materializes what the fresh worktree needs (dependencies, etc.), in parallel with the exploration researcher you dispatch in Step 4. These are coordination one-liners; run them directly (Bash).
-
-**Setup failure blocks the stage** — "worktree usable or nothing." If any `setup` command fails:
-
-1. Report the failing command and its error.
+1. Report the failing command and its error. If the failure is a missing local `dobby` bin, point to `/dobby:onboard` (or `/dobby:migrate-config` for a repo moving off an old contract) — the kit assumes `dobby` is installed as the repo's devDependency; there is no fallback.
 2. Remove the just-created worktree via the **`ExitWorktree` tool** in `remove` mode (this same session created it and the tree is clean, so removal tears down the dir + branch and restores the original working directory; the tool guards destructive removal via its `discard_changes` flag — set it since there's nothing to keep).
-3. **STOP the stage.** The user fixes the underlying problem and re-runs `/dobby:scope` fresh (a clean removal here means no leftover to trip the Step 2b guard).
+3. **STOP the stage.** The user fixes the underlying problem and re-runs `/dobby:scope` fresh (a clean removal here means no leftover to trip the Step 2a guard).
 
-### 2f. No-config path
+### 2d. No-config path
 
-If there is **no `dobby.config.json`** (repo never onboarded), skip setup — there's nothing to run — with a plain note that setup was skipped and `/dobby:onboard` establishes the contract (setup/run/teardown) for next time. **Continue the stage** (do not stop; the worktree is still valid). Same when `dobby.config.json` exists but has no `setup` key (a no-app project like a library or plugin): nothing to run, continue.
+If there is **no `dobby.config.json`** (repo never onboarded), skip the bring-up — there's nothing for `dobby` to run — with a plain note that it was skipped and `/dobby:onboard` establishes the contract (and installs `dobby`) for next time. **Continue the stage** (do not stop; the worktree is still valid).
 
 ## Step 3: Create the work-session doc
 
-Create an ephemeral `STATE.md` at the repo root with this skeleton — the shared spine every later stage appends to. On the terminal host the "repo root" is the worktree root you entered in Step 2; under Conductor it's the workspace root. Add it to `.gitignore` if it isn't already: it's working memory, not a committed artifact (`/dobby:wrap` disposes of it at the end).
+Create an ephemeral `STATE.md` at the repo root with this skeleton — the shared spine every later stage appends to. The "repo root" is the worktree root you entered in Step 2. Add it to `.gitignore` if it isn't already: it's working memory, not a committed artifact (`/dobby:wrap` disposes of it at the end).
 
 ```md
 # Work session: <goal title>
@@ -139,12 +124,10 @@ Interact with the user in their language. Write what you persist — `STATE.md` 
 
 - [ ] Goal normalized (prompt / GitHub); asked if empty
 - [ ] If the goal is a GitHub issue: claimed it (`--add-assignee @me --add-label status:in-progress`, label created lazily)
-- [ ] Execution host detected via `CONDUCTOR_WORKSPACE_PATH` (Conductor → Step 2 skipped entirely; terminal → worktree lifecycle run)
-- [ ] Terminal host: one-session-per-goal enforced as anti-NESTING only — soft-stopped ("open a new pane") if THIS session is already inside a worktree; parallel worktrees from other sessions allowed (not refused); slug collision avoided
-- [ ] Terminal host: worktree created + entered via the `EnterWorktree` tool (auto-slug from the goal, made collision-free → branch `worktree-<slug>`, `.claude/worktrees/<slug>/`)
-- [ ] Terminal host: `.worktreeinclude`-matched gitignored files verified/copied into the fresh worktree (belt-and-suspenders)
-- [ ] Terminal host: `dobby.config.json` `setup` run (blocking) — on failure, reported → `ExitWorktree(remove)` → stopped; no `dobby.config.json`/no `setup` → skipped with an `/dobby:onboard` note and continued
-- [ ] `STATE.md` created at the repo root — the worktree root on the terminal host — (and gitignored) with the skeleton; `## Goal` + `## Source` filled
+- [ ] One-session-per-goal enforced as anti-NESTING only — soft-stopped ("open a new pane") if THIS session is already inside a worktree; parallel worktrees from other sessions allowed (not refused); slug collision avoided
+- [ ] Worktree created + entered via the `EnterWorktree` tool (auto-slug from the goal, made collision-free → branch `worktree-<slug>`, `.claude/worktrees/<slug>/`)
+- [ ] `bunx dobby up` run (blocking) when `dobby.config.json` exists — the worktree comes up running (or 'no app to run' for a lib/plugin repo); on failure, reported (missing bin → `/dobby:onboard` / `/dobby:migrate-config`) → `ExitWorktree(remove)` → stopped; no `dobby.config.json` → skipped with an `/dobby:onboard` note and continued
+- [ ] `STATE.md` created at the repo root (the worktree root) and gitignored, with the skeleton; `## Goal` + `## Source` filled
 - [ ] Codebase explored with a `researcher` agent; `CONTEXT.md` + ADRs read if present
 - [ ] Researcher cross-referenced the goal's claims against the code and surfaced contradictions (not just a file map)
 - [ ] Exploration returned as a compressed, context-budgeted digest (depth on what matters; pointer for a full map if needed)

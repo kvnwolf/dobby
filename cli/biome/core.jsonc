@@ -1,0 +1,15 @@
+{
+	"extends": ["ultracite/biome/core"],
+	"files": {
+		"includes": [
+			"**",
+			// Common ignores for every dobby consumer: Claude Code's dir (worktrees
+			// live under .claude/worktrees — scanning them would double-lint every
+			// file), dobby's own runtime state, CI config, and markdown.
+			"!.claude",
+			"!.dobby",
+			"!.github",
+			"!**/*.md"
+		]
+	}
+}

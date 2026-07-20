@@ -1,0 +1,5 @@
+{
+	// Multi-level extends: core brings ultracite/biome/core + the common ignores,
+	// so react-app consumers extend ONLY @kvnwolf/dobby/biome/react.
+	"extends": ["./core.jsonc", "ultracite/biome/react"]
+}

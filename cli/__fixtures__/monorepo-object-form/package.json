@@ -1,7 +1,0 @@
-{
-  "name": "monorepo-object-form",
-  "private": true,
-  "workspaces": {
-    "packages": ["pkgs/*"]
-  }
-}

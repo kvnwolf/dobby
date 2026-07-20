@@ -1,53 +1,49 @@
 {
-  "files": [
-    {
-      "path": "README.md",
-      "update_when": [
-        "When a skill is added, removed, or renamed (lifecycle diagram, \"When to use what\" table, /dobby:* references)",
-        "When a worker agent's role, model, or effort changes (agent table)",
-        "When the stage sequence or handoff behavior changes",
-        "When hook behavior changes",
-        "When STATE.md's structure or section names change",
-        "When install/marketplace mechanics or prerequisites change"
-      ]
-    },
-    {
-      "path": "CLAUDE.md",
-      "update_when": [
-        "When the repo's directory layout changes (skills/, agents/, hooks/, .claude-plugin/)",
-        "When a kit convention changes (dogfooding, English-only, model+effort frontmatter, namespacing, architect-never-works, typed handoffs)",
-        "When the local dev loop, workflow config, or marketplace/self-install model changes"
-      ]
-    },
-    {
-      "path": "CONTEXT.md",
-      "update_when": [
-        "When a domain term is introduced, renamed, or its meaning changes",
-        "When a new worker agent or stage is added",
-        "When build loop/wave mechanics change"
-      ]
-    },
-    {
-      "path": "cli/CONTEXT.md",
-      "update_when": [
-        "When the CLI's interface changes (commands, flags, output format, exit codes)",
-        "When a capability or detection signal is added, renamed, or removed",
-        "When the cli/ file surface or an invariant (runtime portability, deps∪devDeps signals, fixed order) changes"
-      ]
-    }
-  ],
-  "checks": [
-    {
-      "name": "manifests-parse",
-      "run": "find .claude-plugin plugin/.claude-plugin plugin/hooks -name '*.json' -print0 | xargs -0 -I{} jq empty {}"
-    },
-    {
-      "name": "frontmatter-model-effort",
-      "run": "bad=$(for f in plugin/agents/*.md; do\n  awk '/^---$/{c++;next} c==1&&/^model:[ \\t]*[^ \\t]/{m=1} c==1&&/^effort:[ \\t]*[^ \\t]/{e=1} END{if(!(m&&e))print FILENAME}' \"$f\"\ndone)\n[ -z \"$bad\" ] || { echo \"Missing model:/effort: frontmatter (agents only):\"; echo \"$bad\"; exit 1; }"
-    },
-    {
-      "name": "validate",
-      "run": "vpr validate"
-    }
-  ]
+	"files": [
+		{
+			"path": "README.md",
+			"update_when": [
+				"When a skill is added, removed, or renamed (lifecycle diagram, \"When to use what\" table, /dobby:* references)",
+				"When a worker agent's role, model, or effort changes (agent table)",
+				"When the stage sequence or handoff behavior changes",
+				"When hook behavior changes",
+				"When STATE.md's structure or section names change",
+				"When install/marketplace mechanics or prerequisites change"
+			]
+		},
+		{
+			"path": "CLAUDE.md",
+			"update_when": [
+				"When the repo's directory layout changes (skills/, agents/, hooks/, .claude-plugin/)",
+				"When a kit convention changes (dogfooding, English-only, model+effort frontmatter, namespacing, architect-never-works, typed handoffs)",
+				"When the local dev loop, workflow config, or marketplace/self-install model changes"
+			]
+		},
+		{
+			"path": "CONTEXT.md",
+			"update_when": [
+				"When a domain term is introduced, renamed, or its meaning changes",
+				"When a new worker agent or stage is added",
+				"When build loop/wave mechanics change"
+			]
+		},
+		{
+			"path": "cli/CONTEXT.md",
+			"update_when": [
+				"When the CLI's interface changes (commands, flags, output format, exit codes)",
+				"When a capability or detection signal is added, renamed, or removed",
+				"When the cli/ file surface or an invariant (runtime portability, deps∪devDeps signals, fixed order) changes"
+			]
+		}
+	],
+	"checks": [
+		{
+			"name": "manifests-parse",
+			"run": "find .claude-plugin plugin/.claude-plugin plugin/hooks -name '*.json' -print0 | xargs -0 -I{} jq empty {}"
+		},
+		{
+			"name": "frontmatter-model-effort",
+			"run": "bad=$(for f in plugin/agents/*.md; do\n  awk '/^---$/{c++;next} c==1&&/^model:[ \\t]*[^ \\t]/{m=1} c==1&&/^effort:[ \\t]*[^ \\t]/{e=1} END{if(!(m&&e))print FILENAME}' \"$f\"\ndone)\n[ -z \"$bad\" ] || { echo \"Missing model:/effort: frontmatter (agents only):\"; echo \"$bad\"; exit 1; }"
+		}
+	]
 }

@@ -1,0 +1,12 @@
+{
+  "name": "dev-admin",
+  "private": true,
+  "dependencies": {
+    "drizzle-orm": "^0.30.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0",
+    "vitest": "^2.0.0",
+    "react-email": "^2.0.0"
+  }
+}

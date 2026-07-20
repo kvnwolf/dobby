@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/vp-check-changes.sh"
+            "command": "sh -c '[ -f dobby.config.json ] && [ -x node_modules/.bin/dobby ] && exec node_modules/.bin/dobby check --hook || exit 0'"
           }
         ]
       }

@@ -13,7 +13,7 @@ This skill is also the `dobby:verifier`'s named downstream: when verification hi
 **This is the skill.** Everything else is mechanical once you have a fast, deterministic, agent-runnable pass/fail signal for the bug. Be aggressive and creative; try in roughly this order:
 
 1. Failing test at whatever seam reaches the bug.
-2. `curl` / HTTP script against a running dev server (resolve the dev URL the same way `/dobby:execute` Step 2 does — `portless get`, identical on both execution hosts; if the run isn't up on the terminal host, Step 2's recipe is how you start it).
+2. `curl` / HTTP script against a running dev server (resolve the dev URL the way `/dobby:execute` Step 2 does — `bunx dobby up` if the run isn't up, then read `devUrl` from `bunx dobby env`).
 3. CLI invocation with a fixture input, diff stdout vs known-good.
 4. Headless browser script driving the UI.
 5. Replay a captured trace (real request / payload / event log saved to disk) through the code path in isolation.

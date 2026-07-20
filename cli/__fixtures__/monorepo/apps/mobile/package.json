@@ -1,7 +1,0 @@
-{
-  "name": "mobile",
-  "private": true,
-  "dependencies": {
-    "expo": "^51.0.0"
-  }
-}

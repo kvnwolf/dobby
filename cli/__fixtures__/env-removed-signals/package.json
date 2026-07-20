@@ -1,0 +1,9 @@
+{
+  "name": "env-removed-signals",
+  "private": true,
+  "dependencies": {
+    "react": "^19.0.0",
+    "convex": "^1.13.0",
+    "supabase": "^1.150.0"
+  }
+}

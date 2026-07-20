@@ -13,8 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: voidzero-dev/setup-vp@v1
-        with:
-          cache: true
-      - run: vp install
-      - run: vpr validate
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bunx dobby check

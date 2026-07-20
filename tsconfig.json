@@ -1,0 +1,8 @@
+{
+	"extends": "@kvnwolf/dobby/tsconfig",
+	"compilerOptions": {
+		"allowImportingTsExtensions": true,
+		"types": ["node"]
+	},
+	"include": ["cli/src"]
+}

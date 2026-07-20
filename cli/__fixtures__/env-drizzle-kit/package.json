@@ -1,0 +1,7 @@
+{
+  "name": "env-drizzle-kit",
+  "private": true,
+  "devDependencies": {
+    "drizzle-kit": "^0.20.0"
+  }
+}
