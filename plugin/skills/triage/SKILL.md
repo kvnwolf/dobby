@@ -27,6 +27,8 @@ Read the full issue or PR — body, comments, author, dates; for a PR, the diff 
 - **Redundancy** — search for an existing implementation of the requested behavior *by domain concept, not the request's wording*, and report where you looked. If it already exists, it's an already-implemented outcome (Step 4) — point to where it lives; do **not** write to the out-of-scope KB.
 - **Prior rejection** — read `docs/out-of-scope/*.md` and surface any concept that resembles this request (match by concept, not keyword — "night theme" matches `dark-mode.md`). If one matches, tell the maintainer: "This resembles `docs/out-of-scope/dark-mode.md` — rejected before because [reason]. Still holds?"
 
+Both checks may also scan the tracker's open issues (is this concept already filed or previously rejected there?); that scan reads the configured `tracker` — read the `tracker` key from `dobby.config.json` narratively (absent → github) and follow the **dedup / search** recipe in `../backlog/references/trackers.md`.
+
 Present a short recommendation (bug vs enhancement, and your leaning) plus the codebase summary, including whether it's already implemented. Wait for the maintainer's direction before verifying or briefing.
 
 ## Step 2: Verify the claim — dispatch a `dobby:researcher`
@@ -60,8 +62,8 @@ The one hard rule: **describe interfaces and behavioral contracts — never file
 When the maintainer decides not to action a request:
 
 - **Already implemented** — the behavior already exists. Post a comment pointing to where it lives. Do **NOT** write to `docs/out-of-scope/` — that KB is for *rejected* requests only; recording a built feature there poisons the dedup checks with a false rejection.
-- **Rejected bug** — a polite explanation comment, then close as not-planned (`gh issue close <n> --reason "not planned"`). No KB entry (the KB is enhancements only).
-- **Rejected enhancement** — this is the only case that writes to the KB. Record it in `docs/out-of-scope/` following `references/out-of-scope-kb.md`: one file per **concept** (kebab-case), deduped by concept not keyword — append to an existing concept file's "Prior requests" rather than creating a near-duplicate. Then post a comment linking the record (AI disclaimer first) and close as not-planned (`gh issue close <n> --reason "not planned"`).
+- **Rejected bug** — a polite explanation comment, then close it as rejected via the **close-as-rejected** recipe in `../backlog/references/trackers.md` (github: `gh issue close --reason "not planned"`; linear: the MCP tool that sets the issue state to Canceled; local: n/a). No KB entry (the KB is enhancements only).
+- **Rejected enhancement** — this is the only case that writes to the KB. Record it in `docs/out-of-scope/` following `references/out-of-scope-kb.md`: one file per **concept** (kebab-case), deduped by concept not keyword — append to an existing concept file's "Prior requests" rather than creating a near-duplicate. Then post a comment linking the record (AI disclaimer first) and close it as rejected via the **close-as-rejected** recipe in `../backlog/references/trackers.md` (same recipe as the rejected-bug outcome — github not-planned / linear Canceled / local n/a).
 
 ## Next step
 
@@ -81,7 +83,7 @@ Interact with the user in their language. The brief, out-of-scope records, and a
 - [ ] Claim verified by a dispatched `dobby:researcher` → verdict is confirmed / failed / insufficient, reported to the maintainer
 - [ ] Actionable outcome → behavioral brief written per `references/agent-brief.md` (interfaces & contracts, NEVER paths/line numbers)
 - [ ] Wontfix-rejected **enhancement** → recorded in `docs/out-of-scope/` per `references/out-of-scope-kb.md`, deduped by concept; already-implemented and rejected-bug outcomes write NO KB entry
-- [ ] Rejected outcomes (bug or enhancement) closed as not-planned (`gh issue close <n> --reason "not planned"`)
+- [ ] Rejected outcomes (bug or enhancement) closed via the **close-as-rejected** recipe in `../backlog/references/trackers.md` (github not-planned / linear Canceled / local n/a)
 - [ ] Every posted comment starts with the AI disclaimer
 - [ ] gh/git mechanics reused from `../address-review/references/github-api.md`; architect delegated verification and did no inline code edits
 - [ ] Next step handed off via an AskUserQuestion gate (brief → `/dobby:scope`, or Stop here)

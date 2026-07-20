@@ -113,7 +113,8 @@ Rewrite the config to the shrunken schema (`../onboard/references/dobby-config.m
 - **`files[]` — preserve the doc-sync rules.** When the source is `.claude/commit.config.yml` (admin), convert its `files` (`{ path, update_when[] }`) to JSON **verbatim** — carry every path and every `update_when` string across unchanged. When the source is an old `dobby.config.json` (vonda), keep its existing `files[]`.
 - **DROP `run`** and anything now inferred. The old `setup: ["vp install"]` goes (the default is `bun install`); any old local-DB-stop `teardown` goes (Neon teardown is inferred by `dobby down`); `checks: ["vpr validate"]` goes (`dobby check` IS the gate). Keep an extra **only** if it's a genuine project need the inference does not cover — an unusual install step, a real cleanup dobby can't infer, a project-specific check. Most migrated repos end up with `files` only.
 - **No-clobber caution:** if a hand-authored new-schema `dobby.config.json` already exists, merge the `files[]` additively and show the diff rather than overwriting it.
-- **Delete `.claude/commit.config.yml`** once its `files[]` are carried across. Leave the rest of `.claude/` (host-owned settings/commands/agents/hooks) untouched.
+- **`tracker` — mechanize the issue-tracker line, don't drop it.** Scan the legacy source (`.claude/commit.config.yml` and/or CLAUDE.md prose) for an issue-tracker declaration and carry it into `dobby.config.json`'s top-level `tracker` key — `{ "type": "github" | "linear" | "local" }` (see `../backlog/references/trackers.md`). Defer a Linear `team` to `/dobby:onboard` when it isn't trivially derivable from the source; **never fabricate a `team`** — a deferred `team` is flagged in Step 10, a wrong one silently misroutes work.
+- **Delete `.claude/commit.config.yml`** once its `files[]` (and any `tracker` line) are carried across. Leave the rest of `.claude/` (host-owned settings/commands/agents/hooks) untouched.
 
 ## Step 8: Delete `.conductor/` — HUMAN GATE
 
@@ -145,13 +146,14 @@ Then report the **migration summary** in plain buckets:
 - **Moved** — which files went to `src/emails/` and how many imports were rewritten (or "none applied").
 - **Config** — the new `dobby.config.json` (`files` count; any extras kept and why); `.worktreeinclude` created or already present; CI rewired.
 
-Flag any follow-ups the migration surfaced — e.g. a `setup[]`/`teardown[]`/`checks[]` extra the inference doesn't cover, or a stale README the swap left behind. Run `bunx dobby env` to confirm the resolved capabilities and the inferred `db:*` task names.
+Flag any follow-ups the migration surfaced — e.g. a `setup[]`/`teardown[]`/`checks[]` extra the inference doesn't cover, or a stale README the swap left behind. Run `bunx dobby env` to confirm the resolved capabilities and the inferred `db:*` task names. **Also flag a deferred/incomplete `tracker`** — if Step 7 mechanized an issue-tracker line whose value wasn't fully specified (a Linear line without a trivially-derivable `team`, or any tracker not fully pinned), say so and tell the user to run `/dobby:onboard` to complete the `tracker` key (especially the Linear `team`) **before using the work skills** — otherwise the project has no usable tracker selection and new work would be recorded against the default GitHub backend.
 
 ## Next step
 
 The migration is done. End by presenting an **AskUserQuestion** (one question) that restates the cutover to the dobby world is complete and offers:
 
 - `/dobby:commit` *(Recommended)* — commit the migration (added dep, thinned configs, stripped `vite.config.ts`, removed machinery, deleted `.conductor/` + legacy YAML, moved files, new `dobby.config.json`, CI rewire); its `bunx dobby check --fix` gate runs green, proving the move end-to-end.
+- `/dobby:onboard` — first, if Step 10 flagged an incomplete `tracker` (e.g. a Linear line whose `team` was deferred) to complete before using the work skills.
 - **Stop here** — end the turn (e.g. to eyeball the moved files or the CI diff first).
 
 On the user's selection, invoke the chosen `/dobby:<skill>` via the Skill tool (chaining runs on the session's current model/effort). "Stop here" ends the turn.
@@ -170,7 +172,8 @@ Interact with the user in their language. Write the migrated `dobby.config.json`
 - [ ] HUMAN GATE honored before file moves; the canonical-path move done with all imports rewritten atomically (react-email → `src/emails/`); skipped cleanly when N/A
 - [ ] `.worktreeinclude` created (at least `.env.local`) if missing; left as-is if present
 - [ ] `dobby.config.json` regenerated to the shrunken schema: `files[]` preserved/converted verbatim; `run` and inferred `setup`/`teardown`/`checks` dropped; only truly-custom extras kept; no-clobber on an existing hand-authored config; `.claude/commit.config.yml` deleted, rest of `.claude/` untouched
+- [ ] Legacy issue-tracker line (naming Linear/local/github, from `.claude/commit.config.yml` or CLAUDE.md) MECHANIZED into `dobby.config.json`'s top-level `tracker` key (`{ "type": ... }`), NOT deleted — Linear `team` key deferred to `/dobby:onboard` when not trivially derivable, never fabricated; an incomplete `tracker` flagged in the summary
 - [ ] HUMAN GATE honored before deleting `.conductor/`; ADR rationale (Conductor removal, supersedes ADR-0005) noted
 - [ ] CI rewired: `vp install`→`bun install`, `vpr validate`/`vp check`→`bunx dobby check`; rest of the workflow left intact
 - [ ] Verified: `bunx dobby check` green + `bunx dobby env` sane; migration summary reported (swapped/thinned/removed/moved/config)
-- [ ] Ended with the AskUserQuestion gate (`/dobby:commit` recommended, or stop here); the chosen `/dobby:<skill>` invoked through the Skill tool
+- [ ] Ended with the AskUserQuestion gate (`/dobby:commit` recommended, `/dobby:onboard` first if `tracker` incomplete, or stop here); the chosen `/dobby:<skill>` invoked through the Skill tool

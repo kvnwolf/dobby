@@ -43,11 +43,11 @@ Leave the updated docs unstaged for now — step 5 stages the tree (`git add -A`
 
 **Subject:** semantic commit format (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, `test:`, `ci:`, `perf:`, `style:`, `build:`). Lowercase imperative, no period, max 70 chars. Use a scope when it adds clarity.
 
-**Body:** explain **why** — motivation, trade-offs, decisions. State breaking changes explicitly. If the session traces to a GitHub issue — from `## Source` in `STATE.md` if it still exists (`/dobby:wrap` disposes of it), else evident from the conversation — put `Closes #<n>` on its own line. Don't fabricate a number you can't source.
+**Body:** explain **why** — motivation, trade-offs, decisions. State breaking changes explicitly. If the session traces to a tracked goal — its id from `## Source` in `STATE.md` if it still exists (`/dobby:wrap` disposes of it), else evident from the conversation — add the tracker's **lifecycle-link** magic word on its own line, using the recipe in [`../backlog/references/trackers.md`](../backlog/references/trackers.md). Read the `tracker` key from `dobby.config.json` narratively (absent → `github`): `Closes #<n>` for github, `Fixes VON-123` for linear (Linear's native GitHub integration drives In Review on PR-open and Done on merge — make **no** MCP call; the magic word text is the entire linear responsibility), nothing for local. Don't fabricate an id you can't source.
 
 **Branch guard — decide whether to open a PR:** run `git branch`. On `main`, commit without opening a PR. On any other branch, author a rich PR body and open one.
 
-**PR body (only off `main`):** write the PR body to a temp file with the `Write` tool — a `## Summary` (bullets from the commit analysis) + a `## Test plan` checklist, and `Closes #<n>` in the **body** when the session traces to an issue (the body is the reliable close-on-merge anchor — it survives a squash-merge, unlike a per-commit trailer). Pass that file to `gh pr create --body-file` in Step 5.
+**PR body (only off `main`):** write the PR body to a temp file with the `Write` tool — a `## Summary` (bullets from the commit analysis) + a `## Test plan` checklist, and the tracker's lifecycle-link magic word in the **body** when the session traces to a tracked goal (per the same `trackers.md` recipe — the body is the reliable close-on-merge anchor, surviving a squash-merge unlike a per-commit trailer). Pass that file to `gh pr create --body-file` in Step 5.
 
 ## Step 5: Run the gate, then commit, push, and open the PR
 
@@ -64,7 +64,7 @@ Perform the ceremony directly, in order. `bunx dobby check --fix` is the ONE gat
 
    Body explaining why this change was made.
 
-   Closes #<n>
+   <lifecycle-link magic word for the configured tracker — Closes #<n> (github) / Fixes VON-123 (linear) / nothing (local); omit the line entirely when there's no linkage or the session didn't start from a tracked goal>
    EOF
    ```
 
@@ -88,6 +88,6 @@ The commit landed (and the PR is open, if off `main`). Present the next stage as
 
 - [ ] Commit config exists at `dobby.config.json` (or the user explicitly chose a one-off contract-less commit; `/dobby:onboard` suggested); missing local `dobby` bin → stopped, pointed to `/dobby:onboard` / `/dobby:migrate-config`
 - [ ] Documentation synced with the changes per `files` (doc-sync is the skill's judgment); updated docs left unstaged so step 5's `git add -A` picks them up
-- [ ] Commit message authored in semantic format with a why-body; `Closes #<n>` in the body/PR when the session traces to an issue
+- [ ] Commit message authored in semantic format with a why-body; the tracker's lifecycle-link magic word in the commit body/PR body per [`../backlog/references/trackers.md`](../backlog/references/trackers.md) — `Closes #<n>` (github) / `Fixes VON-123` (linear) / nothing (local), and no MCP call — when the session traces to a tracked goal
 - [ ] Branch guard applied: on `main` → no PR; off `main` → `gh pr create --body-file` with the authored PR body
 - [ ] Ceremony performed directly in order: staged (`git add -A` if nothing staged) → `bunx dobby check --fix` gate → re-stage mutated files → `git commit` → `git push` (`-u origin HEAD` if no upstream) → PR; the gate is `dobby check --fix` alone (never the individual checks); gate failure reported verbatim and commit aborted

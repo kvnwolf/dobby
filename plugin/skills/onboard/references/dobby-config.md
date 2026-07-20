@@ -2,7 +2,7 @@
 
 Creates `dobby.config.json` at the **consumer repo root** (JSON — NOT in `.dobby/`, NOT in `.claude/`). This is the single kit-owned contract, and its **presence** is the marker that a repo is a "dobby project" (the edit-time hook and the work skills guard on it). Since `dobby` infers most tasks from the project's detected capabilities (zero-config à la Vercel), the config shrank to one required section plus optional overrides.
 
-**Format is JSON.** Readers: `/dobby:commit` (`files`, doc-sync), plus `dobby` itself (`setup` / `teardown` / `checks` extras, layered onto the inferred defaults). Writer: `/dobby:onboard`.
+**Format is JSON.** Readers: `/dobby:commit` (`files`, doc-sync), plus `dobby` itself (`setup` / `teardown` / `checks` extras, layered onto the inferred defaults); the optional `tracker` key is read by the backlog skills — `/dobby:backlog`, `/dobby:scope`, `/dobby:commit`, `/dobby:triage`, `/dobby:resolve-conflicts`. Writer: `/dobby:onboard`.
 
 ## The sections
 
@@ -14,6 +14,20 @@ Creates `dobby.config.json` at the **consumer repo root** (JSON — NOT in `.dob
 | `checks` | array of `{ name, run }` (optional) | `dobby check` | EXTRA checks, run IN ADDITION to the inferred gate (biome, tsc, knip, build, vitest-if-capability) |
 
 `files` is the only always-present section. `setup` / `teardown` / `checks` are OPTIONAL overrides — omit them entirely for a repo whose capabilities `dobby` already infers correctly (the common case). There is **no `run` key** — the dev/up/down lifecycle is inferred from the detected capabilities, never configured here.
+
+## The optional `tracker` key
+
+`tracker` is an **optional top-level key** — a sibling of the five sections, not nested inside them — that selects which issue tracker the backlog skills talk to. Shape:
+
+```json
+{ "type": "github" | "linear" | "local", "team"?: "<KEY>" }
+```
+
+- **ABSENT → `github`** — the zero-config default (the repo `gh` is authenticated against). Most projects never write this key; dobby itself omits it.
+- `team` is required **only for `linear`**: the human team **key** (e.g. `VON`), not a UUID — the Linear MCP resolves key → id. Omit `team` for `github` and `local`.
+- It is **independent of `files` / `checks` / `setup` / `teardown`** — it says nothing about how docs sync, checks run, or the app installs/tears down; it only names the backlog backend.
+
+The full per-backend operation recipes (dedup, create, view, claim, close, PR-link) live in the backlog skill's `references/trackers.md`; this key just selects the column. Read by `/dobby:backlog`, `/dobby:scope`, `/dobby:commit`, `/dobby:triage`, and `/dobby:resolve-conflicts`.
 
 ## Discover
 

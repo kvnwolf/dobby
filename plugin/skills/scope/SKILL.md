@@ -1,12 +1,14 @@
 ---
 name: scope
-description: Start a work session — normalize the goal (free-text prompt or GitHub issue) and ground it in the codebase before interviewing or planning. Use at the start of any feature, fix, or refactor, or when handed a ticket to work on.
-argument-hint: "[goal, or GitHub issue #/URL]"
+description: Start a work session — normalize the goal (free-text prompt, or the configured tracker's issue — a GitHub `#123`/URL or a Linear `VON-123`/URL) and ground it in the codebase before interviewing or planning. Use at the start of any feature, fix, or refactor, or when handed a ticket to work on.
+argument-hint: "[goal, or tracker issue — GitHub #/URL or Linear VON-123]"
 ---
 
 The front door of a work session. Normalize the goal, put the session in its own worktree, create the shared work-session doc, and map the relevant code — so every later stage (interview → research → spec → execute → wrap) runs isolated on a goal-named branch with grounding and one place to persist its output.
 
 ## Step 1: Normalize the input into a goal
+
+**Which issue pattern counts as a goal source depends on the configured tracker.** Read the optional `tracker` key from `dobby.config.json` at the repo root — with the Read tool, narratively (never `jq`/`cat`); **absent → github**. Free-text is always a goal source; on top of it, scope recognizes ONLY the configured tracker's issue pattern — a github project parses `#123`/URLs (never `VON-123`), a linear project parses `VON-123`/linear.app URLs (never `#123`) — so there's no cross-pattern ambiguity. The fetch-and-claim mechanics for each tracker live in `../backlog/references/trackers.md`; scope carries the intent and delegates the recipe.
 
 The argument (or conversation) is one of:
 
@@ -19,6 +21,8 @@ The argument (or conversation) is one of:
   ```
 
   This signals "someone's on it" so a parallel session doesn't double-take it, and lets `/dobby:commit` add `Closes #<n>` so the merge closes it.
+
+- **Linear issue** (`VON-123` or a linear.app issue URL) — *only when `tracker.type == linear`.* Fetch it and, since you're starting work on it, **claim it** — assignee = me, state = **In Progress** — by following the **view goal** then **claim** recipes for the linear backend in `../backlog/references/trackers.md` (that reference owns the mechanics; the executing agent resolves the actual MCP tool via ToolSearch — never hardcode a tool name). **This claim is the kit's one and only Linear-MCP write point.** The later In Review (on PR open) and Done (on merge) transitions are driven by Linear's native GitHub integration off the PR body's `Fixes VON-123` — the kit never pushes them via the MCP. Graceful degradation (D8): if the goal IS a Linear issue you cannot read (the Linear MCP is unavailable), **STOP the stage** and report — this is the read-a-specific-issue hard-stop, with no free-text equivalent to fall back to. (A free-text goal always continues.)
 
 If the input is empty, ask in plain text (not AskUserQuestion) what the user wants to work on.
 
@@ -71,7 +75,7 @@ Create an ephemeral `STATE.md` at the repo root with this skeleton — the share
 <the goal>
 
 ## Source
-<prompt | GitHub #123>
+<prompt | GitHub #123 | Linear VON-123>
 
 ## Exploration
 _pending_
@@ -122,8 +126,10 @@ Interact with the user in their language. Write what you persist — `STATE.md` 
 
 ## Acceptance checklist
 
-- [ ] Goal normalized (prompt / GitHub); asked if empty
-- [ ] If the goal is a GitHub issue: claimed it (`--add-assignee @me --add-label status:in-progress`, label created lazily)
+- [ ] `tracker` read from `dobby.config.json` (Read tool, narratively; absent → github); scope recognized ONLY that tracker's issue pattern alongside free-text (github `#123`/URL, or linear `VON-123`/linear.app URL) — no cross-pattern ambiguity
+- [ ] Goal normalized (free-text, or the configured tracker's issue); asked if empty
+- [ ] If the goal is a tracker issue: claimed it via the **claim** recipe in `../backlog/references/trackers.md` — github (`--add-assignee @me --add-label status:in-progress`, label created lazily), or linear (assignee = me, state = In Progress) as the kit's only Linear-MCP write point (In Review / Done are Linear-native, never pushed by the kit)
+- [ ] If the goal is a Linear issue that cannot be read (MCP unavailable): stage hard-stopped (D8); a free-text goal always continues
 - [ ] One-session-per-goal enforced as anti-NESTING only — soft-stopped ("open a new pane") if THIS session is already inside a worktree; parallel worktrees from other sessions allowed (not refused); slug collision avoided
 - [ ] Worktree created + entered via the `EnterWorktree` tool (auto-slug from the goal, made collision-free → branch `worktree-<slug>`, `.claude/worktrees/<slug>/`)
 - [ ] `bunx dobby up` run (blocking) when `dobby.config.json` exists — the worktree comes up running (or 'no app to run' for a lib/plugin repo); on failure, reported (missing bin → `/dobby:onboard` / `/dobby:migrate-config`) → `ExitWorktree(remove)` → stopped; no `dobby.config.json` → skipped with an `/dobby:onboard` note and continued
