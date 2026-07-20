@@ -205,7 +205,7 @@ On Conductor you're done at commit. **On the terminal host**, the whole session 
 | Learn a topic and check you actually got it | `/dobby:teach` |
 | Context is getting long, or you want to branch a fresh session off a clean summary | `/dobby:handoff` — an ephemeral fork document |
 | A merge/rebase left conflict markers you need to reconcile without losing either side | `/dobby:resolve-conflicts` |
-| A brand-new empty repo | `/dobby:onboard` |
+| A brand-new empty repo | `/dobby:onboard` — scaffolds it and picks the issue tracker (GitHub Issues by default, or Linear / local `BACKLOG.md`) |
 | A repo still on the legacy `.claude/commit.config.yml` | `/dobby:migrate-config` — convert it to `dobby.config.json`, one-time |
 | Work is done, ship it | `/dobby:commit` |
 | Terminal host: the PR merged and the worktree needs retiring | `/dobby:finish` |

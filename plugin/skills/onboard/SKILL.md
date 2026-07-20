@@ -15,6 +15,7 @@ One question at a time (AskUserQuestion where the options are anticipatable; pla
 - The core domain terms — the start of the ubiquitous language.
 - The stack (language, framework, data layer, key services). Use `/find-docs` to confirm the CURRENT setup commands for the chosen stack — don't rely on memory.
 - **The `run_mode`** — does the stack rely on shared singletons (one local DB, fixed ports, e.g. a local Supabase / Postgres you can only run once per machine)? **Yes → `nonconcurrent`** (a new Conductor workspace stops any other active run so they don't fight over the singleton). **No → `concurrent`** (each workspace runs its own dev server on its own per-workspace port). This decides Step 2's `settings.toml`.
+- **The issue tracker** — where the backlog lives. AskUserQuestion (options are anticipatable) with THREE options: **GitHub Issues** *(Recommended — the zero-config default; the `gh`-authenticated repo, nothing else to set up)*, **Linear** *(opt-in — needs a team key like `VON` plus one-time integration setup, surfaced in Step 4)*, and **local `BACKLOG.md`** *(a plain-text backlog file in the repo — no external service)*. Persist the choice into `dobby.config.json`'s `tracker` key in Step 4.
 - Greenfield or existing repo? If greenfield, the first slice you'll build.
 
 ## Step 2: Make it runnable via Conductor
@@ -106,7 +107,7 @@ Each scaffolded choice below carries a one-line **why** — say it to the user a
   - **Stack** — language, framework, data layer, key services, plus a short **Dev** note: the app runs via **Conductor** (`.conductor/settings.toml`; `auto_run_after_setup` auto-starts the run script in each workspace), and the run command wraps the dev command with **portless**. Do NOT pin a `npm run dev` command or a hardcoded dev URL here — the Workflow config section covers how the verifier obtains it.
   - **Module map** — one line per top-level feature/domain module, each linking to that module's own `CONTEXT.md`, e.g. `- [src/<area>/<module>/](src/<area>/<module>/CONTEXT.md) — what it owns`.
   - **Conventions** — encode deep, contained modules: organize by feature/domain (NO type-based `components/`/`services/`/`lib/` buckets); NO barrels — callers import by deep path, each file named by its role (the filename is the interface); co-locate the slice; inline by default; **each module carries its own `CONTEXT.md`** (purpose · Files · Interface · Invariants · What's NOT here). "What works for humans is also great for AI."
-  - **Workflow config** — how the app runs: **via Conductor**, run command wrapped in **portless**. Do NOT pin a hardcoded dev URL — `/dobby:execute`'s verifier obtains it via `portless get <name>` (deterministic, branch-prefixed via the worktree, so it is NOT hardcodable). For a no-dev-server project, say so (there's no run script → no dev URL; the verifier verifies programmatically). The issue tracker is not configured here — `/dobby:backlog` and `/dobby:triage` always use the `gh`-authenticated repo.
+  - **Workflow config** — how the app runs: **via Conductor**, run command wrapped in **portless**. Do NOT pin a hardcoded dev URL — `/dobby:execute`'s verifier obtains it via `portless get <name>` (deterministic, branch-prefixed via the worktree, so it is NOT hardcodable). For a no-dev-server project, say so (there's no run script → no dev URL; the verifier verifies programmatically). The issue tracker is configurable via `dobby.config.json`'s `tracker` key — `github` (the `gh`-authenticated repo, the default), `linear` (a team's Linear workspace), or `local` (a `BACKLOG.md` in the repo); `/dobby:backlog` and `/dobby:triage` read that key. It's set from the Step 1 interview and written in Step 4.
 
   *Why:* this is the adapter the generic work skills read from — Product/Stack orient every worker, the Module map + Conventions make the tree navigable to humans and agents alike, and Workflow config tells `/dobby:execute` how to run and verify.
 - **docs/adr/** — create the directory (add `0001-...` only if the stack choice meets the three ADR criteria: hard to reverse · surprising · real trade-off). *Why:* durable architecture decisions get a numbered home from day one, so `/dobby:wrap` and `/dobby:improve-architecture` have somewhere to write and something to respect.
@@ -123,6 +124,20 @@ Create `dobby.config.json` at the **repo root** (JSON — NOT `.claude/`, NOT `.
 - On a greenfield repo the doc list starts with the files just scaffolded and the checks come from the stack's own toolchain (typecheck/lint/test). Step 3's no-clobber rule applies: an existing `dobby.config.json` gets missing entries merged additively with the user's approval, never overwritten.
 
 *Why:* this is the single kit-owned per-project contract — `/dobby:commit` gates every commit on `files`/`checks`, and `/dobby:scope` / `/dobby:execute` / `/dobby:finish` read `setup`/`run`/`teardown` to drive the per-session worktree on the terminal host. It's how doc-sync, pre-commit checks, and the worktree lifecycle stay enforced without a separate hook manager.
+
+### The `tracker` key
+
+Persist the tracker chosen in Step 1 into `dobby.config.json`'s optional top-level `tracker` key, per the schema in `references/dobby-config.md` (schema authority — cite it, don't re-specify it here):
+
+- Write `type` **EXPLICITLY** for the chosen backend, including github (`{ "type": "github" }`) — don't rely on absence to signal it. (ABSENCE still remains a valid github signal for pre-existing repos that never wrote the key; onboard simply always writes the choice explicitly.)
+- For a **Linear** choice, also write `team` — the human team **key** from Step 1 (e.g. `"team": "VON"`), not a UUID. For **github** and **local**, omit `team`.
+- **No-clobber / additive-merge** (Step 3's rule): NEVER overwrite an existing `tracker` key — if the config already carries one, leave it exactly as the user wrote it.
+
+**Linear-only reminder — plain text, AFTER writing the config.** A Linear tracker needs one-time human setup the kit can't do; remind the user (don't auto-do it) to:
+
+- **Connect Linear's native GitHub integration** — in Linear: Settings → Integrations → GitHub.
+- **Configure the two per-team PR automations** — 'PR opened → In Review' and 'PR merged → Done' — the kit relies on them for the issue lifecycle (it only pushes scope → In Progress itself).
+- **Ensure the Linear MCP is configured/authenticated** for this workspace — the kit reaches Linear through it.
 
 ### portless devDependency + .worktreeinclude
 
@@ -145,7 +160,7 @@ Interview in the user's language. **Write all generated docs and code — CLAUDE
 
 ## Acceptance checklist
 
-- [ ] Interviewed: product, domain terms, stack (docs confirmed via /find-docs), `run_mode` (singletons? → concurrent/nonconcurrent), greenfield-or-existing
+- [ ] Interviewed: product, domain terms, stack (docs confirmed via /find-docs), `run_mode` (singletons? → concurrent/nonconcurrent), issue tracker (github default / linear / local, via AskUserQuestion), greenfield-or-existing
 - [ ] Conductor configured: `.conductor/settings.toml` written from the right template (`run_mode` AND `auto_run_after_setup` explicit); the `[scripts] run` command wraps the dev command with `portless run` (branch-prefixed URL, no `$CONDUCTOR_PORT`); `nonconcurrent + auto_run` interaction noted in a comment; no `[models]` table
 - [ ] No-dev-server project (lib/CLI/plugin): NO `[scripts] run`, and `auto_run_after_setup = false` (or omitted) — never `true` with no run target
 - [ ] `.conductor/setup.sh` + `.conductor/archive.sh` stubs written and `chmod +x`; `file_include_globs` (multi-line string) copies gitignored env files; secrets go in gitignored `.conductor/settings.local.toml`, not `settings.toml`
@@ -154,6 +169,8 @@ Interview in the user's language. **Write all generated docs and code — CLAUDE
 - [ ] CLAUDE.md scaffolded (product, stack, module map, deep-module conventions, workflow config) — in English; each scaffolded choice explained in plain language; Dev/Workflow note says the app runs via Conductor with the run command wrapping the dev command in portless, and the verifier obtains the dev URL via `portless get <name>` (no hardcoded URL)
 - [ ] docs/adr/ created; `.gitignore` ignores `STATE.md` and `.conductor/settings.local.toml`
 - [ ] `dobby.config.json` created at the repo root (JSON; `files` + `checks` always; `setup`/`run`/`teardown` + the run-sync `files[]` rule for an app project, OMITTED for a no-app lib/CLI/plugin), user-confirmed
+- [ ] `tracker` key persisted from the Step 1 choice per `references/dobby-config.md`: `type` written EXPLICITLY (incl. `{ "type": "github" }`); `team` (human key, e.g. `VON`) added for linear only; no-clobber respected (an existing `tracker` key was NOT overwritten)
+- [ ] Linear choice: reminded the user (plain text) to connect Linear's native GitHub integration (Settings → Integrations → GitHub), configure the two per-team PR automations (PR opened → In Review, PR merged → Done), and ensure the Linear MCP is configured/authenticated
 - [ ] App project: `portless` pinned as a devDependency (not npx/global); one-time `portless trust` surfaced; `.worktreeinclude` scaffolded with the gitignored env files a fresh worktree needs
 - [ ] `/dobby:wizard` offered (plain text, not auto-invoked) if Step 1 surfaced external services needing one-time manual setup (DB/auth/CI secrets)
 - [ ] Next step handed off in plain text for the user to TYPE (no AskUserQuestion, no Skill-tool auto-invoke)
