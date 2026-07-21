@@ -8,6 +8,7 @@ import {
 	readdirSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -1490,11 +1491,11 @@ function closeKitPanes(context: DownContext): void {
 	}
 }
 
-// Kill the detached run's process GROUP (SIGTERM to -pid) when the pid is still
-// alive AND its command line still carries the detached run's signature; either way
-// remove the pidfile (a stale pid is cleaned up silently). The ownership check guards
-// against pid reuse: a recycled pid can pass `isAlive` (EPERM counts even another
-// user's process alive), so we never signal a group whose command line isn't ours.
+// Kill the detached run's process GROUP (SIGTERM to -pid) when the pid is still alive
+// AND `ownsDetachedRun` confirms both the command-line signature AND the start-time
+// (see below); either way remove the pidfile (a stale pid is cleaned up silently). The
+// ownership check guards against pid reuse: a recycled pid can pass `isAlive` (EPERM
+// counts even another user's process alive), so we never signal a group that isn't ours.
 function killFromPidfile(pidPath: string, workroot: string): void {
 	let pid: number;
 	try {
@@ -1502,7 +1503,11 @@ function killFromPidfile(pidPath: string, workroot: string): void {
 	} catch {
 		return;
 	}
-	if (Number.isInteger(pid) && isAlive(pid) && ownsDetachedRun(pid, workroot)) {
+	if (
+		Number.isInteger(pid) &&
+		isAlive(pid) &&
+		ownsDetachedRun(pid, workroot, pidPath)
+	) {
 		try {
 			process.kill(-pid, "SIGTERM");
 		} catch {
@@ -1523,19 +1528,70 @@ function isAlive(pid: number): boolean {
 	}
 }
 
-// Whether `pid`'s command line still carries the detached run's signature
-// (`dobby dev` — it was spawned as `bunx dobby dev`). Guards pid REUSE: a live pid
-// that is now some unrelated process must not have its group SIGTERM'd. `ps` is a
-// system tool → bare. A failed/empty `ps` (or a non-matching command) is treated as
-// NOT ours (the pid is stale → signal nothing, the caller still removes the file).
-function ownsDetachedRun(pid: number, workroot: string): boolean {
-	const result = runCapture("ps", ["-o", "command=", "-p", String(pid)], {
+// Whether `pid` is OUR detached run — requires BOTH (a) the command-line signature
+// (`dobby dev`, since it was spawned as `bunx dobby dev`) AND (b) a start-time match:
+// the process must have started no later than the pidfile was written (+ tolerance).
+// (a) alone is insufficient — the signature matches ANY dobby dev, including another
+// worktree's (parallel goals are the kit's normal mode), so a recycled pid now running
+// an UNRELATED workspace's dev group would still match. The start-time guard closes
+// that: a process that came up AFTER we recorded this pid can't be the one we recorded.
+// `ps` is a system tool → bare. Any failure — failed/empty `ps`, a non-matching command,
+// an unstat-able pidfile, or an unparseable etime — is treated as NOT ours (the pid is
+// stale → signal nothing; the caller still removes the file).
+function ownsDetachedRun(
+	pid: number,
+	workroot: string,
+	pidPath: string,
+): boolean {
+	const command = runCapture("ps", ["-o", "command=", "-p", String(pid)], {
 		root: workroot,
 	});
-	if (result.error || result.status !== 0) {
+	if (
+		command.error ||
+		command.status !== 0 ||
+		!command.stdout.includes("dobby dev")
+	) {
 		return false;
 	}
-	return result.stdout.includes("dobby dev");
+	// (b) Start-time guard against pid REUSE across worktrees. pidfile mtime ≈ when we
+	// recorded the pid; the process's `ps` etime gives its start (now − elapsed). Owned
+	// only when the process is no NEWER than the pidfile write, within a 15s tolerance.
+	let pidfileMtimeMs: number;
+	try {
+		pidfileMtimeMs = statSync(pidPath).mtimeMs;
+	} catch {
+		return false;
+	}
+	const etime = runCapture("ps", ["-o", "etime=", "-p", String(pid)], {
+		root: workroot,
+	});
+	if (etime.error || etime.status !== 0) {
+		return false;
+	}
+	const elapsedSeconds = parseEtimeSeconds(etime.stdout);
+	if (elapsedSeconds === null) {
+		return false;
+	}
+	const processStartMs = Date.now() - elapsedSeconds * 1000;
+	const toleranceMs = 15_000;
+	return processStartMs <= pidfileMtimeMs + toleranceMs;
+}
+
+// Parse `ps -o etime=` elapsed time to whole seconds. Grammar `[[dd-]hh:]mm:ss` (each
+// field one-or-more digits; days optional, hours optional). Deterministic — any shape
+// outside the grammar returns null (the caller treats that as NOT ours). Pure; kept
+// private because the only reachable caller is the kill path, which is a documented
+// non-CI boundary (a real matching process can't be conjured through the run() seam).
+function parseEtimeSeconds(raw: string): number | null {
+	const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(raw.trim());
+	if (match === null || match[3] === undefined || match[4] === undefined) {
+		return null;
+	}
+	const days = match[1] === undefined ? 0 : Number(match[1]);
+	const hours = match[2] === undefined ? 0 : Number(match[2]);
+	const minutes = Number(match[3]);
+	const seconds = Number(match[4]);
+	return ((days * 24 + hours) * 60 + minutes) * 60 + seconds;
 }
 
 // Delete the neon isolation branch (a missing branch is idempotently fine). NOT

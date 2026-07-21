@@ -1706,6 +1706,90 @@ describe("run() — check command (knip finding-present path fails the gate)", (
 	}, 30000);
 });
 
+// --- Slice 6 (field-friction fix): a findingless nonzero step surfaces the tool's
+// RAW output tail. The field bug: CI's `bunx dobby check` printed only
+// `test: failed (exit 1)` — zero findings, zero stderr — leaving a startup/config
+// crash undiagnosable. A step that exits nonzero WITHOUT contributing any parsed
+// findings (build/test never produce findings; biome/tsc when they crash) must now
+// emit a clearly-labeled tail of the child's stderr beneath the note line.
+//
+// Reached WITHOUT spawning a forbidden real tool: the fixture declares the `vite`
+// capability (so the build step is NOT capability-skipped) and ships a FAKE
+// consumer-local `node_modules/vite` whose `bin` is a 2-line script that writes a
+// known marker to stderr and exits 127. `check --build` runs ONLY the build step,
+// so no biome/tsc/knip noise interferes. `runBuild` resolves that bin (consumer-
+// local, exactly as it resolves a real vite), spawns it via the REAL runner, sees a
+// findingless nonzero exit, and attaches the tail — the genuine code path, only the
+// vite binary is stubbed. Independent expected values: the exit code (127) and the
+// stderr marker are BOTH written into the stub by hand here, never derived by the
+// code under test.
+function makeBuildCrashRepo(): string {
+	const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-buildcrash-")));
+	execFileSync("git", ["init", "-q"], {
+		cwd: dir,
+		stdio: "ignore",
+		env: gitEnv,
+	});
+	// The `vite` dependency gives the repo the vite capability, so checkPipeline
+	// keeps the build step (skipNote null) instead of skipping it.
+	writeFileSync(
+		join(dir, "package.json"),
+		JSON.stringify(
+			{
+				name: "buildcrash-fixture",
+				private: true,
+				dependencies: { vite: "^5.0.0" },
+			},
+			null,
+			2,
+		),
+	);
+	// A fake consumer-local vite whose bin CRASHES: writes a marker to stderr and
+	// exits 127 (the "command found but broken" shape), exercising the findingless-
+	// failure path without ever running a real vite build.
+	const viteDir = join(dir, "node_modules", "vite");
+	mkdirSync(viteDir, { recursive: true });
+	writeFileSync(
+		join(viteDir, "package.json"),
+		JSON.stringify(
+			{ name: "vite", version: "0.0.0-fake", bin: { vite: "./bin.mjs" } },
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		join(viteDir, "bin.mjs"),
+		'process.stderr.write("VITE_CRASH_MARKER: simulated config error\\n");\nprocess.exit(127);\n',
+	);
+	return dir;
+}
+
+describe("run() — check command (findingless nonzero step surfaces the raw tail)", () => {
+	let repo: string;
+
+	beforeAll(() => {
+		repo = makeBuildCrashRepo();
+	});
+
+	afterAll(() => {
+		rmSync(repo, { recursive: true, force: true });
+	});
+
+	it("under --build, a crashed vite bin (exit 127, no findings) propagates the exit code and surfaces its stderr tail with a clear label", async () => {
+		const result = await run(["check", "--build"], repo);
+		// The real (fake) exit code propagates — proving it is NOT a hardcoded 1 and
+		// that this is genuinely the findingless-failure path, not a skip.
+		expect(result.exitCode).toBe(127);
+		// The note names the step + code, and the raw tail is clearly labeled…
+		expect(result.stdout).toMatch(/build: failed \(exit 127\)/);
+		expect(result.stdout).toMatch(/raw output \(tail\)/i);
+		// …and carries the child's actual stderr (the marker WE wrote into the stub).
+		expect(result.stdout).toContain(
+			"VITE_CRASH_MARKER: simulated config error",
+		);
+	}, 20000);
+});
+
 // ===========================================================================
 // TASK 5 — `check --hook` + plugin hook rewire.
 //

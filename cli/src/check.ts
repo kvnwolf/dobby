@@ -10,7 +10,7 @@ import {
 } from "node:path";
 import { loadConfig } from "./config.ts";
 import { detectCapabilities } from "./detect.ts";
-import { resolveWorkroot, runCapture } from "./runner.ts";
+import { type RunResult, resolveWorkroot, runCapture } from "./runner.ts";
 import { type CheckFlags, checkPipeline } from "./tasks.ts";
 
 // The quality-gate executor. `dobby check` orchestrates the bundled tools by
@@ -52,16 +52,28 @@ export interface CheckGroup {
 	findings: Finding[];
 }
 
+// One single-line step note (a capability skip, or a build/test/extra failure
+// summary), OPTIONALLY carrying the crashed-tool RAW-output tail (`raw`). `raw` is
+// non-null ONLY when a step exited nonzero with ZERO parsed findings — the
+// crashed-tool case (a startup/config error, not lint findings), where the exit
+// code alone is undiagnosable (the field bug: CI's `test: failed (exit 1)` with no
+// stderr). run.ts renders `text`, then the labeled `raw` tail beneath it.
+export interface CheckNote {
+	text: string;
+	raw: string | null;
+}
+
 // The outcome of a check run:
 //   - { ok: true, groups, notes, exitCode } — the pipeline ran. `groups` carries
 //     the findings tools' output (possibly empty), `notes` the single-line step
-//     notes (capability skips, build/test/extra failures), and `exitCode` the
+//     notes (capability skips, build/test/extra failures — a findingless failure
+//     also carries the crashed tool's raw-output tail), and `exitCode` the
 //     aggregated FIRST failing exit code (0 = all selected steps passed). run.ts
 //     prints groups + notes and exits with `exitCode`.
 //   - { ok: false, error } — a HARD error (not a git repo, or a BUNDLED tool
 //     could not be resolved/spawned): surfaced on stderr with a nonzero exit.
 type CheckReport =
-	| { ok: true; groups: CheckGroup[]; notes: string[]; exitCode: number }
+	| { ok: true; groups: CheckGroup[]; notes: CheckNote[]; exitCode: number }
 	| { ok: false; error: string };
 
 // Run the quality gate. `files` empty = project-wide (the composed pipeline);
@@ -134,7 +146,7 @@ export function check(
 	const plan = checkPipeline(capabilities, config, flags);
 
 	const groups: CheckGroup[] = [];
-	const notes: string[] = [];
+	const notes: CheckNote[] = [];
 	let exitCode = 0;
 	// Aggregate the FIRST failing exit code; every selected step still runs.
 	const fail = (code: number) => {
@@ -154,9 +166,7 @@ export function check(
 					return { ok: false, error: biome.error };
 				}
 				groups.push(biome.group);
-				if (biome.group.findings.length > 0) {
-					fail(1);
-				}
+				fail(findingsStepCode("biome", biome.group, biome.result, notes));
 				break;
 			}
 			case "tsc": {
@@ -172,9 +182,7 @@ export function check(
 					return { ok: false, error: tsc.error };
 				}
 				groups.push(tsc.group);
-				if (tsc.group.findings.length > 0) {
-					fail(1);
-				}
+				fail(findingsStepCode("tsc", tsc.group, tsc.result, notes));
 				break;
 			}
 			case "knip": {
@@ -194,7 +202,7 @@ export function check(
 			}
 			case "build": {
 				if (step.skipNote !== null) {
-					notes.push(step.skipNote);
+					notes.push({ text: step.skipNote, raw: null });
 					break;
 				}
 				const built = runBuild(root);
@@ -206,7 +214,7 @@ export function check(
 			}
 			case "test": {
 				if (step.skipNote !== null) {
-					notes.push(step.skipNote);
+					notes.push({ text: step.skipNote, raw: null });
 					break;
 				}
 				const tested = runTest(root);
@@ -222,7 +230,10 @@ export function check(
 				}
 				const code = runExtra(root, step.run);
 				if (code !== 0) {
-					notes.push(`check '${step.name}' failed (exit ${code})`);
+					notes.push({
+						text: `check '${step.name}' failed (exit ${code})`,
+						raw: null,
+					});
 					fail(code);
 					extrasStopped = true;
 				}
@@ -237,6 +248,73 @@ export function check(
 	}
 
 	return { ok: true, groups, notes, exitCode };
+}
+
+// Caps for a crashed tool's raw-output tail: the LAST ~40 lines AND ~4KB (both
+// applied, so the tail satisfies whichever is SMALLER). Enough to carry a
+// startup/config stack trace, bounded so a runaway dump stays token-lean.
+const RAW_TAIL_MAX_LINES = 40;
+const RAW_TAIL_MAX_BYTES = 4096;
+
+// The raw-output tail for a step that exited nonzero with ZERO parsed findings — a
+// crashed tool (a startup/config error, not lint findings). Prefer stderr (where
+// tools print crash diagnostics), falling back to stdout when stderr is blank.
+// Capped to the last ~40 lines then ~4KB (whichever is smaller); null when the
+// child produced no output at all.
+function rawOutputTail(result: RunResult): string | null {
+	const source = result.stderr.trim() !== "" ? result.stderr : result.stdout;
+	let tail = source.trimEnd();
+	if (tail === "") {
+		return null;
+	}
+	const lines = tail.split("\n");
+	if (lines.length > RAW_TAIL_MAX_LINES) {
+		tail = lines.slice(-RAW_TAIL_MAX_LINES).join("\n");
+	}
+	if (tail.length > RAW_TAIL_MAX_BYTES) {
+		tail = tail.slice(-RAW_TAIL_MAX_BYTES);
+	}
+	return tail;
+}
+
+// Build the note for a findingless nonzero step exit: `<tool>: failed (exit N)`
+// plus the crashed tool's raw-output tail as data (run.ts renders the tail under
+// the note line).
+function crashNote(
+	tool: string,
+	exitCode: number,
+	result: RunResult,
+): CheckNote {
+	return {
+		text: `${tool}: failed (exit ${exitCode})`,
+		raw: rawOutputTail(result),
+	};
+}
+
+// Fold a findings-tool step (biome/tsc) into the gate and return the exit code to
+// aggregate via fail():
+//   - findings present  -> fail 1 (as today; findings ARE the diagnostic, no tail).
+//   - ZERO findings but a nonzero exit -> the CRASHED-tool case: push a labeled
+//     raw-output tail note and fail with the tool's real exit code, so a
+//     startup/config crash that emitted no parseable findings stays diagnosable.
+//   - a clean exit -> 0 (nothing).
+// (knip is intentionally NOT routed here: its can't-start crash folds to zero
+// findings and never fails the gate — the documented tolerance invariant.)
+function findingsStepCode(
+	tool: string,
+	group: CheckGroup,
+	result: RunResult,
+	notes: CheckNote[],
+): number {
+	if (group.findings.length > 0) {
+		return 1;
+	}
+	if (result.status !== 0) {
+		const code = result.status ?? 1;
+		notes.push(crashNote(tool, code, result));
+		return code;
+	}
+	return 0;
 }
 
 // The file extensions biome supports for the edit-time hook fast path. A payload
@@ -444,7 +522,7 @@ function runBiome(
 	paths: string[],
 	biomeBin: string,
 	write = false,
-): { group: CheckGroup } | { error: string } {
+): { group: CheckGroup; result: RunResult } | { error: string } {
 	const args = write
 		? [biomeBin, "check", "--write", "--reporter=json", ...paths]
 		: [biomeBin, "check", "--reporter=json", ...paths];
@@ -474,7 +552,7 @@ function runBiome(
 			message: collapse(diagnostic.message ?? ""),
 		});
 	}
-	return { group: { tool: "biome", findings } };
+	return { group: { tool: "biome", findings }, result };
 }
 
 // tsc --pretty false emits one diagnostic per line: `path(line,col): error TSxxxx: message`.
@@ -487,7 +565,7 @@ const TSC_DIAGNOSTIC = /^(.+?)\((\d+),\d+\):\s+error\s+TS\d+:\s+(.*)$/;
 function runTsc(
 	root: string,
 	tscBin: string,
-): { group: CheckGroup } | { error: string } {
+): { group: CheckGroup; result: RunResult } | { error: string } {
 	const result = runCapture(
 		process.execPath,
 		[tscBin, "--noEmit", "--pretty", "false"],
@@ -511,7 +589,7 @@ function runTsc(
 			message: collapse(match[3] ?? ""),
 		});
 	}
-	return { group: { tool: "tsc", findings } };
+	return { group: { tool: "tsc", findings }, result };
 }
 
 // One knip issue group (JSON reporter): a `file` plus per-category arrays of
@@ -595,22 +673,28 @@ function knipItem(item: unknown): { label: string; line: number } {
 
 // Run the capability-gated build step: `vite build` via the CONSUMER's OWN vite
 // binary (never dobby's). A clean build is silent (note null); a nonzero exit
-// yields a concise note and propagates the exit code. A missing consumer bin
-// (capability present but not installed) degrades to a note without failing the
-// gate — `dobby up` is the fix (it runs the install), not a gate failure. NOT run
-// in tests (the fixtures carry no vite); the verifier's live recipe covers the run path.
-function runBuild(root: string): { note: string | null; exitCode: number } {
+// yields a failure note carrying the crashed tool's raw-output tail (build never
+// produces parsed findings, so ANY nonzero exit is the findingless-failure case —
+// the tail is what makes a vite startup/config crash diagnosable) and propagates
+// the exit code. A missing consumer bin (capability present but not installed)
+// degrades to a note without failing the gate — `dobby up` is the fix (it runs the
+// install), not a gate failure. NOT run in the real-tool suite except via the
+// broken-bin fixture; the verifier's live recipe covers the real run path.
+function runBuild(root: string): { note: CheckNote | null; exitCode: number } {
 	const bin = resolveConsumerBin(root, "vite", "vite");
 	if (bin === null) {
 		return {
-			note: "build: skipped (consumer vite binary not found — run dobby up)",
+			note: {
+				text: "build: skipped (consumer vite binary not found — run dobby up)",
+				raw: null,
+			},
 			exitCode: 0,
 		};
 	}
 	const result = runCapture(process.execPath, [bin, "build"], { root });
 	const exitCode = result.error ? 1 : (result.status ?? 1);
 	return {
-		note: exitCode === 0 ? null : `build: failed (exit ${exitCode})`,
+		note: exitCode === 0 ? null : crashNote("build", exitCode, result),
 		exitCode,
 	};
 }
@@ -628,11 +712,14 @@ function runBuild(root: string): { note: string | null; exitCode: number } {
 // resolver invariant) — via a cheap `node --version` probe. When the fallback
 // runtime is used and vitest fails, the note names the runtime so a bun-runtime
 // failure is diagnosable rather than looking like a genuine test failure.
-function runTest(root: string): { note: string | null; exitCode: number } {
+function runTest(root: string): { note: CheckNote | null; exitCode: number } {
 	const bin = resolveConsumerBin(root, "vitest", "vitest");
 	if (bin === null) {
 		return {
-			note: "test: skipped (consumer vitest binary not found — run dobby up)",
+			note: {
+				text: "test: skipped (consumer vitest binary not found — run dobby up)",
+				raw: null,
+			},
 			exitCode: 0,
 		};
 	}
@@ -644,12 +731,16 @@ function runTest(root: string): { note: string | null; exitCode: number } {
 	if (exitCode === 0) {
 		return { note: null, exitCode };
 	}
-	// Fallback runtime (no node found): name it so a bun-runtime failure (e.g. a
-	// mis-resolved dual export map) is diagnosable, not mistaken for a real failure.
-	const note = isNode
+	// vitest yields NO parsed findings here (we don't reduce its JSON — the exit
+	// code is the signal), so ANY nonzero exit is the findingless-failure case:
+	// carry the crashed tool's raw-output tail so a startup/config crash is
+	// diagnosable (the field bug: `test: failed (exit 1)` with no other output).
+	// Fallback runtime (no node found): name it too, so a bun-runtime failure (e.g.
+	// a mis-resolved dual export map) is distinguishable from a real test failure.
+	const text = isNode
 		? `test: failed (exit ${exitCode})`
 		: `test: failed (exit ${exitCode}) — ran under ${runtime} (no node found; vitest under this runtime can mis-resolve some deps)`;
-	return { note, exitCode };
+	return { note: { text, raw: rawOutputTail(result) }, exitCode };
 }
 
 // Pick the runtime for the vitest step: prefer NODE (a cheap `node --version`

@@ -270,11 +270,13 @@ export function spawnDetached(
  * Spawn a BACKGROUND child that OUTLIVES dobby: DETACHED (its own process group),
  * cwd pinned to opts.root, stdio redirected to `logPath` (append), and `unref`d so
  * the parent can exit while the child keeps running. Returns the child's pid (the
- * caller writes it to a pidfile so a later `down` can signal the group) or undefined
- * when the spawn failed. The non-supervised counterpart to `spawnDetached`: `up`'s
- * plain-terminal start (`dobby dev` with no cmux to own it) hands the process to the
- * OS and walks away — the pidfile + log are the only handles. node:child_process
- * `spawn` (never Bun.spawn).
+ * caller writes it to a pidfile so a later `down` can signal the group), or undefined
+ * when the background start FAILED — it NEVER throws: any synchronous failure (opening
+ * the log with openSync, or spawn itself) is caught and folded into undefined so the
+ * caller (`up`) fails fast instead of crashing raw. The non-supervised counterpart to
+ * `spawnDetached`: `up`'s plain-terminal start (`dobby dev` with no cmux to own it)
+ * hands the process to the OS and walks away — the pidfile + log are the only handles.
+ * node:child_process `spawn` (never Bun.spawn).
  *
  * @public — consumed by the `up` detached-start path in `lifecycle.ts`.
  */
@@ -283,8 +285,11 @@ export function spawnBackground(
 	args: string[],
 	opts: { root: string; logPath: string },
 ): number | undefined {
-	const out = openSync(opts.logPath, "a");
+	// openSync lives INSIDE the try so a throw (bad logPath, permission) is caught too;
+	// `out` stays undefined until it opens, so the finally only closes a real descriptor.
+	let out: number | undefined;
 	try {
+		out = openSync(opts.logPath, "a");
 		const child = spawn(cmd, args, {
 			cwd: opts.root,
 			detached: true,
@@ -292,8 +297,15 @@ export function spawnBackground(
 		});
 		child.unref();
 		return child.pid;
+	} catch {
+		// openSync or spawn threw synchronously — the background start failed. Never let
+		// it propagate: undefined routes the caller onto its fail-fast path.
+		return undefined;
 	} finally {
 		// The child dup'd its own descriptor for the log; the parent's is done with.
-		closeSync(out);
+		// Close it on BOTH the success and the throw path (only if it ever opened).
+		if (out !== undefined) {
+			closeSync(out);
+		}
 	}
 }

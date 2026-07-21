@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import pkg from "../package.json";
-import { type CheckGroup, check, checkHook } from "./check.ts";
+import { type CheckGroup, type CheckNote, check, checkHook } from "./check.ts";
 import { detectCapabilities } from "./detect.ts";
 import { collectEnv, type EnvSnapshot } from "./envinfo.ts";
 import {
@@ -481,9 +481,10 @@ const FINDING_CAP = 50;
 // Render a check run as token-lean text: one `file:line message` line per
 // finding, grouped and labelled per tool, each group capped — then the step
 // notes (capability skips, build/test/extra failures), each its OWN single line
-// (so a skip note is scannable as one line). An empty run (no findings, no notes)
-// prints a single "No findings." line.
-function formatCheck(groups: CheckGroup[], notes: string[]): string {
+// (so a skip note is scannable as one line). A findingless nonzero step exit
+// (a crashed tool) renders its raw-output tail under the note line. An empty run
+// (no findings, no notes) prints a single "No findings." line.
+function formatCheck(groups: CheckGroup[], notes: CheckNote[]): string {
 	const blocks: string[] = [];
 	for (const group of groups) {
 		if (group.findings.length === 0) {
@@ -503,7 +504,22 @@ function formatCheck(groups: CheckGroup[], notes: string[]): string {
 		blocks.push(lines.join("\n"));
 	}
 	for (const note of notes) {
-		blocks.push(note);
+		blocks.push(renderNote(note));
 	}
 	return blocks.length === 0 ? "No findings.\n" : `${blocks.join("\n\n")}\n`;
+}
+
+// A step note as one block: the note line, then — when the step CRASHED (a
+// findingless nonzero exit) — a clearly-labeled, indented tail of the tool's raw
+// output beneath it (the diagnosability fix; the tail is already capped by
+// check.ts). An ordinary note (skip / findings-backed failure) is just its line.
+function renderNote(note: CheckNote): string {
+	if (note.raw === null) {
+		return note.text;
+	}
+	const body = note.raw
+		.split("\n")
+		.map((line) => `    ${line}`.trimEnd())
+		.join("\n");
+	return `${note.text}\n  raw output (tail):\n${body}`;
 }
