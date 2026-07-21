@@ -715,9 +715,11 @@ describe("run() — env command (devUrl resolution)", () => {
 		expect(capsSet(result.stdout)).toContain("vite");
 		expect(env.devUrl).not.toBe("null");
 		// The resolved URL carries the project name (`portless get <name>`, name =
-		// the package.json name `scratch-vite`) and is an https URL.
+		// the package.json name `scratch-vite`). The protocol is the MACHINE's
+		// portless CA state (https after `portless trust`, plain http on a fresh
+		// runner/CI) — dobby's contract is resolution, not the scheme.
 		expect(env.devUrl).toContain("scratch-vite");
-		expect(env.devUrl).toMatch(/^https:\/\//);
+		expect(env.devUrl).toMatch(/^https?:\/\//);
 	}, 20000);
 
 	it("reports devUrl as null for a project WITHOUT the vite capability (resolution never attempted)", async () => {
