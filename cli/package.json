@@ -8,7 +8,8 @@
 	"exports": {
 		"./tsconfig": "./tsconfig.base.json",
 		"./biome/core": "./biome/core.jsonc",
-		"./biome/react": "./biome/react.jsonc"
+		"./biome/react": "./biome/react.jsonc",
+		"./vitest": "./vitest.base.ts"
 	},
 	"dependencies": {
 		"@biomejs/biome": "^2.5.4",

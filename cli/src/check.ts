@@ -618,6 +618,16 @@ function runBuild(root: string): { note: string | null; exitCode: number } {
 // Run the capability-gated test step: `vitest run --reporter=json` via the
 // CONSUMER's OWN vitest binary. Same silent-on-pass / note-on-fail / degrade-on-
 // missing-bin contract as runBuild. NOT run in tests (fixtures carry no vitest).
+//
+// The vitest step runs under NODE when a usable node is on the machine, falling
+// back to the CURRENT runtime (`process.execPath`) otherwise. Rationale: under
+// `bunx dobby`, `process.execPath` is BUN, and vitest-under-bun's module runner
+// mis-resolves some deps' dual export maps (field bug: zod v4's `z.enum` →
+// undefined, 65/202 spurious failures), making the gate non-deterministic by
+// invocation. node is a SYSTEM tool — spawned BARE, never resolveBin'd (the
+// resolver invariant) — via a cheap `node --version` probe. When the fallback
+// runtime is used and vitest fails, the note names the runtime so a bun-runtime
+// failure is diagnosable rather than looking like a genuine test failure.
 function runTest(root: string): { note: string | null; exitCode: number } {
 	const bin = resolveConsumerBin(root, "vitest", "vitest");
 	if (bin === null) {
@@ -626,14 +636,36 @@ function runTest(root: string): { note: string | null; exitCode: number } {
 			exitCode: 0,
 		};
 	}
-	const result = runCapture(process.execPath, [bin, "run", "--reporter=json"], {
+	const { runtime, isNode } = resolveTestRuntime(root);
+	const result = runCapture(runtime, [bin, "run", "--reporter=json"], {
 		root,
 	});
 	const exitCode = result.error ? 1 : (result.status ?? 1);
-	return {
-		note: exitCode === 0 ? null : `test: failed (exit ${exitCode})`,
-		exitCode,
-	};
+	if (exitCode === 0) {
+		return { note: null, exitCode };
+	}
+	// Fallback runtime (no node found): name it so a bun-runtime failure (e.g. a
+	// mis-resolved dual export map) is diagnosable, not mistaken for a real failure.
+	const note = isNode
+		? `test: failed (exit ${exitCode})`
+		: `test: failed (exit ${exitCode}) — ran under ${runtime} (no node found; vitest under this runtime can mis-resolve some deps)`;
+	return { note, exitCode };
+}
+
+// Pick the runtime for the vitest step: prefer NODE (a cheap `node --version`
+// probe — node stays BARE, a system tool, never resolveBin'd), falling back to
+// the current runtime (`process.execPath`). Probed once per check run (runTest
+// runs at most once). Returns the spawnable runtime plus whether node was chosen,
+// so the failure path can annotate a non-node run.
+function resolveTestRuntime(root: string): {
+	runtime: string;
+	isNode: boolean;
+} {
+	const probe = runCapture("node", ["--version"], { root });
+	if (!(probe.error || probe.status !== 0)) {
+		return { runtime: "node", isNode: true };
+	}
+	return { runtime: process.execPath, isNode: false };
 }
 
 // Run one config `checks[]` extra as a shell command, cwd pinned to the workroot

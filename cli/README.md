@@ -37,6 +37,23 @@ The exported presets:
 | `@kvnwolf/dobby/tsconfig` | The strict bundler TypeScript base (`strict`, `noUncheckedIndexedAccess`, `noEmit`, `module: preserve`, `moduleResolution: bundler`, …). |
 | `@kvnwolf/dobby/biome/core` | Biome preset extending `ultracite/biome/core` (framework-agnostic). |
 | `@kvnwolf/dobby/biome/react` | Biome preset extending both `ultracite/biome/core` and `ultracite/biome/react`. |
+| `@kvnwolf/dobby/vitest` | The universal Vitest base — inlines `zod` (so vitest-under-bun can't mangle its export map) and excludes `.claude/**`. A default-exported config you merge your app-specific bits onto. |
+
+The Vitest preset is a config object, so you merge your project's plugins/env on top rather than `extends`-ing it:
+
+`vitest.config.ts`
+
+```ts
+import { defineConfig, mergeConfig } from "vitest/config";
+import dobbyVitest from "@kvnwolf/dobby/vitest";
+
+export default mergeConfig(
+  dobbyVitest,
+  defineConfig({
+    // your app-specific plugins / test.env / resolve go here
+  }),
+);
+```
 
 ## Commands
 
@@ -73,6 +90,8 @@ dobby check --hook             # edit-time PostToolUse mode (payload on stdin)
 
 `--hook` reads a PostToolUse payload from stdin, applies biome's safe auto-fixes to the edited file in place, and surfaces only unfixable findings (exit 2, findings on stderr). This is what the plugin's edit hook invokes.
 
+The **test step runs your vitest under `node`** whenever a usable `node` is on the machine (falling back to the current runtime otherwise), so a `bunx dobby check` doesn't run your suite under bun — bun's module runner can mis-resolve some dependencies' export maps (e.g. `zod`), which the [`@kvnwolf/dobby/vitest`](#thin-config) preset also guards against by inlining `zod`. Only the vitest spawn is affected; a failure under the fallback runtime is annotated with the runtime it used.
+
 ### `dobby dev`
 
 Run the app: the `vite dev` server wrapped in `portless run`, plus concurrent secondaries (`email dev --dir src/emails` for a react-email project). Listed only for a repo with the vite capability.
@@ -84,7 +103,7 @@ dobby dev --dry-run       # print the resolved plan without spawning
 
 ### `dobby up` / `dobby down`
 
-**`dobby up` is the single lifecycle entry point — it prepares and runs the workspace, idempotently.** It runs a **setup phase** first — `bun install`, then (in a linked git worktree) re-materializing files listed in `.worktreeinclude` from the main checkout, then any `setup[]` extras (fail-fast) — and only once that succeeds does it **run** the app: provisioning an isolated Neon branch when the repo has the neon capability, starting the run (cmux panes or a detached background run), and waiting for liveness. Because the run is liveness-first, re-running `up` on an already-live workspace is a no-op — idempotent. A repo with no app to run (no vite capability) still runs the full setup phase, then reports `no app to run` and exits 0.
+**`dobby up` is the single lifecycle entry point — it prepares and runs the workspace, idempotently.** It runs a **setup phase** first — `bun install`, then (in a linked git worktree) re-materializing files listed in `.worktreeinclude` from the main checkout, then any `setup[]` extras (fail-fast) — and only once that succeeds does it **run** the app: provisioning an isolated Neon branch when the repo has the neon capability, starting the run (cmux panes or a detached background run), and waiting for liveness. Under cmux, `up` also renames the **cmux workspace** to the goal slug (the workspace title becomes the goal identity, distinct from the `dobby-`prefixed pane names) so you can tell at a glance which workspace belongs to which goal — this happens whenever cmux is present, even for a repo with no app to run. Because the run is liveness-first, re-running `up` on an already-live workspace is a no-op — idempotent. A repo with no app to run (no vite capability) still runs the full setup phase, then reports `no app to run` and exits 0.
 
 `dobby down` is the counterpart teardown: it closes the panes, kills the run, deletes the Neon branch, and runs `teardown[]` extras. Both are listed only for a repo with the vite capability.
 

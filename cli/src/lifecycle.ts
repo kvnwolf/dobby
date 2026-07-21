@@ -688,13 +688,21 @@ export type UpAction =
 	| { kind: "wait"; url: string | null; retries: number; intervalSec: number };
 
 // The ordered `up` plan for `--dry-run`: the workroot it is pinned to, its slug,
-// the SETUP-PHASE actions (install → copies → extras) that run first, the run-phase
-// `actions` in execution order (probe → neon → start → wait), and `runSkipped` — the
-// reason the run phase is skipped (e.g. 'no app to run') or null when it runs.
+// the SETUP-PHASE actions (install → copies → extras) that run first, the cmux
+// WORKSPACE rename (present only under cmux, INDEPENDENT of the app gate), the
+// run-phase `actions` in execution order (probe → neon → start → wait), and
+// `runSkipped` — the reason the run phase is skipped (e.g. 'no app to run') or null
+// when it runs.
 export interface UpPlan {
 	workroot: string;
 	slug: string;
 	setup: SetupAction[];
+	// The cmux workspace rename — present ONLY under cmux (null otherwise). Renames the
+	// workspace to the plain goal SLUG (no dobby- prefix — the panes carry that; the
+	// workspace title IS the goal identity) so the user can tell which workspace is
+	// which at a glance. Runs after the setup phase and BEFORE the no-app gate, so a
+	// no-app project still gets its workspace renamed.
+	renameWorkspace: { workspace: string; title: string } | null;
 	actions: UpAction[];
 	runSkipped: string | null;
 }
@@ -760,10 +768,16 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
 	const capabilities = detectCapabilities(cwd);
 	const hasApp = capabilities.includes("vite");
 	const slug = basename(workroot);
+	// The cmux workspace rename — present ONLY under cmux, resolved ONCE (independent
+	// of the app gate) so it appears in the plan and runs whether or not there is an app.
+	const cmux = process.env.CMUX_WORKSPACE_ID || null;
+	const renameWorkspace =
+		cmux === null ? null : { workspace: cmux, title: slug };
 
 	if (opts.dryRun) {
 		// No app → the run phase is skipped, but the FULL plan still shows the setup
-		// phase and names the skip reason (spec's --dry-run contract).
+		// phase, the cmux workspace rename (when present), and names the skip reason
+		// (spec's --dry-run contract).
 		if (!hasApp) {
 			return {
 				ok: true,
@@ -772,6 +786,7 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
 					workroot,
 					slug,
 					setup: setupPlan,
+					renameWorkspace,
 					actions: [],
 					runSkipped: "no app to run",
 				},
@@ -788,6 +803,7 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
 				workroot,
 				slug,
 				setup: setupPlan,
+				renameWorkspace,
 				actions: buildUpActions(resolved.context),
 				runSkipped: null,
 			},
@@ -804,6 +820,13 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
 			exitCode: setupOutcome.exitCode,
 			failure: setupOutcome.failure,
 		};
+	}
+
+	// (1b) Rename the cmux WORKSPACE to the goal slug — WHENEVER cmux is present, after
+	// the setup phase and BEFORE the no-app gate, so a no-app project's workspace is
+	// still renamed. Idempotent by nature (re-running `up` re-renames to the same title).
+	if (cmux !== null) {
+		renameCmuxWorkspace(workroot, cmux, slug);
 	}
 
 	// (2) The no-app gate — the graceful no-op, reached only after the setup phase.
@@ -1081,6 +1104,25 @@ function togglePooler(uri: string, pooled: boolean): string {
 	} catch {
 		return uri;
 	}
+}
+
+// ---------------------------------------------------------------------------
+// cmux workspace rename (up) — the workspace title IS the goal identity.
+// ---------------------------------------------------------------------------
+
+// Rename the cmux WORKSPACE to the plain goal `title` (the slug) so the user can tell
+// which workspace belongs to which goal at a glance. Workspace-scoped like the pane
+// commands, so `--workspace` is passed explicitly (matching createPanes' new-pane /
+// list-panes style). Idempotent by nature (re-running re-renames to the same title).
+// Best-effort — a cmux failure never blocks the run. NOT CI-tested.
+function renameCmuxWorkspace(
+	workroot: string,
+	cmux: string,
+	title: string,
+): void {
+	runCapture("cmux", ["rename-workspace", "--workspace", cmux, title], {
+		root: workroot,
+	});
 }
 
 // ---------------------------------------------------------------------------

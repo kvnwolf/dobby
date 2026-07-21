@@ -951,6 +951,10 @@ describe("dobby presets — package.json exports", () => {
 		);
 	});
 
+	it("maps ./vitest to ./vitest.base.ts", () => {
+		expect(readCliManifest().exports?.["./vitest"]).toBe("./vitest.base.ts");
+	});
+
 	it("keeps the existing dobby bin entry intact", () => {
 		expect(readCliManifest().bin?.dobby).toBe("./src/index.ts");
 	});
@@ -1025,6 +1029,52 @@ describe("dobby preset — biome/react.jsonc", () => {
 		expect(raw).toMatch(/"\.\/core\.jsonc"/);
 		expect(raw).toMatch(/"ultracite\/biome\/react"/);
 		expect(safeRead("biome/core.jsonc")).toMatch(/"ultracite\/biome\/core"/);
+	});
+});
+
+// --- vitest preset — the universal test wiring consumers merge on top ---------
+// The default-exported config asset (@kvnwolf/dobby/vitest) carries the two
+// ingredients every consumer was re-deriving by hand: inline zod (so vitest-under-
+// bun's module runner can't mangle its dual export map) and a `.claude/**` exclude
+// (so full worktree copies aren't double-discovered). Asserted by FILE READ — same
+// as the biome/tsconfig presets (config assets are read, not imported: the `run()`
+// seam is for the CLI's behavior, and a defineConfig() return is a typed union that
+// resists a clean direct-import shape assertion). The mergeConfig pointer is a spec
+// literal in the file's own header comment.
+describe("dobby preset — vitest.base.ts", () => {
+	it("exists as an exported preset file", () => {
+		expect(existsSync(cliFile("vitest.base.ts"))).toBe(true);
+	});
+
+	it("is built with vitest's own defineConfig (a mergeable base, not a bespoke object)", () => {
+		const raw = safeRead("vitest.base.ts");
+		expect(raw).toMatch(/from\s+"vitest\/config"/);
+		expect(raw).toMatch(/defineConfig/);
+		// Default export so consumers `import dobbyVitest from "@kvnwolf/dobby/vitest"`.
+		expect(raw).toMatch(/export\s+default\s+defineConfig/);
+	});
+
+	it("inlines zod (server.deps.inline) so vitest-under-bun can't mangle its export map", () => {
+		const raw = safeRead("vitest.base.ts");
+		expect(raw).toMatch(/inline/);
+		expect(raw).toMatch(/"zod"/);
+	});
+
+	it("excludes .claude/** on top of vitest's own defaults (no double-discovery)", () => {
+		const raw = safeRead("vitest.base.ts");
+		expect(raw).toMatch(/configDefaults\.exclude/);
+		expect(raw).toMatch(/"\.claude\/\*\*"/);
+	});
+
+	it("points consumers at mergeConfig in its header (the documented merge-on shape)", () => {
+		expect(safeRead("vitest.base.ts")).toMatch(/mergeConfig/);
+	});
+
+	it("never adds vitest as a dobby dependency (dual-Vite invariant)", () => {
+		// vitest resolves from the CONSUMER's tree at config-load time; bundling a
+		// second copy in dobby would clash with the consumer's Vite plugins.
+		const deps = readCliManifest().dependencies ?? {};
+		expect(deps.vitest).toBeUndefined();
 	});
 });
 
@@ -2475,6 +2525,30 @@ describe("run() — up command (no app capability: graceful no-op)", () => {
 		// ...and the run phase is skipped, with the reason named.
 		expect(combined(result)).toMatch(/no app to run/i);
 	}, 20000);
+
+	it("still renames the cmux workspace for a no-app project (rename is INDEPENDENT of the app gate)", async () => {
+		// The workspace rename happens WHENEVER cmux is present — a no-app project
+		// (setup phase then 'no app to run') still gets its workspace renamed. Set cmux
+		// for THIS test only (beforeEach cleared it; afterAll restores the original).
+		process.env[CMUX] = "cmux-ws-noapp";
+		const repo = makeLifecycleRepo(dirs, {
+			pkg: {
+				name: "life-noapp3",
+				private: true,
+				dependencies: { "drizzle-orm": "^0.30.0" },
+			},
+		});
+		const slug = basename(repo);
+		const result = await run(["up", "--dry-run"], repo);
+		expect(result.exitCode).toBe(0);
+		// The rename line is present (plain slug title) even though the run phase is
+		// skipped...
+		expect(result.stdout).toContain(
+			`cmux rename-workspace --workspace cmux-ws-noapp "${slug}"`,
+		);
+		// ...proving the rename is NOT gated on the app: 'no app to run' still fires.
+		expect(combined(result)).toMatch(/no app to run/i);
+	}, 20000);
 });
 
 // --- Slice U2: `up` fails hard outside a git repo ------------------------------
@@ -2578,6 +2652,25 @@ describe("run() — up command (cmux present: positional pane layout plan)", () 
 		expect(sendLine).toContain(`cd ${repo}`);
 		expect(sendLine).toContain("dobby dev");
 	}, 20000);
+
+	it("renames the cmux WORKSPACE to the plain goal slug (workspace context passed explicitly)", async () => {
+		const result = await run(["up", "--dry-run"], repo);
+		// The workspace title IS the goal identity: the PLAIN slug (no dobby- prefix —
+		// that prefix is carried by the PANE names). The workspace context is passed
+		// explicitly (--workspace cmux-ws-up, matching the new-pane / list-panes style).
+		// Independent: slug = basename of the temp dir WE created; cmux id = the value
+		// beforeEach injected.
+		expect(result.stdout).toContain(
+			`cmux rename-workspace --workspace cmux-ws-up "${slug}"`,
+		);
+		// The rename is distinct from the PANE renames — its title is the bare slug, not
+		// the dobby-browser-/dobby-run- pane forms.
+		const renameLine = result.stdout
+			.split("\n")
+			.find((l) => l.includes("rename-workspace"));
+		expect(renameLine).not.toContain(`dobby-browser-${slug}`);
+		expect(renameLine).not.toContain(`dobby-run-${slug}`);
+	}, 20000);
 });
 
 // --- Slice U4: NO cmux -> detached run + pidfile/log plan (the discriminator) ----
@@ -2622,6 +2715,15 @@ describe("run() — up command (no cmux: detached run + pidfile plan)", () => {
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("dobby dev");
 		expect(result.stdout).not.toContain("cmux new-pane");
+	}, 20000);
+
+	it("plans NO cmux workspace rename without a cmux workspace", async () => {
+		const result = await run(["up", "--dry-run"], repo);
+		// Positive anchor (a real detached plan IS produced) so the negative is not
+		// vacuously true: with cmux unset there is no workspace to rename.
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("dobby dev");
+		expect(result.stdout).not.toContain("rename-workspace");
 	}, 20000);
 });
 

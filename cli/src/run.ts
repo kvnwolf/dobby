@@ -379,7 +379,8 @@ const BROWSER_SURFACE = "<browser-surface>";
 const RUN_SURFACE = "<run-surface>";
 
 // Render the FULL `up` plan for `--dry-run`: the SETUP PHASE first (install → copies
-// → extras, mirroring the folded former setup plan), THEN the run phase in execution
+// → extras, mirroring the folded former setup plan), THEN the cmux WORKSPACE rename
+// (when under cmux — independent of the app gate), THEN the run phase in execution
 // order (probe → neon branch → cmux panes XOR detached run → liveness wait), OR — when
 // the run phase is skipped — the skip reason line ('no app to run'). The cmux pane
 // block renders the exact positional layout (browser `--direction right`, run terminal
@@ -388,6 +389,11 @@ function formatUpPlan(plan: UpPlan): string {
 	const lines: string[] = [];
 	for (const action of plan.setup) {
 		lines.push(`  ${describeSetupAction(action)}`);
+	}
+	if (plan.renameWorkspace !== null) {
+		lines.push(
+			`  cmux rename-workspace --workspace ${plan.renameWorkspace.workspace} "${plan.renameWorkspace.title}"`,
+		);
 	}
 	for (const action of plan.actions) {
 		for (const line of describeUpAction(action)) {
