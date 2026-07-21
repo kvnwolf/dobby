@@ -5,48 +5,42 @@ set -euo pipefail
 #
 # Lives inside the dobby worktree, so running a given worktree's copy links that
 # worktree — different target repos can point at different dobby worktrees at
-# the same time (the global `bun link` registry is keyed by package name, so it
-# can't do this; a path-based `file:` dependency can).
+# the same time.
+#
+# MECHANISM: a bun pm pack TARBALL with a unique per-build filename, installed
+# via `bun add -d @kvnwolf/dobby@file:<stamped .tgz>`. Lab-verified (2026-07)
+# as the ONLY local-consumption path that satisfies all four constraints:
+#   - installs at main AND git worktrees (absolute tarball path in the lockfile;
+#     the file:<dir> form hit bun's cache race there — bun issue #28062);
+#   - the .mjs/.jsonc presets resolve peer-deps from the CONSUMER's tree
+#     (file:<dir> installs symlink each file back to dobby's dep-less source
+#     tree, breaking @kvnwolf/dobby/{vite,vitest/react,drizzle}; so do hand
+#     symlinks and bun link);
+#   - cheap refresh: a NEW filename per pack = new cache key + new integrity
+#     (a same-name repack serves bun's STALE cache, or IntegrityCheckFailed);
+#   - several worktrees consumable simultaneously (slug-stamped tarballs).
 #
 # Run FROM the target project's root:
 #   <dobby-worktree>/scripts/dev-link.sh            # link this worktree + disable the global plugin
-#   <dobby-worktree>/scripts/dev-link.sh --refresh  # re-copy the CLI after worktree edits (no claude launch)
+#   <dobby-worktree>/scripts/dev-link.sh --refresh  # repack + repoint after worktree edits (no claude launch)
 #   <dobby-worktree>/scripts/dev-link.sh --undo     # restore the npm version + re-enable the plugin
 #
-# Refreshing WITHOUT leaving the claude session also works — run in its Bash:
-#   rm -rf node_modules/@kvnwolf/dobby && bun install
-# (each `bunx dobby` spawns fresh, so the new copy applies immediately; skills
-# hot-reload on their own via --plugin-dir; agents/hooks need /reload-plugins.)
+# Refreshing WITHOUT leaving the claude session also works — run --refresh in
+# its Bash tool (each `bunx dobby` spawns fresh, so the new copy applies
+# immediately; skills hot-reload on their own via --plugin-dir; agents/hooks
+# need /reload-plugins).
 #
-# What it does:
-#   1. .claude/settings.local.json — disable the user-scope `dobby@dobby` plugin
-#      (it collides with --plugin-dir).
-#   2. package.json — devDependency `@kvnwolf/dobby` → `file:<this-worktree>/cli`.
-#      Bun COPIES a file: dep (its `link:` protocol only resolves the name-keyed
-#      global registry, verified 2026-07 — no path symlinks), so the spec survives
-#      `bun install` (incl. `dobby up`'s setup phase) but CLI edits in the worktree
-#      need a RE-RUN of this script to re-copy (~fast). Skills need no re-run:
-#      --plugin-dir reads the worktree live.
-#   3. `bun install` (dobby's bundled toolchain lands in the target, like a real
-#      npm install), then print the `claude --plugin-dir` command.
-#
-# package.json + lockfile stay dirty ON PURPOSE while testing — run --undo before committing.
+# package.json/lockfile stay dirty ON PURPOSE while testing — run --undo before committing.
 
 WORKTREE="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="$PWD"
+SLUG="$(basename "$WORKTREE")"
+TDIR="/tmp/dobby-tarballs"
 
 [ -f "$TARGET/package.json" ] || { echo "error: no package.json here — run from the target project's root" >&2; exit 1; }
 [ "$TARGET" != "$WORKTREE" ] || { echo "error: target IS the dobby worktree — run from a consumer project" >&2; exit 1; }
 
 SETTINGS="$TARGET/.claude/settings.local.json"
-
-if [ "${1:-}" = "--refresh" ]; then
-	grep -q '"@kvnwolf/dobby": "file:' package.json || { echo "error: not linked (run without flags first)" >&2; exit 1; }
-	rm -rf node_modules/@kvnwolf/dobby
-	bun install
-	echo "refreshed: @kvnwolf/dobby $(./node_modules/.bin/dobby --version 2>/dev/null || echo '(bin not resolving!)')"
-	exit 0
-fi
 
 if [ "${1:-}" = "--undo" ]; then
 	# Re-enable the global plugin (drop the override; empty enabledPlugins is dropped too).
@@ -67,6 +61,25 @@ if [ "${1:-}" = "--undo" ]; then
 	exit 0
 fi
 
+# Pack this worktree's cli into a slug+timestamp-stamped tarball (a unique name
+# per build — bun caches tarballs by path+integrity, so reusing a name serves
+# stale content). Old stamps for THIS slug are pruned first.
+pack() {
+	mkdir -p "$TDIR"
+	rm -f "$TDIR/kvnwolf-dobby-$SLUG-"*.tgz
+	(cd "$WORKTREE/cli" && bun pm pack --destination "$TDIR" >/dev/null)
+	TGZ="$TDIR/kvnwolf-dobby-$SLUG-$(date +%s).tgz"
+	mv "$TDIR"/kvnwolf-dobby-*.tgz "$TGZ"
+	bun add -d "@kvnwolf/dobby@file:$TGZ"
+}
+
+if [ "${1:-}" = "--refresh" ]; then
+	grep -q '"@kvnwolf/dobby"' package.json || { echo "error: not linked (run without flags first)" >&2; exit 1; }
+	pack
+	echo "refreshed: @kvnwolf/dobby $(./node_modules/.bin/dobby --version 2>/dev/null || echo '(bin not resolving!)')"
+	exit 0
+fi
+
 # 1. Disable the user-scope plugin for this project.
 mkdir -p "$TARGET/.claude"
 SETTINGS="$SETTINGS" bun -e '
@@ -77,20 +90,11 @@ SETTINGS="$SETTINGS" bun -e '
 	fs.writeFileSync(p, JSON.stringify(s, null, 2) + "\n");
 '
 
-# 2. Point the devDependency at this worktree's cli via the file: protocol.
-WORKTREE="$WORKTREE" bun -e '
-	const fs = require("fs");
-	const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-	pkg.devDependencies = { ...pkg.devDependencies, "@kvnwolf/dobby": `file:${process.env.WORKTREE}/cli` };
-	fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
-'
-
-# 3. Materialize the copy + bin (drop any stale copy first so re-runs pick up CLI edits).
-rm -rf node_modules/@kvnwolf/dobby
-bun install
+# 2+3. Pack + point the devDependency at the stamped tarball.
+pack
 
 echo ""
-echo "linked: @kvnwolf/dobby $(./node_modules/.bin/dobby --version 2>/dev/null || echo '(bin not resolving!)') -> $WORKTREE/cli"
+echo "linked: @kvnwolf/dobby $(./node_modules/.bin/dobby --version 2>/dev/null || echo '(bin not resolving!)') -> $WORKTREE (tarball)"
 echo "(package.json/lockfile are dirty on purpose — '$0 --undo' before committing)"
 echo ""
 

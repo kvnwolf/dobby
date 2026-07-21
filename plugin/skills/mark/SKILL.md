@@ -16,6 +16,8 @@ TX="$HOME/.claude/projects/$SLUG/$CLAUDE_CODE_SESSION_ID.jsonl"
 test -f "$TX" && echo "$TX" || echo "NOT FOUND: $TX"
 ```
 
+This path is correct AT EMISSION, but if the session later enters a worktree (`EnterWorktree` changes the cwd → new slug dir) the transcript MOVES there; the indicator stays valid because `/dobby:learn` recovers it by the immutable `.jsonl` uuid basename, not this slug-derived path.
+
 If it reports NOT FOUND, stop and say so — don't guess another file. (Ceiling: assumes the live session writes to its own id-named file, which is the documented layout. If Claude Code ever changes that, this breaks loudly, not silently.)
 
 ## Step 2: Enrich (best-effort, never fail the whole thing)

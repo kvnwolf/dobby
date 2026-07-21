@@ -776,6 +776,7 @@ function readCliManifest(): {
 	exports?: Record<string, unknown>;
 	bin?: Record<string, string>;
 	dependencies?: Record<string, string>;
+	files?: string[];
 } {
 	return JSON.parse(readFileSync(cliFile("package.json"), "utf8"));
 }
@@ -951,8 +952,8 @@ describe("dobby presets — package.json exports", () => {
 		);
 	});
 
-	it("maps ./vitest to ./vitest.base.ts", () => {
-		expect(readCliManifest().exports?.["./vitest"]).toBe("./vitest.base.ts");
+	it("maps ./vitest to ./vitest.base.mjs", () => {
+		expect(readCliManifest().exports?.["./vitest"]).toBe("./vitest.base.mjs");
 	});
 
 	it("keeps the existing dobby bin entry intact", () => {
@@ -1041,13 +1042,13 @@ describe("dobby preset — biome/react.jsonc", () => {
 // seam is for the CLI's behavior, and a defineConfig() return is a typed union that
 // resists a clean direct-import shape assertion). The mergeConfig pointer is a spec
 // literal in the file's own header comment.
-describe("dobby preset — vitest.base.ts", () => {
+describe("dobby preset — vitest.base.mjs", () => {
 	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("vitest.base.ts"))).toBe(true);
+		expect(existsSync(cliFile("vitest.base.mjs"))).toBe(true);
 	});
 
 	it("is built with vitest's own defineConfig (a mergeable base, not a bespoke object)", () => {
-		const raw = safeRead("vitest.base.ts");
+		const raw = safeRead("vitest.base.mjs");
 		expect(raw).toMatch(/from\s+"vitest\/config"/);
 		expect(raw).toMatch(/defineConfig/);
 		// Default export so consumers `import dobbyVitest from "@kvnwolf/dobby/vitest"`.
@@ -1055,19 +1056,19 @@ describe("dobby preset — vitest.base.ts", () => {
 	});
 
 	it("inlines zod (server.deps.inline) so vitest-under-bun can't mangle its export map", () => {
-		const raw = safeRead("vitest.base.ts");
+		const raw = safeRead("vitest.base.mjs");
 		expect(raw).toMatch(/inline/);
 		expect(raw).toMatch(/"zod"/);
 	});
 
 	it("excludes .claude/** on top of vitest's own defaults (no double-discovery)", () => {
-		const raw = safeRead("vitest.base.ts");
+		const raw = safeRead("vitest.base.mjs");
 		expect(raw).toMatch(/configDefaults\.exclude/);
 		expect(raw).toMatch(/"\.claude\/\*\*"/);
 	});
 
 	it("points consumers at mergeConfig in its header (the documented merge-on shape)", () => {
-		expect(safeRead("vitest.base.ts")).toMatch(/mergeConfig/);
+		expect(safeRead("vitest.base.mjs")).toMatch(/mergeConfig/);
 	});
 
 	it("never adds vitest as a dobby dependency (dual-Vite invariant)", () => {
@@ -1092,7 +1093,7 @@ describe("dobby preset — vitest.base.ts", () => {
 // ===========================================================================
 
 // Strip `//` line comments so a marker assertion reads the actual CONFIG, not the
-// documented consumer snippet in a file's header (vite.base.ts legitimately shows
+// documented consumer snippet in a file's header (vite.base.mjs legitimately shows
 // `plugins:` inside its header comment; the config body must NOT declare it).
 const codeOnly = (raw: string) =>
 	raw
@@ -1108,18 +1109,62 @@ describe("dobby stack presets — package.json exports", () => {
 		);
 	});
 
-	it("maps ./vite to ./vite.base.ts", () => {
-		expect(readCliManifest().exports?.["./vite"]).toBe("./vite.base.ts");
+	it("maps ./vite to ./vite.base.mjs", () => {
+		expect(readCliManifest().exports?.["./vite"]).toBe("./vite.base.mjs");
 	});
 
-	it("maps ./vitest/react to ./vitest.react.ts", () => {
+	it("maps ./vitest/react to ./vitest.react.mjs", () => {
 		expect(readCliManifest().exports?.["./vitest/react"]).toBe(
-			"./vitest.react.ts",
+			"./vitest.react.mjs",
 		);
 	});
 
-	it("maps ./drizzle to ./drizzle.base.ts", () => {
-		expect(readCliManifest().exports?.["./drizzle"]).toBe("./drizzle.base.ts");
+	it("maps ./drizzle to ./drizzle.base.mjs", () => {
+		expect(readCliManifest().exports?.["./drizzle"]).toBe("./drizzle.base.mjs");
+	});
+});
+
+// --- package.json `files` allowlist — the packed tarball ships only presets --
+// The npm/bun `files` field is an ALLOWLIST: the published tarball carries exactly
+// what a consumer needs (src minus the co-located test, the biome presets, the two
+// tsconfig presets, the four .mjs config presets) and NOTHING else — the
+// __fixtures__/ dir and src/run.test.ts must never ship. Asserted against the
+// manifest (the pack itself is verified out-of-band via `bun pm pack`). Every
+// expected entry is a spec literal.
+describe("dobby packaging — package.json files allowlist", () => {
+	it("declares a files allowlist array", () => {
+		expect(Array.isArray(readCliManifest().files)).toBe(true);
+	});
+
+	it("ships src and the biome presets", () => {
+		const files = readCliManifest().files ?? [];
+		expect(files).toContain("src");
+		expect(files).toContain("biome");
+	});
+
+	it("excludes the co-located run.test.ts via a negation entry", () => {
+		// The `!src/run.test.ts` negation keeps the test out of the tarball while
+		// still shipping the rest of src/.
+		expect(readCliManifest().files ?? []).toContain("!src/run.test.ts");
+	});
+
+	it("never lists the __fixtures__ dir (test fixtures must not ship)", () => {
+		const files = readCliManifest().files ?? [];
+		expect(files.some((entry) => entry.includes("__fixtures__"))).toBe(false);
+	});
+
+	it("ships the two tsconfig presets and the four .mjs config presets", () => {
+		const files = readCliManifest().files ?? [];
+		for (const asset of [
+			"tsconfig.base.json",
+			"tsconfig.vite.json",
+			"vite.base.mjs",
+			"vitest.base.mjs",
+			"vitest.react.mjs",
+			"drizzle.base.mjs",
+		]) {
+			expect(files, `missing packaged asset: ${asset}`).toContain(asset);
+		}
 	});
 });
 
@@ -1153,76 +1198,76 @@ describe("dobby preset — tsconfig.vite.json", () => {
 	});
 });
 
-// --- vite.base.ts — the universal vite-app config (D3) -----------------------
+// --- vite.base.mjs — the universal vite-app config (D3) -----------------------
 // The dobby-lifecycle-coupled bits (native tsconfig paths + portless's custom
 // hostnames) are preset; plugins are consumer-owned + version-coupled, so the
 // config body carries NONE.
-describe("dobby preset — vite.base.ts", () => {
+describe("dobby preset — vite.base.mjs", () => {
 	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("vite.base.ts"))).toBe(true);
+		expect(existsSync(cliFile("vite.base.mjs"))).toBe(true);
 	});
 
 	it("enables vite@8 native tsconfig path resolution (never the plugin)", () => {
-		expect(safeRead("vite.base.ts")).toMatch(/tsconfigPaths/);
+		expect(safeRead("vite.base.mjs")).toMatch(/tsconfigPaths/);
 	});
 
 	it("accepts portless's custom hostnames (server.allowedHosts)", () => {
-		expect(safeRead("vite.base.ts")).toMatch(/allowedHosts/);
+		expect(safeRead("vite.base.mjs")).toMatch(/allowedHosts/);
 	});
 
 	it("declares NO plugins in the config body (consumer-owned + version-coupled)", () => {
 		// The header comment shows `plugins:` in the merge snippet — strip comments
 		// so this reads the config object, not the docs.
-		expect(codeOnly(safeRead("vite.base.ts"))).not.toMatch(/plugins:/);
+		expect(codeOnly(safeRead("vite.base.mjs"))).not.toMatch(/plugins:/);
 	});
 });
 
-// --- vitest.react.ts — the react-app vitest variant (D4) ---------------------
+// --- vitest.react.mjs — the react-app vitest variant (D4) ---------------------
 // Layered on the base via mergeConfig; lives in its OWN file precisely because it
 // imports vite / @vitejs packages (the base must stay importable without vite).
-describe("dobby preset — vitest.react.ts", () => {
+describe("dobby preset — vitest.react.mjs", () => {
 	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("vitest.react.ts"))).toBe(true);
+		expect(existsSync(cliFile("vitest.react.mjs"))).toBe(true);
 	});
 
 	it("layers on the vitest base (imports ./vitest.base)", () => {
-		expect(safeRead("vitest.react.ts")).toMatch(/from\s+"\.\/vitest\.base/);
+		expect(safeRead("vitest.react.mjs")).toMatch(/from\s+"\.\/vitest\.base/);
 	});
 
 	it("adds the react test plugin and import-time env loading", () => {
-		const raw = safeRead("vitest.react.ts");
+		const raw = safeRead("vitest.react.mjs");
 		expect(raw).toMatch(/react\(\)/);
 		expect(raw).toMatch(/loadEnv/);
 	});
 });
 
-// --- drizzle.base.ts — the house drizzle-kit config (D5) ---------------------
+// --- drizzle.base.mjs — the house drizzle-kit config (D5) ---------------------
 // Field-proven whole; every clause is a spec literal.
-describe("dobby preset — drizzle.base.ts", () => {
+describe("dobby preset — drizzle.base.mjs", () => {
 	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("drizzle.base.ts"))).toBe(true);
+		expect(existsSync(cliFile("drizzle.base.mjs"))).toBe(true);
 	});
 
 	it("resolves the UNPOOLED URL from both house env-var names", () => {
-		const raw = safeRead("drizzle.base.ts");
+		const raw = safeRead("drizzle.base.mjs");
 		expect(raw).toMatch(/DATABASE_URL_UNPOOLED/);
 		expect(raw).toMatch(/POSTGRES_URL_NON_POOLING/);
 	});
 
 	it("targets postgresql with migrations out at ./drizzle", () => {
-		const raw = safeRead("drizzle.base.ts");
+		const raw = safeRead("drizzle.base.mjs");
 		expect(raw).toMatch(/"postgresql"/);
 		expect(raw).toMatch(/"\.\/drizzle"/);
 	});
 
 	it("globs co-located schema across modules (schema.ts + schema.gen.ts)", () => {
-		const raw = safeRead("drizzle.base.ts");
+		const raw = safeRead("drizzle.base.mjs");
 		expect(raw).toMatch(/"\.\/src\/\*\*\/schema\.ts"/);
 		expect(raw).toMatch(/"\.\/src\/\*\*\/schema\.gen\.ts"/);
 	});
 
 	it("skips the missing-URL hard-fail under CI (config loads to read schema)", () => {
-		expect(safeRead("drizzle.base.ts")).toMatch(/process\.env\.CI/);
+		expect(safeRead("drizzle.base.mjs")).toMatch(/process\.env\.CI/);
 	});
 });
 

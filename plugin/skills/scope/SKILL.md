@@ -56,9 +56,14 @@ If `dobby.config.json` exists at the repo root, run **`bunx dobby up`** from the
 
 **Bring-up failure blocks the stage** — "worktree usable or nothing." If `bunx dobby up` fails (a non-zero exit — including because `dobby` isn't installed in the repo, meaning it was never onboarded/migrated):
 
-1. Report the failing command and its error. If the failure is a missing local `dobby` bin, point to `/dobby:onboard` (or `/dobby:migrate-config` for a repo moving off an old contract) — the kit assumes `dobby` is installed as the repo's devDependency; there is no fallback.
-2. Remove the just-created worktree via the **`ExitWorktree` tool** in `remove` mode (this same session created it and the tree is clean, so removal tears down the dir + branch and restores the original working directory; the tool guards destructive removal via its `discard_changes` flag — set it since there's nothing to keep).
-3. **STOP the stage.** The user fixes the underlying problem and re-runs `/dobby:scope` fresh (a clean removal here means no leftover to trip the Step 2a guard).
+Report the failing command and its error first. If the failure is a missing local `dobby` bin, point to `/dobby:onboard` (or `/dobby:migrate-config` for a repo moving off an old contract) — the kit assumes `dobby` is installed as the repo's devDependency; there is no fallback.
+
+Then present an **AskUserQuestion** — legitimate here, not a mid-flow interruption: a bring-up failure BLOCKS the stage, so the gate is the handoff. Two options, and only these two:
+
+- **(a) "Abort & fix" (Recommended)** — the default. Remove the just-created worktree via the **`ExitWorktree` tool** in `remove` mode (this same session created it and the tree is clean, so removal tears down the dir + branch and restores the original working directory; the tool guards destructive removal via its `discard_changes` flag — set it since there's nothing to keep), then **STOP the stage**. The user fixes the underlying problem and re-runs `/dobby:scope` fresh (a clean removal here means no leftover to trip the Step 2a guard).
+- **(b) "Continue degraded"** — keep the worktree and proceed WITHOUT the managed run. Name explicitly what is lost: no cmux panes/browser, no liveness wait, no pidfile for `/dobby:finish` to tear down — the app runs only if the user starts it by hand. When the failure was install-only, note the mechanical degraded bring-up `DOBBY_SKIP_INSTALL=1 bunx dobby up` (skips just the install; panes/liveness/rename still run).
+
+**Transparency rule (non-negotiable): a degraded bring-up is never silent.** If (b) is chosen, surface it in all three places — record it as an **Environment note** in `STATE.md`, state it plainly in the Step 5 scope checkpoint, AND restate it in the Next-step handoff line — never buried where the user must ask "didn't you say you'd open a browser/server?". Deviating from the abort default WITHOUT the user's explicit (b) selection is a stage violation.
 
 ### 2d. No-config path
 
@@ -132,7 +137,7 @@ Interact with the user in their language. Write what you persist — `STATE.md` 
 - [ ] If the goal is a Linear issue that cannot be read (MCP unavailable): stage hard-stopped (D8); a free-text goal always continues
 - [ ] One-session-per-goal enforced as anti-NESTING only — soft-stopped ("open a new pane") if THIS session is already inside a worktree; parallel worktrees from other sessions allowed (not refused); slug collision avoided
 - [ ] Worktree created + entered via the `EnterWorktree` tool (auto-slug from the goal, made collision-free → branch `worktree-<slug>`, `.claude/worktrees/<slug>/`)
-- [ ] `bunx dobby up` run (blocking) when `dobby.config.json` exists — the worktree comes up running (or 'no app to run' for a lib/plugin repo); on failure, reported (missing bin → `/dobby:onboard` / `/dobby:migrate-config`) → `ExitWorktree(remove)` → stopped; no `dobby.config.json` → skipped with an `/dobby:onboard` note and continued
+- [ ] `bunx dobby up` run (blocking) when `dobby.config.json` exists — the worktree comes up running (or 'no app to run' for a lib/plugin repo); on failure, reported (missing bin → `/dobby:onboard` / `/dobby:migrate-config`) then gated via an AskUserQuestion — **(a) abort (default/recommended)** `ExitWorktree(remove)` → stopped, or **(b) continue degraded** only via the explicit selection, with the degradation surfaced in all three places (STATE.md Environment note + Step 5 checkpoint + Next-step handoff, not only STATE.md); no `dobby.config.json` → skipped with an `/dobby:onboard` note and continued
 - [ ] `STATE.md` created at the repo root (the worktree root) and gitignored, with the skeleton; `## Goal` + `## Source` filled
 - [ ] Codebase explored with a `researcher` agent; `CONTEXT.md` + ADRs read if present
 - [ ] Researcher cross-referenced the goal's claims against the code and surfaced contradictions (not just a file map)

@@ -1,5 +1,11 @@
 import { defineConfig } from "vite";
 
+// Shipped as plain .mjs, never .ts: a consumer's vite config re-exports this
+// preset and Node loads the file at runtime — but Node ≥23 refuses to type-strip
+// .ts files under node_modules (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING),
+// which would break every preset-consuming repo under `dobby check`. .mjs loads
+// natively everywhere (node, bun, esbuild loaders).
+//
 // Universal dobby vite-app config (@kvnwolf/dobby/vite). Consumers merge their
 // own plugins on top — plugins are consumer-owned AND version-coupled, so they
 // never live here:

@@ -1,5 +1,10 @@
 import { defineConfig } from "drizzle-kit";
 
+// Shipped as plain .mjs, never .ts: a consumer's drizzle config re-exports this
+// preset and Node loads the file at runtime — but Node ≥23 refuses to type-strip
+// .ts files under node_modules (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING). .mjs
+// loads natively everywhere (node, bun, esbuild loaders).
+//
 // The house drizzle-kit config (@kvnwolf/dobby/drizzle). A consumer whose repo
 // matches the house convention re-exports it in one line:
 //   export { default } from "@kvnwolf/dobby/drizzle";
@@ -9,7 +14,7 @@ import { defineConfig } from "drizzle-kit";
 // drizzle-kit runs DDL (migrations), which must go through an UNPOOLED
 // connection: DDL through PgBouncer breaks migration tooling, so drizzle uses the
 // non-pooled URL while the app RUNTIME uses the pooled DATABASE_URL.
-function resolveUnpooledUrl(): string | undefined {
+function resolveUnpooledUrl() {
 	let url =
 		process.env.DATABASE_URL_UNPOOLED ?? process.env.POSTGRES_URL_NON_POOLING;
 	if (!url) {
