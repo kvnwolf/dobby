@@ -56,6 +56,8 @@ Two small files `extends` dobby's shared presets, giving centralized rules plus 
 
 Carry over the project-specific `compilerOptions.paths`, `include`, `types`, and any genuinely project-local option; **drop** everything the base already sets (`strict`, `noUncheckedIndexedAccess`, `module`, `moduleResolution`, `noEmit`, `jsx`, …) so the thin file only holds deltas.
 
+**Mid-migration escape hatch.** Unlike Biome, `tsc` has NO per-path allowlist — it checks the whole import graph, so base strictness like `noUnusedLocals`/`noUnusedParameters` fires on legacy/unmigrated paths the lint allowlist deliberately skips. A progressively-migrating repo MAY set them `false` in its thin file — a DELIBERATE deviation, not preset noise — with a rationale comment and a "revisit when fully migrated" flag; Step 10's summary must list any such deviation as debt.
+
 **`biome.jsonc`** → extend the per-capability preset — `@kvnwolf/dobby/biome/react` for a React app, `@kvnwolf/dobby/biome/core` otherwise:
 
 ```jsonc
@@ -70,6 +72,14 @@ Then migrate the load-bearing bits of the OLD `vite.config.ts` `fmt`/`lint` bloc
   { "extends": ["@kvnwolf/dobby/biome/react"], "files": { "includes": ["**", "!src/routeTree.gen.ts", "!!dist"] } }
   ```
 
+- **Allowlist (progressive migration) `ignorePatterns` → POSITIVE `files.includes`.** A vite-plus `ignorePatterns` of the shape `["**/*.*", "!pathA", "!pathB", …]` is not a denylist but a progressive-migration ALLOWLIST — ignore everything, re-include only the migrated paths. It inverts to a POSITIVE include list: list exactly the previously-negated paths with the `!` prefixes dropped, and NO leading `"**"` (a positive include list = Biome handles ONLY matching paths). Example — old `ignorePatterns: ["**/*.*", "!src/lib", "!src/routes"]` becomes:
+
+  ```jsonc
+  { "extends": ["@kvnwolf/dobby/biome/react"], "files": { "includes": ["src/lib", "src/routes"] } }
+  ```
+
+  **Maintenance rule (field trap):** any config file CREATED later in this same migration (e.g. a new `vitest.config.ts`) must be hand-added to the allowlist, or Biome never sees it.
+
 - **Old per-path lint `rules` → `overrides`.** Each old rule override maps to an entry in the `overrides` array keyed by glob:
 
   ```jsonc
@@ -78,12 +88,30 @@ Then migrate the load-bearing bits of the OLD `vite.config.ts` `fmt`/`lint` bloc
 
 Only carry the rules the project genuinely deviates on — the preset already sets the house style; a rule that merely re-states a preset default is noise.
 
+- **The swap is a re-lint, not a rename.** Files that were clean under oxlint surface NEW findings under the dobby preset (field case: 16 findings from 4 rules — `complexity/useOptionalChain`, `suspicious/noArrayIndexKey`, `correctness/useExhaustiveDependencies`, `a11y/noStaticElementInteractions` — on already-migrated files). Each is a human fix-vs-suppress call: fix what's cheap (optional chains), suppress the deliberate ones with `// biome-ignore lint/<group>/<rule>: <reason>` (JSX form `{/* biome-ignore … */}` inside markup), folding any existing prose justification into the reason string. Also remove DEAD suppressions Biome reports as "Suppression comment has no effect".
+
 ## Step 3: Strip `vite.config.ts` to real vite config only
 
 The vite-plus task machinery is gone — dobby infers those tasks now. Reduce `vite.config.ts` to what actual Vite needs:
 
-- **KEEP:** `plugins`, `resolve`/`server`/`build` options, and the `test` block if vitest config lives there — the genuine Vite/vitest configuration.
+- **KEEP:** `plugins`, `resolve`/`server`/`build` options, and the `test` block if vitest config lives there — the genuine Vite/vitest configuration. **vite@8 resolves tsconfig path aliases NATIVELY via `resolve.tsconfigPaths: true`** — do NOT add the `vite-tsconfig-paths` plugin (vitest itself warns to remove it; field case: added then reverted).
 - **DELETE:** the vite-plus additions — the `run`/`tasks` table, the `fmt` and `lint` blocks (their content moved to `biome.jsonc` in Step 2), and any `staged` block. If stripping these empties the file down to a plugin list, that's the goal: `export default defineConfig({ plugins: [...] })`.
+- **An SSR-plugin app needs its own `vitest.config.ts`.** For a tanstack-start/nitro app, reusing the app's vite config hangs the process — the SSR plugins start servers that never tear down, so vitest exits nonzero even with every test green. Create a dedicated `vitest.config.ts` extending dobby's vitest preset and add only the app-specific bits — use EXACTLY this shape:
+
+  ```ts
+  import react from "@vitejs/plugin-react";
+  import { loadEnv } from "vite";
+  import { defineConfig, mergeConfig } from "vitest/config";
+  import dobbyVitest from "@kvnwolf/dobby/vitest";
+
+  export default mergeConfig(dobbyVitest, defineConfig({
+  	plugins: [react()], // test plugins ≠ app plugins — never the SSR set
+  	resolve: { tsconfigPaths: true },
+  	test: { env: loadEnv("test", process.cwd(), "") }, // "" prefix: import-time env validation needs EVERY var
+  }));
+  ```
+
+  The preset (`@kvnwolf/dobby/vitest`) already carries the universal wiring: `server.deps.inline: ["zod"]` (vitest-under-bun mangles zod v4's dual export map) and excluding `.claude/**` from discovery (worktree copies would be double-discovered). The consumer adds ONLY plugins + env loading.
 
 ## Step 4: Remove the dead hook + script machinery
 
@@ -111,7 +139,7 @@ A fresh git worktree needs the gitignored env/config files copied in, and `dobby
 Rewrite the config to the shrunken schema (`../onboard/references/dobby-config.md`): `files` (doc-sync, always) plus **only truly-custom** `setup`/`teardown`/`checks` extras.
 
 - **`files[]` — preserve the doc-sync rules.** When the source is `.claude/commit.config.yml` (admin), convert its `files` (`{ path, update_when[] }`) to JSON **verbatim** — carry every path and every `update_when` string across unchanged. When the source is an old `dobby.config.json` (vonda), keep its existing `files[]`.
-- **DROP `run`** and anything now inferred. The old `setup: ["vp install"]` goes (the default is `bun install`); any old local-DB-stop `teardown` goes (Neon teardown is inferred by `dobby down`); `checks: ["vpr validate"]` goes (`dobby check` IS the gate). Keep an extra **only** if it's a genuine project need the inference does not cover — an unusual install step, a real cleanup dobby can't infer, a project-specific check. Most migrated repos end up with `files` only.
+- **DROP `run`** and anything now inferred. The old `setup: ["vp install"]` goes (the default is `bun install`); any old local-DB-stop `teardown` goes (Neon teardown is inferred by `dobby down`); `checks: ["vpr validate"]` goes (`dobby check` IS the gate). Keep an extra **only** if it's a genuine project need the inference does not cover — an unusual install step, a real cleanup dobby can't infer, a project-specific check. A hybrid mid-migration database is exactly such a need — e.g. local Supabase still in use while the repo moves to Drizzle/Neon: `"setup": ["supabase start"]` (idempotent) replaces the old dev task's `dependsOn: db:start`; the Supabase CLI commands (`db push/reset/new`, `gen types`, `lint/diff/status`) stay MANUAL (transitional state, not inferred); NEVER wire an auto-stop (local Supabase is a machine-wide singleton shared across repos). Most migrated repos end up with `files` only.
 - **No-clobber caution:** if a hand-authored new-schema `dobby.config.json` already exists, merge the `files[]` additively and show the diff rather than overwriting it.
 - **`tracker` — mechanize the issue-tracker line, don't drop it.** Scan the legacy source (`.claude/commit.config.yml` and/or CLAUDE.md prose) for an issue-tracker declaration and carry it into `dobby.config.json`'s top-level `tracker` key — `{ "type": "github" | "linear" | "local" }` (see `../backlog/references/trackers.md`). Defer a Linear `team` to `/dobby:onboard` when it isn't trivially derivable from the source; **never fabricate a `team`** — a deferred `team` is flagged in Step 10, a wrong one silently misroutes work.
 - **Delete `.claude/commit.config.yml`** once its `files[]` (and any `tracker` line) are carried across. Leave the rest of `.claude/` (host-owned settings/commands/agents/hooks) untouched.
