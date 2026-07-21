@@ -1,0 +1,7 @@
+{
+  "name": "db-supabase-removed",
+  "private": true,
+  "devDependencies": {
+    "supabase": "^1.150.0"
+  }
+}

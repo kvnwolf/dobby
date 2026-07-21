@@ -1,0 +1,5 @@
+# dobby is each consumer's single devDependency, invoked via `bunx`
+
+**Status:** accepted
+
+`@kvnwolf/dobby` occupies the slot vite-plus held: it is the ONE devDependency a consumer repo installs, and skills always invoke it as `bunx dobby …` — bun resolves the local bin first, so every project runs its own pinned version. A global install was rejected: it reintroduces the cross-repo version skew the bundle exists to kill, and preset `extends` (`@kvnwolf/dobby/biome/core`) only resolves from local `node_modules`. The trap this creates: in a repo WITHOUT dobby installed, `bunx dobby` would fetch and execute the FOREIGN npm package named `dobby`. Human invocations surface that as an obvious error; AUTOMATED invocations must never risk it — the plugin's edit hook therefore double-guards (a `dobby.config.json` at the root AND an executable `node_modules/.bin/dobby`, else silent exit 0) and calls the LOCAL bin path directly, never `bunx`. Version skew is handled without ceremony: an unknown command exits 1 with a `bun update @kvnwolf/dobby` hint, and skills relay it.

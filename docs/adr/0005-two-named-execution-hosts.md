@@ -1,6 +1,6 @@
 # Two named execution hosts (Conductor + terminal)
 
-**Status:** accepted — **supersedes [ADR-0001](./0001-conductor-execution-host.md).**
+**Status:** superseded by [ADR-0010](./0010-single-terminal-host.md) — **supersedes [ADR-0001](./0001-conductor-execution-host.md).**
 
 ADR-0001 made Conductor the kit's only execution host and explicitly rejected a dual path "for a portability we don't use." The user now runs real remote and cmux sessions, so that portability IS used — we replace the Conductor-only model with **two NAMED hosts, detected by env var**: (1) **Conductor** (`CONDUCTOR_WORKSPACE_PATH` present) — the host creates the workspace worktree and auto-runs the app (`auto_run_after_setup`); (2) **terminal** (that var absent — a plain `claude` session, including ssh) — the KIT owns the worktree + run lifecycle: `/dobby:scope` creates and enters the per-goal worktree (native `EnterWorktree`), the app runs lazily at `/dobby:execute` Step 2, and the new `/dobby:finish` tears down post-merge. **cmux enrichment** layers onto the terminal host when `CMUX_WORKSPACE_ID` is set (named run/browser panes + the cmux-browser UI driver), degrading gracefully to a background job otherwise. The enabler is that **portless was verified standalone** — branch-prefixed dev URLs in linked worktrees are portless's own behavior, not Conductor's — so the `portless get` + curl recipe is IDENTICAL on both hosts; the only host difference is who starts the run.
 

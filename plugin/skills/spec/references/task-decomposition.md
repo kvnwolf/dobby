@@ -11,7 +11,7 @@ Decompose the work into a task table the executor can dispatch from.
 - **Atomic** — small enough for one agent to complete within ~50% of its context window. 3-4 files beats 8-10. Prefer many small tasks over few large ones.
 - **Affected areas** — each task declares which modules/directories it touches. Used to decide parallelism: overlapping areas run sequentially, non-overlapping run in parallel.
 - **Dependencies** — express which tasks depend on which.
-- **Verify recipe** — each task declares how it will be verified against the running app: for UI work, what to drive in the browser and what to observe; for backend/data work, the programmatic check (a query under the right role, a build/type-check, or firing a seam and observing the effect). This makes verification planned, not improvised.
+- **Verify recipe** — each task declares how it will be verified against the running app: for UI work, what to drive in the browser and what to observe; for backend/data work, the programmatic check (a query under the right role, or firing a seam and observing the effect). Verify recipes observe BEHAVIOR — they never run lint/format/typecheck/build/the test suite (the edit-time hook and the pre-commit gate `dobby check --fix` own those). This makes verification planned, not improvised.
 - **Name the approach** — state the libraries, patterns, and approach each task must follow (from the research brief), plus the specific docs the executor should follow. When a task touches a domain governed by a convention/design skill the brief's Reuse section surfaced, name that skill AND the specific dictate to follow (the data/mutation pattern, file-role structure, or design direction the brief extracted) — so the plan tells the implementor exactly which convention primitive to use, not just "follow the conventions." This closes the gap where a silent plan lets the implementor pick the wrong primitive despite build-time auto-activation. Name the skill + its dictate only; the implementor loads the full recipe at build. Name the affected modules/areas; leave exact file-by-file implementation to the executor.
 
 ## Anti-patterns
@@ -43,6 +43,6 @@ A markdown table inside the plan. Add the `Test-first` column only when the repo
 | 4 | Unread badge with polling | Header badge shows the unread count, refreshing on an interval. | 1 | notifications module, app header | Browser: badge shows 2; mark one read → shows 1 within the poll interval |
 | 5 | Cross-tab sync | Reading in one tab updates the badge/list in another. | 2, 4 | notifications module | Two tabs; read in A → B's badge updates |
 
-Each row names the approach/tools to follow and a concrete observable. A backend-only row instead verifies programmatically (a query under the right role, a build/type-check, firing a seam and observing the effect).
+Each row names the approach/tools to follow and a concrete observable. A backend-only row instead verifies programmatically (a query under the right role, or firing a seam and observing the effect) — never by running lint/typecheck/build/the test suite, which are not verification.
 
 If the user rejects or asks for changes, regenerate the plan with their feedback before any execution.

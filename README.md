@@ -17,11 +17,11 @@ Then start your first session from any project:
 /dobby:scope <what you want to build>
 ```
 
-**Prerequisites**: the [`ctx7` CLI](https://context7.com) (the `researcher` agent fetches current library docs through it), and `vp` (vite-plus) on PATH if you want the post-edit check hook to do anything.
+**Prerequisites**: the [`ctx7` CLI](https://context7.com) (the `researcher` agent fetches current library docs through it). The post-edit check hook needs no global tool — it runs each project's LOCAL `@kvnwolf/dobby` bin (installed by `/dobby:onboard`) and no-ops in repos without it.
 
 ### The CLI
 
-The repo also ships **`@kvnwolf/dobby`**, a zero-dependency Bun CLI. `dobby capabilities` prints the capabilities it detects for the current project **from its installed dependencies — no manifest file**: `vite`, `tanstack-start`, `neon`, `expo`. In a monorepo it reports per workspace package, grouped by relative path. Install: `bun install -g @kvnwolf/dobby`. Releases are cut with the repo's `/release` skill, versioned in lockstep with the plugin (`bun link` from `cli/` only when hacking on the CLI itself).
+The repo also ships **`@kvnwolf/dobby`**, the kit's **mechanical execution layer** — a Bun CLI installed as each project's single devDependency (added by `/dobby:onboard`). It detects a project's capabilities from its dependencies and infers every task zero-config (à la Vercel): the quality gate (`dobby check`, which also runs as the edit hook, and `dobby check --fix` as the pre-commit gate) and the run lifecycle (`dobby up` / `dobby down` / `dobby dev`), where `dobby up` also brings a fresh worktree up (installs deps + materializes the env files) before starting the app. It bundles the toolchain (Biome, TypeScript, knip, taze, portless) and exposes shared `tsconfig` / `biome` presets, so consumers keep only a one-line `extends`. Skills invoke it via `bunx dobby` (the local pinned bin). Full command reference: **[`cli/README.md`](./cli/README.md)** (the npm package front page). Releases are cut with the repo's `/release` skill.
 
 ## The mental model
 
@@ -40,30 +40,24 @@ Two roles, never mixed:
 
 The payoff: your context stays clean for thinking, implementation quality is enforced by independent review, and "done" means *proven against the running app*, not "the code looks right".
 
-## Where it runs: two execution hosts
+## Where it runs: the terminal host
 
-dobby runs on one of **two named execution hosts**, and it figures out which by itself — you don't configure it. Detection is by environment variable:
+dobby runs in a plain `claude` session — your terminal, including over ssh, and inside **cmux** (the manaflow-ai native macOS terminal). The kit owns the whole worktree + run lifecycle itself, mechanized by the `@kvnwolf/dobby` CLI:
 
-| Host | Detected when | Who owns the worktree | Who runs the app |
-| --- | --- | --- | --- |
-| **Conductor** | `CONDUCTOR_WORKSPACE_PATH` is set | Conductor (one worktree per workspace) | Conductor auto-runs it (`auto_run_after_setup`) |
-| **Terminal** | that env var is absent | dobby — `/dobby:scope` creates it, `/dobby:finish` removes it | dobby starts it lazily at `/dobby:execute` |
+- `/dobby:scope` creates and enters a per-goal git worktree and brings it up with `bunx dobby up` (installs deps, materializes the env files a fresh worktree needs, then starts the app).
+- `/dobby:execute` re-runs `bunx dobby up` — idempotent and liveness-first, so a re-run never double-starts.
+- `/dobby:finish` tears it all down with `bunx dobby down` after your PR merges.
 
-The **terminal host** is a plain `claude` session — including over ssh, and inside **cmux** (the manaflow-ai native macOS terminal). It exists so you can run the kit remotely. When it detects **cmux** (`CMUX_WORKSPACE_ID` is set in every cmux pane), it enriches the run: the dev server gets its own named pane, a browser pane opens at the app URL, and the verifier drives the UI through cmux's browser CLI. Plain ssh/tmux (no cmux) degrades gracefully — the app runs as a background job, no panes.
+When it detects **cmux** (`CMUX_WORKSPACE_ID` is set in every cmux pane), `dobby up` enriches the run: the dev server gets its own named pane, a browser pane opens at the app URL, and the verifier drives the UI through cmux's browser CLI. A plain ssh/tmux session (no cmux) degrades gracefully — the app runs as a detached background job, no panes.
 
-**What changes for you** between the two:
+The coordinator and verifier reach the running app the same way everywhere: `bunx dobby env` resolves a stable per-worktree dev URL (via `portless get`) and a curl health-check confirms it's live.
 
-- On **Conductor**, nothing changes from before: the workspace *is* the worktree, the app is already running, and `/dobby:scope`…`/dobby:commit` is the whole cycle. `/dobby:finish` is a no-op (Conductor archives the workspace itself).
-- On the **terminal host**, `/dobby:scope` first creates and enters a per-goal git worktree, and after your PR merges you run `/dobby:finish` to tear it down. Everything in between is identical.
+> Earlier versions of dobby also ran under **Conductor** as a second host. That support was removed — the terminal host (with optional cmux enrichment) is now the only one; everything Conductor did is preserved for a possible future re-add.
 
-On **both** hosts, the coordinator and verifier reach the running app the same way — `portless get <name>` resolves a stable per-worktree dev URL and a curl health-check confirms it's live. The only difference is who starts the app.
-
-### Terminal-host prerequisites
-
-Only needed if you run on the terminal host (Conductor users can skip this):
+### Prerequisites
 
 - **Node 24+** — required by `portless`.
-- **`portless`** — added as a pinned devDependency by `/dobby:onboard`, plus a one-time `portless trust` (it needs sudo once to install a local CA and bind `:443`).
+- **`portless`** — bundled inside `@kvnwolf/dobby` (your single devDependency, added by `/dobby:onboard`), plus a one-time `portless trust` (it needs sudo once to install a local CA and bind `:443`).
 - **Claude Code** recent enough for native worktrees: `EnterWorktree`/`ExitWorktree` land in **≥ 2.1.72**; transcript relocation (so `/dobby:mark`/`/dobby:learn` still resolve a session after the worktree moves) lands in **≥ 2.1.198**.
 
 ## The lifecycle
@@ -85,10 +79,10 @@ A work session moves through six stages. Each stage ends by telling you which co
       │
 /dobby:commit       branch, commit, push, PR
       │
-/dobby:finish       (terminal host, after the PR merges) tear down the worktree
+/dobby:finish       (after the PR merges) tear down the worktree
 ```
 
-`/dobby:finish` is the post-merge closing step **on the terminal host**: once your PR is merged, it runs the config's teardown, closes the cmux panes it opened, removes the per-goal worktree + branch, and pulls the main checkout. On Conductor it's a no-op — the host archives the workspace for you. It's typed like every other stage; nothing runs until you type it.
+`/dobby:finish` is the post-merge closing step: once your PR is merged, `bunx dobby down` runs the config's teardown, closes the cmux panes it opened (or kills the background run), and deletes the per-worktree Neon branch; then it removes the per-goal worktree + branch and pulls the main checkout. It's typed like every other stage; nothing runs until you type it.
 
 Side paths, available at any point:
 
@@ -154,7 +148,7 @@ The architect turns decisions + research into a build plan and **prints it in fu
 /dobby:execute
 ```
 
-The coordinator makes sure the app is up — on Conductor it was already auto-run, on the terminal host `/dobby:execute` starts it now (in a named cmux pane, or a background job) — resolves the dev URL with `portless get`, confirms it's live, then launches the build loop. Per task, **separate agents** run a state machine:
+The coordinator makes sure the app is up — `/dobby:execute` runs `bunx dobby up` (in a named cmux pane, or a detached background job; idempotent, so a re-run never double-starts) — reads the dev URL from `bunx dobby env`, confirms it's live, then launches the build loop. Per task, **separate agents** run a state machine:
 
 ```
 (test-author) → implement → code review → (findings? fix → re-review) → verify → (fail? restart) → done
@@ -174,19 +168,19 @@ The closing pass: a short **human smoke test** (the few cross-task behaviors mac
 
 Then you type `/dobby:commit`: pre-commit checks, branch, conventional commit, push, PR.
 
-### 7. Finish (terminal host only)
+### 7. Finish
 
 ```
 /dobby:finish
 ```
 
-On Conductor you're done at commit. **On the terminal host**, the whole session ran inside a per-goal worktree that `/dobby:scope` created — so after your PR merges on GitHub, one more step retires it:
+The whole session ran inside a per-goal worktree that `/dobby:scope` created — so after your PR merges on GitHub, one more step retires it:
 
 ```
 /dobby:scope … → interview → research → spec → execute → wrap → commit → (merge on GitHub) → /dobby:finish
 ```
 
-`/dobby:finish` confirms the PR is actually **merged** (if it's still open, closed, or the tree is dirty, it shows the state and asks before destroying anything), runs the config's teardown commands, closes the cmux panes it opened, removes the worktree and its branch, and pulls your main checkout. If the original session died and left an **orphaned** worktree behind, run `/dobby:finish` anyway — it falls back to a raw-git cleanup after verifying the branch was merged and confirming with you.
+`/dobby:finish` confirms the PR is actually **merged** (if it's still open, closed, or the tree is dirty, it shows the state and asks before destroying anything), then runs `bunx dobby down` (teardown extras, closes the cmux panes it opened or kills the background run, deletes the Neon branch), removes the worktree and its branch, and pulls your main checkout. If the original session died and left an **orphaned** worktree behind, run `/dobby:finish` anyway — it falls back to a raw-git cleanup after verifying the branch was merged and confirming with you.
 
 ## When to use what
 
@@ -206,9 +200,9 @@ On Conductor you're done at commit. **On the terminal host**, the whole session 
 | Context is getting long, or you want to branch a fresh session off a clean summary | `/dobby:handoff` — an ephemeral fork document |
 | A merge/rebase left conflict markers you need to reconcile without losing either side | `/dobby:resolve-conflicts` |
 | A brand-new empty repo | `/dobby:onboard` — scaffolds it and picks the issue tracker (GitHub Issues by default, or Linear / local `BACKLOG.md`) |
-| A repo still on the legacy `.claude/commit.config.yml` | `/dobby:migrate-config` — convert it to `dobby.config.json`, one-time |
+| A repo still on vite-plus or the legacy `.claude/commit.config.yml` | `/dobby:migrate-config` — one-time move onto `@kvnwolf/dobby` + `dobby.config.json` |
 | Work is done, ship it | `/dobby:commit` |
-| Terminal host: the PR merged and the worktree needs retiring | `/dobby:finish` |
+| The PR merged and the worktree needs retiring | `/dobby:finish` |
 | A review bot or reviewer left comments on your PR | `/dobby:address-review` |
 | Structuring or refactoring a module's files | `/dobby:module-conventions` (auto-activates) |
 | Building a form or wiring a data mutation | `/dobby:data-processing` (auto-activates) |
@@ -241,7 +235,7 @@ It is **never committed** — `/dobby:wrap` disposes it after reconciling the du
 
 ## Also ships
 
-- **Hook `vp-check-changes`** — after every Edit/Write, runs `vp check` in projects that have a `vite.config.ts` (no-op everywhere else).
+- **Edit hook** — after every Edit/Write, runs `dobby check --hook` on the edited file in dobby projects (those with a `dobby.config.json` and a local `dobby` bin): biome's safe fixes are applied in place, and only unfixable findings are surfaced back to the model (no-op everywhere else).
 
 ## Improving the kit from real sessions
 
@@ -260,11 +254,11 @@ These couple to Claude Code's session storage (`~/.claude/projects`) on purpose 
 | `/dobby:*` skills don't show up | Plugin not enabled | `/plugin` → enable `dobby@dobby` (or reinstall) |
 | Researchers cite stale/odd docs | `ctx7` CLI missing or unauthenticated | Install `ctx7`; set `CONTEXT7_API_KEY` for higher limits |
 | Skill edits not picked up (local dev) | Only `SKILL.md` hot-reloads | `/reload-plugins` for agents/hooks changes |
-| Post-edit check hook never fires | By design outside vite-plus projects | Gate = `vite.config.ts` at project root **and** `vp` on PATH |
+| Post-edit check hook never fires | By design outside dobby projects | Needs `dobby.config.json` at the project root **and** a local `@kvnwolf/dobby` bin (run `/dobby:onboard`) |
 | Execute re-authored the workflow and lost the loop logic | The build-loop script must be used verbatim | Re-run `/dobby:execute`; the skill's `references/build-workflow.md` is the canonical script |
-| `portless` prompts for sudo / fails to bind `:443` on first run (terminal host) | First-time CA install + privileged port | Run `portless trust` once (surfaced by `/dobby:onboard`); it's a one-time setup, later runs don't need it |
-| An old session died and left a worktree in `.claude/worktrees/` (terminal host) | The session couldn't run `/dobby:finish` before exiting | Run `/dobby:finish` anyway — it detects the orphan, verifies the branch merged, confirms with you, and cleans up via raw git |
-| `/dobby:scope` stops on the terminal host ("open a new pane") | Nesting — THIS session is already inside a worktree, and the native tool can't nest (parallel worktrees from OTHER sessions are fine and don't trigger this) | Open a new cmux pane / `claude` session for the new goal and run `/dobby:scope <goal>` there — one goal per pane, no nesting |
+| `portless` prompts for sudo / fails to bind `:443` on first run | First-time CA install + privileged port | Run `portless trust` once (surfaced by `/dobby:onboard`); it's a one-time setup, later runs don't need it |
+| An old session died and left a worktree in `.claude/worktrees/` | The session couldn't run `/dobby:finish` before exiting | Run `/dobby:finish` anyway — it detects the orphan, verifies the branch merged, confirms with you, and cleans up via raw git |
+| `/dobby:scope` stops ("open a new pane") | Nesting — THIS session is already inside a worktree, and the native tool can't nest (parallel worktrees from OTHER sessions are fine and don't trigger this) | Open a new cmux pane / `claude` session for the new goal and run `/dobby:scope <goal>` there — one goal per pane, no nesting |
 
 ## Recovery quick reference
 

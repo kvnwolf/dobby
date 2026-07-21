@@ -1,0 +1,7 @@
+{
+  "name": "db-drizzle-only",
+  "private": true,
+  "devDependencies": {
+    "drizzle-kit": "^0.20.0"
+  }
+}

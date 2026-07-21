@@ -1,5 +1,0 @@
-{
-  "name": "monorepo-broken-member",
-  "private": true,
-  "workspaces": ["pkgs/*"]
-}

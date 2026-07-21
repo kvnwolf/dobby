@@ -1,0 +1,9 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.4/schema.json",
+	"extends": ["@kvnwolf/dobby/biome/core"],
+	"files": {
+		// The preset already brings ** plus the common ignores (.claude, .dobby,
+		// .github, *.md); only this repo's specific exclusions live here.
+		"includes": ["!.claude-plugin", "!cli/__fixtures__", "!docs", "!plugin"]
+	}
+}

@@ -1,97 +1,222 @@
 ---
 name: migrate-config
-description: Migrate a consumer repo's legacy .claude/commit.config.yml to the kit-owned dobby.config.json and clean the mechanizable kit-workflow prose out of CLAUDE.md. Use in a consumer repo after updating the dobby plugin, once per repo.
+description: One-pass migration of a consumer repo off vite-plus onto @kvnwolf/dobby — swap deps, thin the tsconfig/biome configs, strip vite.config.ts, move files to canonical paths, regenerate dobby.config.json, drop .conductor, rewire CI, verify with `dobby check`. Run in a consumer repo, once, after updating the dobby plugin.
 ---
 
-The one-shot migration from the kit's OLD per-project config home to the new one. The kit used to keep its commit contract at `.claude/commit.config.yml` (a kit file squatting in Claude Code's reserved `.claude/` namespace) and scatter dev/run/setup prose across the consumer's `CLAUDE.md`. Both now live in a single kit-owned **`dobby.config.json`** at the repo root. Run this **manually, once per consumer repo**, after updating the dobby plugin.
+The one-pass migration from the **vite-plus world** to the **dobby world**. The kit used to lean on `vite-plus` (`vp`/`vpr`) for the toolchain and run lifecycle, keep its commit contract at `.claude/commit.config.yml`, and rely on Conductor glue (`.conductor/`). All of that is gone: the toolchain (Biome, TypeScript, knip, taze, portless) is now **bundled inside `@kvnwolf/dobby`** and inferred from the repo's detected capabilities (zero-config à la Vercel); the run lifecycle lives in `dobby up`/`down`/`dev`; the per-project contract shrank to a thin `dobby.config.json`; and Conductor support was removed. Run this **manually, once per consumer repo**, after updating the dobby plugin.
 
-**This skill IS the migration path — a clean cut.** The work skills (`/dobby:commit`, `/dobby:resolve-conflicts`, `/dobby:scope`, `/dobby:execute`, `/dobby:finish`) read ONLY `dobby.config.json`; none of them detect the legacy `.claude/commit.config.yml` any more. A repo that hasn't been migrated silently loses its commit gate (the readers hit their no-config fallback). So run this before relying on the kit in an existing repo — that risk is the whole reason the skill exists.
+**This skill IS the migration path — a clean cut.** The work skills (`/dobby:scope`, `/dobby:execute`, `/dobby:commit`, `/dobby:finish`) and the edit-time hook assume `@kvnwolf/dobby` is installed and `dobby.config.json` exists; none of them fall back to `vp`/`vpr`, the legacy `.claude/commit.config.yml`, or Conductor. A repo that hasn't been migrated silently loses its gate, its run lifecycle, and its worktree setup. So run this before relying on the kit in an existing vite-plus repo — that is the whole reason the skill exists.
 
-The authoritative schema lives in the plugin at `../onboard/references/dobby-config.md` — the FULL five-section contract (`files` / `checks` / `setup` / `run` / `teardown`). **This migration only carries over `files` + `checks`** from the legacy YAML; it does NOT invent `setup` / `run` / `teardown` (those describe how an app installs, runs, and tears down — discovering them is `/dobby:onboard`'s job). For an app project, suggest running `/dobby:onboard` afterwards to fill them in.
+This is **project-agnostic methodology**: it detects state and acts on what it finds, it does not hardcode any one repo. Two real field cases appear below as **examples** of what the migration encounters — never as branching logic:
 
-## Step 1: Precondition — locate the legacy config
+- **vonda** (TanStack Start + Drizzle/Neon, Bun): has a `dobby.config.json` from the old era (`run` key + `vp`-based `setup`/`teardown`/`checks`), **no `package.json#scripts`** (tasks lived in `vite.config.ts`), and `.worktreeinclude` already present.
+- **admin** (TanStack Start + Drizzle/Neon + Better Auth, Bun): still on legacy `.claude/commit.config.yml` (**no `dobby.config.json` yet**), **no `.worktreeinclude`** (its env copy was Conductor-only), and a **portless key** (`admin.logikpeak`) in `package.json`.
 
-Look for `.claude/commit.config.yml` at the repo root, and check whether `dobby.config.json` already exists. Branch on what you find:
+The authoritative config schema lives at `../onboard/references/dobby-config.md` (the shrunken `files` + optional `setup`/`teardown`/`checks` contract — **no `run` key**). Full command surface and the canonical-path conventions are documented in the CLI's own README (`@kvnwolf/dobby`).
 
-- **Legacy file present** → this is a real migration. Continue to Step 2.
-- **No legacy file, but `dobby.config.json` already exists** → the repo is **already migrated**. Say so plainly ("`dobby.config.json` is already in place and there's no legacy `.claude/commit.config.yml` to migrate — nothing to do.") and **stop**. Do not touch anything.
-- **Neither file exists** → the repo was never set up for the kit's commit contract. Migration has nothing to convert. Suggest the user TYPE `/dobby:onboard` (it creates `dobby.config.json` from scratch as part of project setup) and **stop**.
+**Human gates before destructive steps.** The whole migration runs as ONE pass, verified at the end — but two steps are irreversible and get an explicit gate first: **moving files** (Step 5) and **deleting `.conductor/`** (Step 8). Everything else runs straight through.
 
-## Step 2: Convert YAML → JSON (no-clobber)
+---
 
-**No-clobber on an existing `dobby.config.json`.** If `dobby.config.json` already exists AND a legacy `.claude/commit.config.yml` also exists (a partial/interrupted migration, or a hand-written config), do NOT overwrite it. Stop and report both files, show the user what each contains, and let them reconcile — never blow away a config the user may have already authored. (Only proceed to write when there is no `dobby.config.json` yet.)
+## Step 0: Preflight — detect the legacy state
 
-Otherwise, read `.claude/commit.config.yml` and translate it to JSON, preserving `files` and `checks` **verbatim**:
+Snapshot what you're migrating from, and decide whether there's anything to do. Detect the legacy signals:
 
-- `files` — array of `{ path, update_when[] }`. Carry every path and every `update_when` string across unchanged.
-- `checks` — array of `{ name, run }` (and `scope` if present). Carry every check's `name` and `run` command across **exactly** — the shell in `run` is load-bearing; a whitespace or quoting change can flip a check's verdict. When YAML block scalars, embedded tabs, or escapes are involved, make sure the JSON string produces the byte-identical command the YAML did.
+- `.claude/commit.config.yml` present → legacy commit contract (admin's case).
+- `dobby.config.json` present but **old-era** — it carries a `run` key, or `setup`/`teardown`/`checks` extras that shell out to `vp`/`vpr` (vonda's case).
+- `vite-plus` in `devDependencies`, and/or the aliases `"vite": "npm:@voidzero-dev/vite-plus-core"` / `"vitest": "npm:@voidzero-dev/vite-plus-test"` in `package.json` `overrides` — the core signal that this is a vite-plus repo.
+- Supporting signals: a `.vite-hooks/` directory, `vp`/`vpr` task tables in `vite.config.ts`, a `prepare` script, a `.conductor/` directory.
 
-Write the result as `dobby.config.json` at the **repo root** (next.config.js style — NOT in `.claude/`, NOT in `.dobby/`). Include only `files` + `checks` — see the authoritative schema at `../onboard/references/dobby-config.md`; this migration does not fabricate `setup` / `run` / `teardown`.
+**Branch on what you find:**
 
-## Step 3: Delete the legacy file
+- **No vite-plus signal AND `dobby.config.json` is already new-schema** (no `run` key, configs already `extends` `@kvnwolf/dobby/*`) → the repo is **already migrated**. Say so plainly and **stop** — do not touch anything.
+- **Any legacy signal present** → this is a real migration. Record the starting state (which deps, which config source, which files) so Step 10 can report the diff, and continue.
 
-Remove `.claude/commit.config.yml` — the readers no longer look there, so leaving it is dead weight and a trap (someone edits the stale file expecting it to take effect). Delete only that file; leave everything else in `.claude/` (host-owned: settings, commands, agents, hooks) untouched.
+Announce the plan (the ordered steps below, flagging the two human gates) before you start executing.
 
-## Step 4: Clean the kit-workflow prose out of CLAUDE.md
+## Step 1: Swap the dependencies
 
-The consumer's `CLAUDE.md` typically carries a "Workflow config" section (or scattered lines) that `/dobby:onboard` wrote in the old era: a commit-contract pointer, dev/run commands, setup instructions, textual pre-commit checks or doc-sync rules, and dead kit config. This prose is now either mechanizable (it maps to a `dobby.config.json` field) or dead (nothing reads it). **User-authored prose that is genuinely project knowledge stays — CLAUDE.md is the user's file.**
+The toolchain is now bundled inside dobby; the consumer keeps only real build-time deps.
 
-Scan `CLAUDE.md` for kit-workflow prose and **classify each hit**:
+- **Add dobby:** `bun add -d @kvnwolf/dobby` — the project's single new dev dependency (the slot `vite-plus` used to occupy).
+- **Remove the now-bundled tools** — only whichever are actually present: `bun remove vite-plus ultracite knip taze oxlint portless` (drop the names the repo doesn't have from the command). These all ship transitively inside dobby now.
+- **Drop the vite-plus aliases:** remove `"vite": "npm:@voidzero-dev/vite-plus-core"` and `"vitest": "npm:@voidzero-dev/vite-plus-test"` from `package.json` `overrides`/`resolutions` (delete the `overrides` block entirely if that's all it held).
+- **Restore the REAL packages:** `bun add -d vite` (and `bun add -d vitest` **only if the repo has tests** — `vitest` stays a consumer dep, detected as a capability; it is never bundled). Keep the repo's real vite plugins (`@vitejs/plugin-react`, `@tanstack/*`, nitro, react-compiler, …), `drizzle-kit`, `typescript` types, and `@types/*` — those are build-time, not toolchain.
+- **Preserve project-specific config keys in `package.json`.** The `portless` config key (admin's `admin.logikpeak`) STAYS — portless is still used by `dobby dev`/`up` to resolve the branch-prefixed URL; only the portless *dependency* is removed (it's bundled). Likewise keep `trustedDependencies` and any other genuine project config.
 
-- **MECHANIZE** — content that maps to a config field: dev/run commands, setup instructions, textual pre-commit checks, doc-sync rules, an **issue-tracker line** (e.g. naming Linear, GitHub Issues, or a local tracker), or the old commit-contract pointer (e.g. "read by `/dobby:commit`" / a `.claude/commit.config.yml` reference). → Propose moving it into the matching `dobby.config.json` field (`run` / `setup` / `checks` / `files` / `tracker`). If it's a `run`/`setup`/`tracker` value this migration doesn't own (Step 2 only carried `files`+`checks`), note it belongs in the config and defer the actual discovery to `/dobby:onboard` rather than fabricating a value. For an issue-tracker line, record that it belongs in the top-level `tracker` key (`{ "type": "github" | "linear" | "local" }`); a `linear` tracker also needs a `team` **key** (e.g. `VON`) — defer that to `/dobby:onboard` when it isn't trivially derivable from the CLAUDE.md line, and **never fabricate a `team` key**.
-- **DELETE** — dead kit config that nothing reads any more: e.g. a reference to a tool the project no longer uses at all (a removed linter, an abandoned CI hook), or kit prose describing a workflow the kit dropped. → Propose removing it outright. (An **issue-tracker line** naming Linear or a local tracker is NOT dead — the `tracker` key is real config again, so it MECHANIZES into `tracker` per the rule above. Only a tracker reference to a tool the project has genuinely stopped using stays DELETE.)
-- **KEEP** — anything that is genuine project knowledge (product description, module map, stack conventions, architecture notes). Leave it exactly as the user wrote it. When in doubt, KEEP — deleting the user's prose is the costly mistake.
+## Step 2: Thin the config files
 
-**Every proposed CLAUDE.md edit is shown as a diff for explicit user approval before applying.** This is an in-stage gate (not a stage handoff), so `AskUserQuestion` per group of related edits — or free-text approval — is fine. Present the exact before/after so the user sees what leaves and what stays; never rewrite CLAUDE.md silently. Apply only the edits the user approves.
+Two small files `extends` dobby's shared presets, giving centralized rules plus native editor support.
 
-After the approved removals, leave a **single pointer line** in `CLAUDE.md` so the file still tells the reader where the workflow contract lives — e.g. in a short "Workflow config" section:
+**`tsconfig.json`** → extend the base (the **vite variant** for a Vite app), preserving only the project's own fields:
 
-```markdown
-## Workflow config
-
-The kit's per-project contract (doc-sync rules, pre-commit checks, and — for app projects — setup/run/teardown) lives in [`dobby.config.json`](./dobby.config.json), read by the `/dobby:*` work skills.
+```json
+{ "extends": "@kvnwolf/dobby/tsconfig/vite", "compilerOptions": { "paths": { "@/*": ["./src/*"] } }, "include": ["src"] }
 ```
 
-## Step 5: Verify the gate survived the move
+A **Vite app** extends `@kvnwolf/dobby/tsconfig/vite` (the base plus `types: ["vite/client"]`); a non-Vite project extends `@kvnwolf/dobby/tsconfig`. Carry over the project-specific `compilerOptions.paths`, `include`, `types`, and any genuinely project-local option; **drop** everything the base already sets (`strict`, `noUncheckedIndexedAccess`, `noUncheckedSideEffectImports`, `allowImportingTsExtensions`, `module`, `moduleResolution`, `noEmit`, `jsx`, …) — and on the vite variant drop `types: ["vite/client"]` too — so the thin file only holds deltas.
 
-Prove the migration didn't break the commit gate:
+**Mid-migration escape hatch.** Unlike Biome, `tsc` has NO per-path allowlist — it checks the whole import graph, so base strictness like `noUnusedLocals`/`noUnusedParameters` fires on legacy/unmigrated paths the lint allowlist deliberately skips. A progressively-migrating repo MAY set them `false` in its thin file — a DELIBERATE deviation, not preset noise — with a rationale comment and a "revisit when fully migrated" flag; Step 10's summary must list any such deviation as debt.
 
-- `jq . dobby.config.json` parses (valid JSON).
-- Run each `checks[].run` command from `dobby.config.json`, in order, from the repo root — they must exit 0, exactly as they did from the legacy YAML. This confirms the checks came across byte-identical and the gate still holds. (If a check now fails but passed before, the conversion mangled its `run` command — fix the JSON string, don't weaken the check.)
+**`biome.jsonc`** → extend the per-capability preset — `@kvnwolf/dobby/biome/react` for a React app, `@kvnwolf/dobby/biome/core` otherwise:
 
-## Step 6: Report the summary
+```jsonc
+{ "extends": ["@kvnwolf/dobby/biome/react"] }
+```
 
-Report what happened, in three plain buckets:
+Then migrate the load-bearing bits of the OLD `vite.config.ts` `fmt`/`lint` blocks into Biome form (Biome 2 syntax):
 
-- **Moved** — `files` + `checks` migrated into `dobby.config.json` (counts); which CLAUDE.md prose was mechanized into which config field.
-- **Deleted** — `.claude/commit.config.yml` removed; which dead CLAUDE.md lines (e.g. a removed linter, an abandoned CI hook) were dropped.
-- **Left** — the CLAUDE.md project knowledge kept untouched; the single pointer line added.
+- **Old `ignorePatterns` → `files.includes` with `!` negation.** In Biome 2 the include list **must start with `"**"`** (include everything) and then negate; `"!path"` force-ignores from linting (still indexed — use for generated dirs), `"!!path"` force-excludes from indexing too (use for build output like `dist/`). Example — old `ignorePatterns: ["src/routeTree.gen.ts", "dist"]` becomes:
 
-Note whether this is an **app project that still needs `setup` / `run` / `teardown`** — if so, tell the user those weren't fabricated and suggest `/dobby:onboard` to discover them. **Also flag a deferred/incomplete `tracker`** — if Step 4 mechanized an issue-tracker line whose value wasn't fully specified (a Linear line without a trivially-derivable `team`, or any tracker not fully pinned), say so and tell the user to run `/dobby:onboard` to complete the `tracker` key (especially the Linear `team`) **before using the work skills** — otherwise the project has no usable tracker selection and new work would be recorded against the default GitHub backend.
+  ```jsonc
+  { "extends": ["@kvnwolf/dobby/biome/react"], "files": { "includes": ["**", "!src/routeTree.gen.ts", "!!dist"] } }
+  ```
+
+- **Allowlist (progressive migration) `ignorePatterns` → POSITIVE `files.includes`.** A vite-plus `ignorePatterns` of the shape `["**/*.*", "!pathA", "!pathB", …]` is not a denylist but a progressive-migration ALLOWLIST — ignore everything, re-include only the migrated paths. It inverts to a POSITIVE include list: list exactly the previously-negated paths with the `!` prefixes dropped, and NO leading `"**"` (a positive include list = Biome handles ONLY matching paths). Example — old `ignorePatterns: ["**/*.*", "!src/lib", "!src/routes"]` becomes:
+
+  ```jsonc
+  { "extends": ["@kvnwolf/dobby/biome/react"], "files": { "includes": ["src/lib", "src/routes"] } }
+  ```
+
+  **Maintenance rule (field trap):** any config file CREATED later in this same migration (e.g. a new `vitest.config.ts`) must be hand-added to the allowlist, or Biome never sees it.
+
+- **Old per-path lint `rules` → `overrides`.** Each old rule override maps to an entry in the `overrides` array keyed by glob:
+
+  ```jsonc
+  { "overrides": [ { "includes": ["**/*.test.ts"], "linter": { "rules": { "suspicious": { "noExplicitAny": "off" } } } } ] }
+  ```
+
+Only carry the rules the project genuinely deviates on — the preset already sets the house style; a rule that merely re-states a preset default is noise.
+
+- **The swap is a re-lint, not a rename.** Files that were clean under oxlint surface NEW findings under the dobby preset (field case: 16 findings from 4 rules — `complexity/useOptionalChain`, `suspicious/noArrayIndexKey`, `correctness/useExhaustiveDependencies`, `a11y/noStaticElementInteractions` — on already-migrated files). Each is a human fix-vs-suppress call: fix what's cheap (optional chains), suppress the deliberate ones with `// biome-ignore lint/<group>/<rule>: <reason>` (JSX form `{/* biome-ignore … */}` inside markup), folding any existing prose justification into the reason string. Also remove DEAD suppressions Biome reports as "Suppression comment has no effect".
+
+**`drizzle.config.ts`** (when the repo uses Drizzle) → replace with the dobby re-export **when the repo matches the house convention** — unpooled env-var names (`DATABASE_URL_UNPOOLED` / `POSTGRES_URL_NON_POOLING`) and co-located schema globs (`src/**/schema.ts` + `schema.gen.ts`):
+
+```ts
+export { default } from "@kvnwolf/dobby/drizzle";
+```
+
+The preset carries the whole house config — the unpooled URL resolution (DDL must NOT go through PgBouncer), the guarded `.env.local` load, the CI-safe missing-URL guard, `dialect: "postgresql"`, `out: "./drizzle"`, and the co-located schema globs. If the repo deviates (different env-var names, a single-file schema, another dialect), keep a **spread-and-override** instead — re-export the base and override only the differing keys — rather than the bare one-liner.
+
+## Step 3: Strip `vite.config.ts` to real vite config only
+
+The vite-plus task machinery is gone — dobby infers those tasks now. Reduce `vite.config.ts` to what actual Vite needs:
+
+- **KEEP:** `plugins` and any genuine per-project `build`/`server`/`resolve` deltas. The dobby vite preset (`@kvnwolf/dobby/vite`) already provides `resolve.tsconfigPaths: true` (vite@8 native path aliases — do NOT add the `vite-tsconfig-paths` plugin; vitest itself warns to remove it, field case: added then reverted) AND `server.allowedHosts: true` (portless's per-worktree hostnames), so DROP any hand-rolled versions of those and merge only what's left onto the preset.
+- **DELETE:** the vite-plus additions — the `run`/`tasks` table, the `fmt` and `lint` blocks (their content moved to `biome.jsonc` in Step 2), and any `staged` block. The goal is a thin config that merges your plugins onto the dobby base:
+
+  ```ts
+  import { defineConfig, mergeConfig } from "vite";
+  import dobbyVite from "@kvnwolf/dobby/vite";
+
+  export default mergeConfig(dobbyVite, defineConfig({ plugins: [/* app plugins */] }));
+  ```
+- **An SSR-plugin app needs its own `vitest.config.ts`.** For a tanstack-start/nitro app, reusing the app's vite config hangs the process — the SSR plugins start servers that never tear down, so vitest exits nonzero even with every test green. The react-app wiring (react plugin + native tsconfig paths + import-time `loadEnv`) now ships as `@kvnwolf/dobby/vitest/react`, so a React app with no extra deltas writes ONE line:
+
+  ```ts
+  export { default } from "@kvnwolf/dobby/vitest/react";
+  ```
+
+  Reach for `mergeConfig` ONLY when the repo has a real delta (e.g. a mid-migration `server.deps.inline` addition):
+
+  ```ts
+  import { defineConfig, mergeConfig } from "vitest/config";
+  import dobbyVitestReact from "@kvnwolf/dobby/vitest/react";
+
+  export default mergeConfig(dobbyVitestReact, defineConfig({ test: { server: { deps: { inline: ["some-esm-only-dep"] } } } }));
+  ```
+
+  The `vitest/react` variant already carries both the base universal wiring (`server.deps.inline: ["zod"]` — vitest-under-bun mangles zod v4's dual export map — and excluding `.claude/**` from discovery) AND the react layer (`@vitejs/plugin-react`, `resolve.tsconfigPaths`, `test.env: loadEnv("test", cwd, "")` — the `""` prefix loads EVERY var for import-time env validation). A non-React SSR app merges onto the base `@kvnwolf/dobby/vitest` instead and adds its own plugin.
+
+## Step 4: Remove the dead hook + script machinery
+
+Git hooks and package scripts die with vite-plus — the gate now lives in `dobby check` (`dobby check --fix` is the pre-commit gate).
+
+- `rm -rf .vite-hooks` — the git-hook shims (`vp config` wrote them) are dead; the edit-time gate is the PostToolUse `dobby check --hook`, the pre-commit gate is `bunx dobby check --fix`.
+- Remove the `prepare` script and **every** `package.json#scripts` entry — tasks are inferred from capabilities now, so the field is dead weight (in both field cases there was **no `scripts` field at all** — tasks lived in `vite.config.ts`; if the repo likewise has none, there's simply nothing to remove here).
+
+## Step 5: Move files to canonical paths + rewrite imports — HUMAN GATE
+
+dobby imposes fixed canonical paths instead of per-project args. One move may apply:
+
+- **React-email templates → `src/emails/`** (`dobby dev` runs `email dev --dir src/emails`).
+
+If it applies (skip when the source doesn't exist or is already at the canonical path): **grep the whole repo for every import of the old path** and prepare the rewrite so no import dangles.
+
+> **HUMAN GATE — this is destructive.** Present the exact plan first: which files move where, and every import that will be rewritten (old → new). Move and rewrite **only on the user's approval**. Do the file move and the import rewrites together, in one atomic step, so the tree never has a broken import.
+
+## Step 6: Ensure `.worktreeinclude` exists
+
+A fresh git worktree needs the gitignored env/config files copied in, and `dobby up`'s setup phase re-materializes them from `.worktreeinclude`. If the file is **missing**, create it at the repo root (gitignore syntax, one glob per line) — at minimum `.env.local`, plus any other gitignored file the app needs to boot (discover from `.gitignore` + the repo's `.env*` set). If it already exists, leave it. (admin had none — its env copy was Conductor-only, so a terminal-host worktree booted without creds and hard-failed; creating `.worktreeinclude` is the fix.)
+
+## Step 7: Regenerate `dobby.config.json` + delete the legacy YAML
+
+Rewrite the config to the shrunken schema (`../onboard/references/dobby-config.md`): `files` (doc-sync, always) plus **only truly-custom** `setup`/`teardown`/`checks` extras.
+
+- **`files[]` — preserve the doc-sync rules.** When the source is `.claude/commit.config.yml` (admin), convert its `files` (`{ path, update_when[] }`) to JSON **verbatim** — carry every path and every `update_when` string across unchanged. When the source is an old `dobby.config.json` (vonda), keep its existing `files[]`.
+- **DROP `run`** and anything now inferred. The old `setup: ["vp install"]` goes (the default is `bun install`); any old local-DB-stop `teardown` goes (Neon teardown is inferred by `dobby down`); `checks: ["vpr validate"]` goes (`dobby check` IS the gate). Keep an extra **only** if it's a genuine project need the inference does not cover — an unusual install step, a real cleanup dobby can't infer, a project-specific check. A hybrid mid-migration database is exactly such a need — e.g. local Supabase still in use while the repo moves to Drizzle/Neon: `"setup": ["supabase start"]` (idempotent) replaces the old dev task's `dependsOn: db:start`; the Supabase CLI commands (`db push/reset/new`, `gen types`, `lint/diff/status`) stay MANUAL (transitional state, not inferred); NEVER wire an auto-stop (local Supabase is a machine-wide singleton shared across repos). Most migrated repos end up with `files` only.
+- **No-clobber caution:** if a hand-authored new-schema `dobby.config.json` already exists, merge the `files[]` additively and show the diff rather than overwriting it.
+- **`tracker` — mechanize the issue-tracker line, don't drop it.** Scan the legacy source (`.claude/commit.config.yml` and/or CLAUDE.md prose) for an issue-tracker declaration and carry it into `dobby.config.json`'s top-level `tracker` key — `{ "type": "github" | "linear" | "local" }` (see `../backlog/references/trackers.md`). Defer a Linear `team` to `/dobby:onboard` when it isn't trivially derivable from the source; **never fabricate a `team`** — a deferred `team` is flagged in Step 10, a wrong one silently misroutes work.
+- **Delete `.claude/commit.config.yml`** once its `files[]` (and any `tracker` line) are carried across. Leave the rest of `.claude/` (host-owned settings/commands/agents/hooks) untouched.
+
+## Step 8: Delete `.conductor/` — HUMAN GATE
+
+The kit **dropped Conductor support** — one execution host remains (terminal, with cmux enrichment). Everything `.conductor/` did is now absorbed elsewhere: workspace-as-worktree and the env-file copy are handled by native `EnterWorktree` + `dobby up`'s setup phase; `auto_run_after_setup` and the run lifecycle are `dobby up`/`down`; the Neon branch-per-worktree provisioning (admin's `setup.sh`/`archive.sh` `neonctl` glue) now lives in `dobby up`/`down`, reading `NEON_API_KEY` + `NEON_PROJECT_ID` from `.env.local`.
+
+> **HUMAN GATE — this is destructive and irreversible.** Note the rationale (Conductor removal is recorded in the kit's Conductor-removal ADR, which supersedes ADR-0005 — everything Conductor did is documented there for a possible future re-add) and confirm before running `rm -rf .conductor`. Running the kit under Conductor becomes unsupported after this.
+
+## Step 9: Rewire the CI workflow
+
+In the repo's CI (`.github/workflows/*`), replace the vite-plus install + gate with dobby's:
+
+- `vp install` (or a vite-plus setup action) → `bun install`.
+- `vpr validate` / `vp check` (and any separate `vp build`/`vp test` gate step) → **`bunx dobby check`** — the single full gate (biome, tsc, knip, capability-gated build + vitest, plus any `checks[]` extras).
+
+Leave the rest of the workflow (checkout, Bun setup, caching, deploy) as it is.
+
+## Step 10: Verify + report the summary
+
+Prove the migration landed, one pass:
+
+- **`bunx dobby check`** runs **green** from the repo root — the full inferred gate passes against the migrated tree.
+- **`bunx dobby env`** is **sane** — capabilities detected (vite, drizzle/neon, react-email if present), `config: present`, and a `devUrl` for a vite repo.
+
+Then report the **migration summary** in plain buckets:
+
+- **Swapped** — dobby added; which toolchain deps removed; vite/vitest de-aliased and restored real; which `package.json` keys preserved (e.g. the portless key).
+- **Thinned** — `tsconfig.json`/`biome.jsonc` now `extends` the presets; which lint rules/`ignorePatterns` migrated to Biome `overrides`/`files.includes`; `vite.config.ts` stripped to real config.
+- **Removed** — `.vite-hooks/`, `prepare` + scripts, `.claude/commit.config.yml`, `.conductor/`.
+- **Moved** — which files went to `src/emails/` and how many imports were rewritten (or "none applied").
+- **Config** — the new `dobby.config.json` (`files` count; any extras kept and why); `.worktreeinclude` created or already present; CI rewired.
+
+Flag any follow-ups the migration surfaced — e.g. a `setup[]`/`teardown[]`/`checks[]` extra the inference doesn't cover, or a stale README the swap left behind. Run `bunx dobby env` to confirm the resolved capabilities and the inferred `db:*` task names. **Also flag a deferred/incomplete `tracker`** — if Step 7 mechanized an issue-tracker line whose value wasn't fully specified (a Linear line without a trivially-derivable `team`, or any tracker not fully pinned), say so and tell the user to run `/dobby:onboard` to complete the `tracker` key (especially the Linear `team`) **before using the work skills** — otherwise the project has no usable tracker selection and new work would be recorded against the default GitHub backend.
 
 ## Next step
 
-The migration is done. End by presenting an **AskUserQuestion** (one question) that restates the config cutover is complete and offers:
+The migration is done. End by presenting an **AskUserQuestion** (one question) that restates the cutover to the dobby world is complete and offers:
 
-- `/dobby:commit` *(Recommended)* — commit the cutover (the new `dobby.config.json`, the deleted legacy file, and the CLAUDE.md edits); its own checks run green against the migrated config, proving the move end-to-end.
-- `/dobby:onboard` — first, if the summary flagged missing `setup`/`run`/`teardown` or an incomplete `tracker` (e.g. a Linear line whose `team` was deferred).
-- **Stop here** — end the turn.
+- `/dobby:commit` *(Recommended)* — commit the migration (added dep, thinned configs, stripped `vite.config.ts`, removed machinery, deleted `.conductor/` + legacy YAML, moved files, new `dobby.config.json`, CI rewire); its `bunx dobby check --fix` gate runs green, proving the move end-to-end.
+- `/dobby:onboard` — first, if Step 10 flagged an incomplete `tracker` (e.g. a Linear line whose `team` was deferred) to complete before using the work skills.
+- **Stop here** — end the turn (e.g. to eyeball the moved files or the CI diff first).
 
 On the user's selection, invoke the chosen `/dobby:<skill>` via the Skill tool (chaining runs on the session's current model/effort). "Stop here" ends the turn.
 
 ## Language
 
-Interact with the user in their language. Write the migrated `dobby.config.json` and any CLAUDE.md edits in English; keep domain terms in their real-world form and preserve the user's own prose verbatim when it's kept.
+Interact with the user in their language. Write the migrated `dobby.config.json`, the thin config files, and any code/import edits in English; keep domain terms and file paths in their real-world form, and preserve the user's own prose verbatim when it's kept.
 
 ## Acceptance checklist
 
-- [ ] Precondition checked first: legacy `.claude/commit.config.yml` located; if absent-but-`dobby.config.json`-present → reported already-migrated and stopped; if neither → suggested `/dobby:onboard` and stopped
-- [ ] No-clobber respected: an existing `dobby.config.json` was NEVER overwritten — on a collision, stopped and reported instead
-- [ ] `files` + `checks` converted YAML → JSON verbatim (paths, `update_when` strings, and every `run` command byte-identical); `setup`/`run`/`teardown` NOT fabricated; schema per `../onboard/references/dobby-config.md`
-- [ ] `dobby.config.json` written at the repo ROOT (not `.claude/`, not `.dobby/`)
-- [ ] Legacy `.claude/commit.config.yml` deleted; the rest of `.claude/` left untouched
-- [ ] CLAUDE.md scanned; each hit classified MECHANIZE / DELETE / KEEP; genuine project knowledge kept; an issue-tracker line naming Linear/local MECHANIZED into the top-level `tracker` key (value — including any `team` key — deferred to `/dobby:onboard` when not trivially derivable; nothing fabricated), not deleted
-- [ ] Every CLAUDE.md edit shown as a diff and applied only on explicit user approval (in-stage gate); a single pointer line to `dobby.config.json` remains
-- [ ] Verified: `jq .` parses `dobby.config.json`; every `checks[].run` command runs green from it, proving the gate survived
-- [ ] Summary reported (moved / deleted / left); app projects still needing `setup`/`run`/`teardown` were told to run `/dobby:onboard`
-- [ ] Ended with an AskUserQuestion gate (`/dobby:commit` recommended, `/dobby:onboard` first if `setup`/`run`/`teardown` missing, or stop here); the chosen `/dobby:<skill>` invoked through the Skill tool
+- [ ] Preflight ran first: legacy signals detected (`.claude/commit.config.yml`, old-era `dobby.config.json` with `run`, vite-plus/aliases, `.vite-hooks`/`.conductor`); an already-migrated repo was reported and left untouched; the plan (with the two gates flagged) was announced
+- [ ] Deps swapped: `@kvnwolf/dobby` added; present toolchain deps removed (`vite-plus`/`ultracite`/`knip`/`taze`/`oxlint`/`portless`); vite/vitest aliases dropped; real `vite` (and `vitest` if tests) restored; project keys preserved (portless key, `trustedDependencies`)
+- [ ] Thin configs written: `tsconfig.json` `extends @kvnwolf/dobby/tsconfig` (or `/tsconfig/vite` for a Vite app) keeping only project deltas (paths/include/types), absorbed options dropped (`allowImportingTsExtensions`/`noUncheckedSideEffectImports`); `biome.jsonc` `extends @kvnwolf/dobby/biome/{react|core}` with old `ignorePatterns`→`files.includes` (`**` first, `!`/`!!` negation) and old rules→`overrides`; `drizzle.config.ts` re-exports `@kvnwolf/dobby/drizzle` when the repo matches the house convention (spread-override otherwise)
+- [ ] `vite.config.ts` stripped to a `mergeConfig` onto `@kvnwolf/dobby/vite` (plugins/genuine deltas kept, native tsconfig paths + `server.allowedHosts` inherited; `run`/`tasks`/`fmt`/`lint`/`staged` blocks deleted); an SSR app's `vitest.config.ts` is the `@kvnwolf/dobby/vitest/react` one-liner (mergeConfig only for real deltas)
+- [ ] `.vite-hooks/` removed; `prepare` + every `package.json#scripts` entry removed
+- [ ] HUMAN GATE honored before file moves; the canonical-path move done with all imports rewritten atomically (react-email → `src/emails/`); skipped cleanly when N/A
+- [ ] `.worktreeinclude` created (at least `.env.local`) if missing; left as-is if present
+- [ ] `dobby.config.json` regenerated to the shrunken schema: `files[]` preserved/converted verbatim; `run` and inferred `setup`/`teardown`/`checks` dropped; only truly-custom extras kept; no-clobber on an existing hand-authored config; `.claude/commit.config.yml` deleted, rest of `.claude/` untouched
+- [ ] Legacy issue-tracker line (naming Linear/local/github, from `.claude/commit.config.yml` or CLAUDE.md) MECHANIZED into `dobby.config.json`'s top-level `tracker` key (`{ "type": ... }`), NOT deleted — Linear `team` key deferred to `/dobby:onboard` when not trivially derivable, never fabricated; an incomplete `tracker` flagged in the summary
+- [ ] HUMAN GATE honored before deleting `.conductor/`; ADR rationale (Conductor removal, supersedes ADR-0005) noted
+- [ ] CI rewired: `vp install`→`bun install`, `vpr validate`/`vp check`→`bunx dobby check`; rest of the workflow left intact
+- [ ] Verified: `bunx dobby check` green + `bunx dobby env` sane; migration summary reported (swapped/thinned/removed/moved/config)
+- [ ] Ended with the AskUserQuestion gate (`/dobby:commit` recommended, `/dobby:onboard` first if `tracker` incomplete, or stop here); the chosen `/dobby:<skill>` invoked through the Skill tool

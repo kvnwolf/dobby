@@ -1,0 +1,7 @@
+{
+  "name": "env-react-email-plain",
+  "private": true,
+  "dependencies": {
+    "react-email": "^2.0.0"
+  }
+}

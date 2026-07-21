@@ -1,6 +1,6 @@
 # The CLI is zero-framework, zero-dependency, with a Node/Bun-portable core
 
-**Status:** accepted
+**Status:** accepted — the zero-dependency and no-long-running pillars are superseded by [ADR-0011](./0011-bundled-toolchain-zero-config.md); the portable core, the `run()` seam, and release-from-main stand.
 
 `@kvnwolf/dobby` is a Bun-only CLI (raw TS bin, `#!/usr/bin/env bun`, no build step) — yet its core (`cli/src/run.ts`, `cli/src/detect.ts`) deliberately uses **only `node:*` APIs** (util `parseArgs`, fs, path) and **no `Bun.*` globals or `bun:` imports**. The non-obvious reason: the test suite runs under **vitest via `vp test`** (vite-plus), which executes on a **Node/Vite runtime** where `Bun` does not exist — anything the tests import must be runtime-portable. This same coupling is why the **bunli** framework was evaluated and rejected: its `@bunli/core` hard-depends on Bun-runtime globals (`Bun.stringWidth`, `bun:ffi`), so its test helpers — the main thing it offered us — can't run under our suite; it also carries 9 dependencies and is pre-1.0, against a one-command CLI that needs none. The single test seam is `run(argv, cwd) → { exitCode, stdout, stderr }`; the bin entry (`index.ts`) is a logic-free process adapter and the only Bun-executed-only file.
 

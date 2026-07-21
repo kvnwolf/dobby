@@ -70,7 +70,7 @@ One shared switcher component, located wherever shared UI lives, so both sub-sha
 
 ### 5. Hand it over
 
-Surface the URL **on the already-running dev server** — resolve it the way `/dobby:execute` Step 2 does (`portless get`, identical on both execution hosts; on the terminal host that recipe ensures the run is up first); never start a second one — + the `?variant=` keys. The user flips through at their pace. The interesting feedback is usually **"I want the header from B with the sidebar from C"** — that's the actual design they want. Apply adjustments through the implementor; add a variant D if asked.
+Surface the URL **on the already-running dev server** — resolve it the way `/dobby:execute` Step 2 does (`bunx dobby up` ensures the run is up, then read `devUrl` from `bunx dobby env`); never start a second one — + the `?variant=` keys. The user flips through at their pace. The interesting feedback is usually **"I want the header from B with the sidebar from C"** — that's the actual design they want. Apply adjustments through the implementor; add a variant D if asked.
 
 ### 6. Capture the answer and clean up
 
