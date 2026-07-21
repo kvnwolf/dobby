@@ -939,11 +939,16 @@ function executeUp(context: UpContext): {
 		}
 	}
 
-	// (3) Start: cmux owns the process in named panes, else spawn detached.
+	// (3) Start: cmux owns the process in named panes, else spawn detached. A failed
+	// detached spawn fails `up` NOW (never entering the liveness wait for a server
+	// that never started); the cmux path is owned by cmux and unaffected.
 	if (context.cmux !== null) {
 		createPanes(context, context.cmux);
-	} else {
-		startDetached(context);
+	} else if (!startDetached(context)) {
+		return {
+			exitCode: 1,
+			failure: "could not start `bunx dobby dev` — see .dobby/dev.log",
+		};
 	}
 
 	// (4) Wait for liveness (retry loop). Never reachable → fail with the trust hint.
@@ -1287,8 +1292,10 @@ function diffNewSurface(
 
 // Spawn `dobby dev` DETACHED with output to <workroot>/.dobby/dev.log and its pid
 // to <workroot>/.dobby/dev.pid (so a later `down` can signal the group), ensuring
-// .dobby/ is gitignored. NOT CI-tested.
-function startDetached(context: UpContext): void {
+// .dobby/ is gitignored. Returns true when the spawn took (pid written), false when
+// the spawn failed (no pidfile) so `up` can fail fast instead of waiting on liveness
+// for a server that never started. NOT CI-tested.
+function startDetached(context: UpContext): boolean {
 	const dobbyDir = join(context.workroot, ".dobby");
 	mkdirSync(dobbyDir, { recursive: true });
 	ensureGitignored(context.workroot, ".dobby/");
@@ -1296,9 +1303,11 @@ function startDetached(context: UpContext): void {
 		root: context.workroot,
 		logPath: join(dobbyDir, "dev.log"),
 	});
-	if (pid !== undefined) {
-		writeFileSync(join(dobbyDir, "dev.pid"), `${pid}\n`);
+	if (pid === undefined) {
+		return false;
 	}
+	writeFileSync(join(dobbyDir, "dev.pid"), `${pid}\n`);
+	return true;
 }
 
 // Append `entry` to <workroot>/.gitignore when absent (idempotent). Best-effort.
@@ -1442,7 +1451,10 @@ function executeDown(
 				closeKitPanes(context);
 				break;
 			case "kill-pidfile":
-				killFromPidfile(join(context.workroot, action.pidRel));
+				killFromPidfile(
+					join(context.workroot, action.pidRel),
+					context.workroot,
+				);
 				break;
 			case "neon-delete":
 				deleteNeonBranch(context, action.branch, action.projectId);
@@ -1479,15 +1491,18 @@ function closeKitPanes(context: DownContext): void {
 }
 
 // Kill the detached run's process GROUP (SIGTERM to -pid) when the pid is still
-// alive; either way remove the pidfile (a stale pid is cleaned up silently).
-function killFromPidfile(pidPath: string): void {
+// alive AND its command line still carries the detached run's signature; either way
+// remove the pidfile (a stale pid is cleaned up silently). The ownership check guards
+// against pid reuse: a recycled pid can pass `isAlive` (EPERM counts even another
+// user's process alive), so we never signal a group whose command line isn't ours.
+function killFromPidfile(pidPath: string, workroot: string): void {
 	let pid: number;
 	try {
 		pid = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
 	} catch {
 		return;
 	}
-	if (Number.isInteger(pid) && isAlive(pid)) {
+	if (Number.isInteger(pid) && isAlive(pid) && ownsDetachedRun(pid, workroot)) {
 		try {
 			process.kill(-pid, "SIGTERM");
 		} catch {
@@ -1506,6 +1521,21 @@ function isAlive(pid: number): boolean {
 	} catch (error) {
 		return (error as NodeJS.ErrnoException).code === "EPERM";
 	}
+}
+
+// Whether `pid`'s command line still carries the detached run's signature
+// (`dobby dev` — it was spawned as `bunx dobby dev`). Guards pid REUSE: a live pid
+// that is now some unrelated process must not have its group SIGTERM'd. `ps` is a
+// system tool → bare. A failed/empty `ps` (or a non-matching command) is treated as
+// NOT ours (the pid is stale → signal nothing, the caller still removes the file).
+function ownsDetachedRun(pid: number, workroot: string): boolean {
+	const result = runCapture("ps", ["-o", "command=", "-p", String(pid)], {
+		root: workroot,
+	});
+	if (result.error || result.status !== 0) {
+		return false;
+	}
+	return result.stdout.includes("dobby dev");
 }
 
 // Delete the neon isolation branch (a missing branch is idempotently fine). NOT
