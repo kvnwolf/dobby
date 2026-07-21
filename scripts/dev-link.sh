@@ -9,8 +9,14 @@ set -euo pipefail
 # can't do this; a path-based `file:` dependency can).
 #
 # Run FROM the target project's root:
-#   <dobby-worktree>/scripts/dev-link.sh          # link this worktree + disable the global plugin
-#   <dobby-worktree>/scripts/dev-link.sh --undo   # restore the npm version + re-enable the plugin
+#   <dobby-worktree>/scripts/dev-link.sh            # link this worktree + disable the global plugin
+#   <dobby-worktree>/scripts/dev-link.sh --refresh  # re-copy the CLI after worktree edits (no claude launch)
+#   <dobby-worktree>/scripts/dev-link.sh --undo     # restore the npm version + re-enable the plugin
+#
+# Refreshing WITHOUT leaving the claude session also works — run in its Bash:
+#   rm -rf node_modules/@kvnwolf/dobby && bun install
+# (each `bunx dobby` spawns fresh, so the new copy applies immediately; skills
+# hot-reload on their own via --plugin-dir; agents/hooks need /reload-plugins.)
 #
 # What it does:
 #   1. .claude/settings.local.json — disable the user-scope `dobby@dobby` plugin
@@ -33,6 +39,14 @@ TARGET="$PWD"
 [ "$TARGET" != "$WORKTREE" ] || { echo "error: target IS the dobby worktree — run from a consumer project" >&2; exit 1; }
 
 SETTINGS="$TARGET/.claude/settings.local.json"
+
+if [ "${1:-}" = "--refresh" ]; then
+	grep -q '"@kvnwolf/dobby": "file:' package.json || { echo "error: not linked (run without flags first)" >&2; exit 1; }
+	rm -rf node_modules/@kvnwolf/dobby
+	bun install
+	echo "refreshed: @kvnwolf/dobby $(./node_modules/.bin/dobby --version 2>/dev/null || echo '(bin not resolving!)')"
+	exit 0
+fi
 
 if [ "${1:-}" = "--undo" ]; then
 	# Re-enable the global plugin (drop the override; empty enabledPlugins is dropped too).

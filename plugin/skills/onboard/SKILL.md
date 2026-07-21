@@ -31,10 +31,16 @@ bun add -d @kvnwolf/dobby
 
 **Write the thin config files that extend dobby's shared presets** — no-clobber: only if the file does NOT already exist; if it does, leave the user's config and just add the `extends` if it's missing, with approval:
 
-- `tsconfig.json` → `{ "extends": "@kvnwolf/dobby/tsconfig", ... }` with only the project's own `compilerOptions` / `paths` overrides on top.
+- `tsconfig.json` → `{ "extends": "@kvnwolf/dobby/tsconfig", ... }` with only the project's own `compilerOptions` / `paths` overrides on top. For a **Vite app**, extend the vite variant instead — `@kvnwolf/dobby/tsconfig/vite` (the base plus `types: ["vite/client"]`).
 - `biome.jsonc` → extends `@kvnwolf/dobby/biome/core` (or `@kvnwolf/dobby/biome/react` for a React app) — the per-capability preset variant.
 
-*Why:* dobby ships the canonical TypeScript + Biome rules; the consumer keeps a one-line `extends`, which gives centralized config AND native editor support (the editor resolves the preset through `node_modules`).
+**Where the capability applies, add the matching config presets** (all are config objects you re-export/merge, not `extends` targets):
+
+- **Vite app** → `vite.config.ts` merges your plugins onto the base: `import dobbyVite from "@kvnwolf/dobby/vite"; export default mergeConfig(dobbyVite, defineConfig({ plugins: [...] }))` (the base already gives native tsconfig paths + `server.allowedHosts`).
+- **Has tests (vitest)** → `vitest.config.ts` re-exports the variant — `export { default } from "@kvnwolf/dobby/vitest/react"` for a React app (react plugin + tsconfig paths + import-time env), or `@kvnwolf/dobby/vitest` (the base) for a non-React app, reaching for `mergeConfig` only on a real delta.
+- **Uses Drizzle** → `drizzle.config.ts` re-exports `export { default } from "@kvnwolf/dobby/drizzle"` when the repo matches the house convention (unpooled env-var names + co-located `src/**/schema.ts` / `schema.gen.ts` globs); spread-and-override for deviations.
+
+*Why:* dobby ships the canonical TypeScript + Biome rules AND the house Vite/Vitest/drizzle config; the consumer keeps a one-line `extends` or re-export, which gives centralized config AND native editor support (the editor resolves the preset through `node_modules`).
 
 ## Step 3: Scaffold the base files
 
@@ -103,7 +109,7 @@ Interview in the user's language. **Write all generated docs and code — CLAUDE
 
 - [ ] Interviewed: product, domain terms, stack (docs confirmed via /find-docs), issue tracker (github default / linear / local, via AskUserQuestion), greenfield-or-existing
 - [ ] `@kvnwolf/dobby` installed as the project's single dev dependency (`bun add -d @kvnwolf/dobby`) — never a global install
-- [ ] Thin config files written (no-clobber): `tsconfig.json` extends `@kvnwolf/dobby/tsconfig`; `biome.jsonc` extends `@kvnwolf/dobby/biome/{core,react}`
+- [ ] Thin config files written (no-clobber): `tsconfig.json` extends `@kvnwolf/dobby/tsconfig` (or `/tsconfig/vite` for a Vite app); `biome.jsonc` extends `@kvnwolf/dobby/biome/{core,react}`; where the capability applies — `vite.config.ts` merges onto `@kvnwolf/dobby/vite`, `vitest.config.ts` re-exports `@kvnwolf/dobby/vitest{,/react}`, `drizzle.config.ts` re-exports `@kvnwolf/dobby/drizzle`
 - [ ] No-clobber respected: existing `CONTEXT.md` / `CLAUDE.md` / `AGENTS.md` / `.gitignore` / `dobby.config.json` / `.worktreeinclude` were NOT overwritten — merged additively with user approval; an existing `AGENTS.md` was extended, not shadowed by a new `CLAUDE.md`
 - [ ] CONTEXT.md scaffolded (initial glossary) — in English; domain terms keep their real-world form
 - [ ] CLAUDE.md scaffolded (product, stack, module map, deep-module conventions, workflow config) — in English; each scaffolded choice explained in plain language; Dev/Workflow note says the app runs via `dobby up`/`dobby dev` (inferred, portless-wrapped) and the verifier obtains the dev URL via `bunx dobby env` (no hardcoded URL)

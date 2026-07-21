@@ -34,14 +34,39 @@ The exported presets:
 
 | Import | What it is |
 | --- | --- |
-| `@kvnwolf/dobby/tsconfig` | The strict bundler TypeScript base (`strict`, `noUncheckedIndexedAccess`, `noEmit`, `module: preserve`, `moduleResolution: bundler`, …). |
+| `@kvnwolf/dobby/tsconfig` | The strict bundler TypeScript base (`strict`, `noUncheckedIndexedAccess`, `noUncheckedSideEffectImports`, `allowImportingTsExtensions`, `noEmit`, `module: preserve`, `moduleResolution: bundler`, …). |
+| `@kvnwolf/dobby/tsconfig/vite` | The vite-app tsconfig variant — extends the base and adds `types: ["vite/client"]`. |
 | `@kvnwolf/dobby/biome/core` | Biome preset extending `ultracite/biome/core` (framework-agnostic). |
 | `@kvnwolf/dobby/biome/react` | Biome preset extending both `ultracite/biome/core` and `ultracite/biome/react`. |
+| `@kvnwolf/dobby/vite` | The universal Vite app config — native tsconfig path aliases (`resolve.tsconfigPaths`, vite@8) + `server.allowedHosts: true` (portless serves through per-worktree custom hostnames). No plugins — you merge yours on top. |
 | `@kvnwolf/dobby/vitest` | The universal Vitest base — inlines `zod` (so vitest-under-bun can't mangle its export map) and excludes `.claude/**`. A default-exported config you merge your app-specific bits onto. |
+| `@kvnwolf/dobby/vitest/react` | The React-app Vitest variant — the base plus `@vitejs/plugin-react`, native tsconfig paths, and import-time env loading (`loadEnv`). Lives apart from the base so the base stays importable without Vite. |
+| `@kvnwolf/dobby/drizzle` | The house drizzle-kit config — unpooled URL for DDL, `postgresql` dialect, migrations out at `./drizzle`, schema globbed from co-located `src/**/schema.ts` + `schema.gen.ts`. |
 
-The Vitest preset is a config object, so you merge your project's plugins/env on top rather than `extends`-ing it:
+The tsconfig and Biome presets are `extends` targets; the Vite/Vitest/drizzle presets are config objects you re-export or merge onto.
 
-`vitest.config.ts`
+**`tsconfig.json`** (a Vite app) — extend the vite variant, keeping only your `paths`/`include`:
+
+```json
+{ "extends": "@kvnwolf/dobby/tsconfig/vite", "compilerOptions": { "paths": { "@/*": ["./src/*"] } }, "include": ["src"] }
+```
+
+**`vite.config.ts`** — merge your app plugins onto the dobby base:
+
+```ts
+import { defineConfig, mergeConfig } from "vite";
+import dobbyVite from "@kvnwolf/dobby/vite";
+
+export default mergeConfig(dobbyVite, defineConfig({ plugins: [/* app plugins */] }));
+```
+
+**`vitest.config.ts`** — a config object, so you merge (never `extends`). A React app with no extra deltas is one line:
+
+```ts
+export { default } from "@kvnwolf/dobby/vitest/react";
+```
+
+Reach for `mergeConfig` only when you have real deltas (non-React apps merge onto `@kvnwolf/dobby/vitest`, the base):
 
 ```ts
 import { defineConfig, mergeConfig } from "vitest/config";
@@ -53,6 +78,12 @@ export default mergeConfig(
     // your app-specific plugins / test.env / resolve go here
   }),
 );
+```
+
+**`drizzle.config.ts`** — re-export when your repo matches the house convention (unpooled env names + co-located schema globs); spread-and-override for deltas:
+
+```ts
+export { default } from "@kvnwolf/dobby/drizzle";
 ```
 
 ## Commands

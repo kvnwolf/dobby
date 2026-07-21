@@ -7,9 +7,13 @@
 	"type": "module",
 	"exports": {
 		"./tsconfig": "./tsconfig.base.json",
+		"./tsconfig/vite": "./tsconfig.vite.json",
 		"./biome/core": "./biome/core.jsonc",
 		"./biome/react": "./biome/react.jsonc",
-		"./vitest": "./vitest.base.ts"
+		"./vite": "./vite.base.ts",
+		"./vitest": "./vitest.base.ts",
+		"./vitest/react": "./vitest.react.ts",
+		"./drizzle": "./drizzle.base.ts"
 	},
 	"dependencies": {
 		"@biomejs/biome": "^2.5.4",

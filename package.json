@@ -13,9 +13,12 @@
 	"knip": {
 		"ignoreDependencies": [
 			"@biomejs/biome",
+			"@vitejs/plugin-react",
+			"drizzle-kit",
 			"portless",
 			"taze",
-			"ultracite"
+			"ultracite",
+			"vite"
 		]
 	}
 }

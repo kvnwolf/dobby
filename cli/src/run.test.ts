@@ -1079,6 +1079,195 @@ describe("dobby preset — vitest.base.ts", () => {
 });
 
 // ===========================================================================
+// TASK 3b — The stack-preset suite: vite/vitest-react/drizzle presets so a
+// consumer of the house stack (TanStack Start + Drizzle/Neon + vite + vitest)
+// carries only DELTAS. Six preset assets, each observed the same way as the
+// task-3 presets above: read as FILES (config assets are read, never imported —
+// the `run()` seam is for CLI behavior, and these import consumer-resolved
+// packages that this repo does NOT install, so a real import would not resolve).
+//
+// Independent sources for every expected value below: the export targets, the
+// tsconfig flags, the vite/vitest/drizzle keys, and the schema globs are all
+// LITERALS the spec states outright.
+// ===========================================================================
+
+// Strip `//` line comments so a marker assertion reads the actual CONFIG, not the
+// documented consumer snippet in a file's header (vite.base.ts legitimately shows
+// `plugins:` inside its header comment; the config body must NOT declare it).
+const codeOnly = (raw: string) =>
+	raw
+		.split("\n")
+		.filter((line) => !line.trim().startsWith("//"))
+		.join("\n");
+
+// --- package.json exports for the four new presets --------------------------
+describe("dobby stack presets — package.json exports", () => {
+	it("maps ./tsconfig/vite to ./tsconfig.vite.json", () => {
+		expect(readCliManifest().exports?.["./tsconfig/vite"]).toBe(
+			"./tsconfig.vite.json",
+		);
+	});
+
+	it("maps ./vite to ./vite.base.ts", () => {
+		expect(readCliManifest().exports?.["./vite"]).toBe("./vite.base.ts");
+	});
+
+	it("maps ./vitest/react to ./vitest.react.ts", () => {
+		expect(readCliManifest().exports?.["./vitest/react"]).toBe(
+			"./vitest.react.ts",
+		);
+	});
+
+	it("maps ./drizzle to ./drizzle.base.ts", () => {
+		expect(readCliManifest().exports?.["./drizzle"]).toBe("./drizzle.base.ts");
+	});
+});
+
+// --- tsconfig.base.json gains the two universal-safe options ----------------
+// D1: allowImportingTsExtensions only ALLOWS the style (base already has noEmit)
+// and noUncheckedSideEffectImports is pure strictness — both are universal-safe.
+describe("dobby preset — tsconfig.base.json (D1 additions)", () => {
+	it("allows importing .ts extensions", () => {
+		expect(safeRead("tsconfig.base.json")).toMatch(
+			/"allowImportingTsExtensions"\s*:\s*true/,
+		);
+	});
+
+	it("checks unresolved side-effect imports", () => {
+		expect(safeRead("tsconfig.base.json")).toMatch(
+			/"noUncheckedSideEffectImports"\s*:\s*true/,
+		);
+	});
+});
+
+// --- tsconfig.vite.json — the vite-app tsconfig variant (D2) -----------------
+describe("dobby preset — tsconfig.vite.json", () => {
+	it("exists as an exported preset file", () => {
+		expect(existsSync(cliFile("tsconfig.vite.json"))).toBe(true);
+	});
+
+	it("extends the strict base and adds the vite/client types", () => {
+		const raw = safeRead("tsconfig.vite.json");
+		expect(raw).toMatch(/"extends"\s*:\s*"\.\/tsconfig\.base\.json"/);
+		expect(raw).toMatch(/"vite\/client"/);
+	});
+});
+
+// --- vite.base.ts — the universal vite-app config (D3) -----------------------
+// The dobby-lifecycle-coupled bits (native tsconfig paths + portless's custom
+// hostnames) are preset; plugins are consumer-owned + version-coupled, so the
+// config body carries NONE.
+describe("dobby preset — vite.base.ts", () => {
+	it("exists as an exported preset file", () => {
+		expect(existsSync(cliFile("vite.base.ts"))).toBe(true);
+	});
+
+	it("enables vite@8 native tsconfig path resolution (never the plugin)", () => {
+		expect(safeRead("vite.base.ts")).toMatch(/tsconfigPaths/);
+	});
+
+	it("accepts portless's custom hostnames (server.allowedHosts)", () => {
+		expect(safeRead("vite.base.ts")).toMatch(/allowedHosts/);
+	});
+
+	it("declares NO plugins in the config body (consumer-owned + version-coupled)", () => {
+		// The header comment shows `plugins:` in the merge snippet — strip comments
+		// so this reads the config object, not the docs.
+		expect(codeOnly(safeRead("vite.base.ts"))).not.toMatch(/plugins:/);
+	});
+});
+
+// --- vitest.react.ts — the react-app vitest variant (D4) ---------------------
+// Layered on the base via mergeConfig; lives in its OWN file precisely because it
+// imports vite / @vitejs packages (the base must stay importable without vite).
+describe("dobby preset — vitest.react.ts", () => {
+	it("exists as an exported preset file", () => {
+		expect(existsSync(cliFile("vitest.react.ts"))).toBe(true);
+	});
+
+	it("layers on the vitest base (imports ./vitest.base)", () => {
+		expect(safeRead("vitest.react.ts")).toMatch(/from\s+"\.\/vitest\.base/);
+	});
+
+	it("adds the react test plugin and import-time env loading", () => {
+		const raw = safeRead("vitest.react.ts");
+		expect(raw).toMatch(/react\(\)/);
+		expect(raw).toMatch(/loadEnv/);
+	});
+});
+
+// --- drizzle.base.ts — the house drizzle-kit config (D5) ---------------------
+// Field-proven whole; every clause is a spec literal.
+describe("dobby preset — drizzle.base.ts", () => {
+	it("exists as an exported preset file", () => {
+		expect(existsSync(cliFile("drizzle.base.ts"))).toBe(true);
+	});
+
+	it("resolves the UNPOOLED URL from both house env-var names", () => {
+		const raw = safeRead("drizzle.base.ts");
+		expect(raw).toMatch(/DATABASE_URL_UNPOOLED/);
+		expect(raw).toMatch(/POSTGRES_URL_NON_POOLING/);
+	});
+
+	it("targets postgresql with migrations out at ./drizzle", () => {
+		const raw = safeRead("drizzle.base.ts");
+		expect(raw).toMatch(/"postgresql"/);
+		expect(raw).toMatch(/"\.\/drizzle"/);
+	});
+
+	it("globs co-located schema across modules (schema.ts + schema.gen.ts)", () => {
+		const raw = safeRead("drizzle.base.ts");
+		expect(raw).toMatch(/"\.\/src\/\*\*\/schema\.ts"/);
+		expect(raw).toMatch(/"\.\/src\/\*\*\/schema\.gen\.ts"/);
+	});
+
+	it("skips the missing-URL hard-fail under CI (config loads to read schema)", () => {
+		expect(safeRead("drizzle.base.ts")).toMatch(/process\.env\.CI/);
+	});
+});
+
+// --- No consumer-resolved package leaks into cli dependencies ----------------
+// The dual-Vite invariant, extended to the whole preset suite: vite / vitest /
+// drizzle-kit / @vitejs are ALWAYS resolved from the consumer's tree at
+// config-load time, never bundled inside dobby.
+describe("dobby dependencies — no consumer-resolved stack packages", () => {
+	for (const name of [
+		"vite",
+		"vitest",
+		"drizzle-kit",
+		"@vitejs/plugin-react",
+	]) {
+		it(`never declares ${name} as a dobby dependency`, () => {
+			const deps = readCliManifest().dependencies ?? {};
+			expect(deps[name]).toBeUndefined();
+		});
+	}
+
+	it("declares no @vitejs/* package at all", () => {
+		const deps = readCliManifest().dependencies ?? {};
+		expect(Object.keys(deps).some((key) => key.startsWith("@vitejs/"))).toBe(
+			false,
+		);
+	});
+});
+
+// --- Dogfood: the repo's own root vitest.config.ts re-exports the base (D6) --
+// Proves the base preset loads under vitest with vite NOT installed, and stops
+// the suite discovering .claude/** worktree copies. Read relative to cli/ (the
+// file lives one level up, at the repo root).
+describe("dobby dogfood — root vitest.config.ts", () => {
+	it("exists at the repo root", () => {
+		expect(existsSync(cliFile("../vitest.config.ts"))).toBe(true);
+	});
+
+	it("re-exports the dobby vitest BASE preset (no vite/react in this repo)", () => {
+		const raw = safeRead("../vitest.config.ts");
+		expect(raw).toMatch(/export\s+\{\s*default\s*\}/);
+		expect(raw).toMatch(/"@kvnwolf\/dobby\/vitest"/);
+	});
+});
+
+// ===========================================================================
 // TASK 4 — Full gate: selective flags + knip/build/test steps.
 //
 // This task grows `dobby check` from the task-3 core (biome + tsc) into the FULL

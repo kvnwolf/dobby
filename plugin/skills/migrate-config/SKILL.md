@@ -48,13 +48,13 @@ The toolchain is now bundled inside dobby; the consumer keeps only real build-ti
 
 Two small files `extends` dobby's shared presets, giving centralized rules plus native editor support.
 
-**`tsconfig.json`** → extend the base, preserving only the project's own fields:
+**`tsconfig.json`** → extend the base (the **vite variant** for a Vite app), preserving only the project's own fields:
 
 ```json
-{ "extends": "@kvnwolf/dobby/tsconfig", "compilerOptions": { "paths": { "@/*": ["./src/*"] } }, "include": ["src"] }
+{ "extends": "@kvnwolf/dobby/tsconfig/vite", "compilerOptions": { "paths": { "@/*": ["./src/*"] } }, "include": ["src"] }
 ```
 
-Carry over the project-specific `compilerOptions.paths`, `include`, `types`, and any genuinely project-local option; **drop** everything the base already sets (`strict`, `noUncheckedIndexedAccess`, `module`, `moduleResolution`, `noEmit`, `jsx`, …) so the thin file only holds deltas.
+A **Vite app** extends `@kvnwolf/dobby/tsconfig/vite` (the base plus `types: ["vite/client"]`); a non-Vite project extends `@kvnwolf/dobby/tsconfig`. Carry over the project-specific `compilerOptions.paths`, `include`, `types`, and any genuinely project-local option; **drop** everything the base already sets (`strict`, `noUncheckedIndexedAccess`, `noUncheckedSideEffectImports`, `allowImportingTsExtensions`, `module`, `moduleResolution`, `noEmit`, `jsx`, …) — and on the vite variant drop `types: ["vite/client"]` too — so the thin file only holds deltas.
 
 **Mid-migration escape hatch.** Unlike Biome, `tsc` has NO per-path allowlist — it checks the whole import graph, so base strictness like `noUnusedLocals`/`noUnusedParameters` fires on legacy/unmigrated paths the lint allowlist deliberately skips. A progressively-migrating repo MAY set them `false` in its thin file — a DELIBERATE deviation, not preset noise — with a rationale comment and a "revisit when fully migrated" flag; Step 10's summary must list any such deviation as debt.
 
@@ -90,28 +90,43 @@ Only carry the rules the project genuinely deviates on — the preset already se
 
 - **The swap is a re-lint, not a rename.** Files that were clean under oxlint surface NEW findings under the dobby preset (field case: 16 findings from 4 rules — `complexity/useOptionalChain`, `suspicious/noArrayIndexKey`, `correctness/useExhaustiveDependencies`, `a11y/noStaticElementInteractions` — on already-migrated files). Each is a human fix-vs-suppress call: fix what's cheap (optional chains), suppress the deliberate ones with `// biome-ignore lint/<group>/<rule>: <reason>` (JSX form `{/* biome-ignore … */}` inside markup), folding any existing prose justification into the reason string. Also remove DEAD suppressions Biome reports as "Suppression comment has no effect".
 
+**`drizzle.config.ts`** (when the repo uses Drizzle) → replace with the dobby re-export **when the repo matches the house convention** — unpooled env-var names (`DATABASE_URL_UNPOOLED` / `POSTGRES_URL_NON_POOLING`) and co-located schema globs (`src/**/schema.ts` + `schema.gen.ts`):
+
+```ts
+export { default } from "@kvnwolf/dobby/drizzle";
+```
+
+The preset carries the whole house config — the unpooled URL resolution (DDL must NOT go through PgBouncer), the guarded `.env.local` load, the CI-safe missing-URL guard, `dialect: "postgresql"`, `out: "./drizzle"`, and the co-located schema globs. If the repo deviates (different env-var names, a single-file schema, another dialect), keep a **spread-and-override** instead — re-export the base and override only the differing keys — rather than the bare one-liner.
+
 ## Step 3: Strip `vite.config.ts` to real vite config only
 
 The vite-plus task machinery is gone — dobby infers those tasks now. Reduce `vite.config.ts` to what actual Vite needs:
 
-- **KEEP:** `plugins`, `resolve`/`server`/`build` options, and the `test` block if vitest config lives there — the genuine Vite/vitest configuration. **vite@8 resolves tsconfig path aliases NATIVELY via `resolve.tsconfigPaths: true`** — do NOT add the `vite-tsconfig-paths` plugin (vitest itself warns to remove it; field case: added then reverted).
-- **DELETE:** the vite-plus additions — the `run`/`tasks` table, the `fmt` and `lint` blocks (their content moved to `biome.jsonc` in Step 2), and any `staged` block. If stripping these empties the file down to a plugin list, that's the goal: `export default defineConfig({ plugins: [...] })`.
-- **An SSR-plugin app needs its own `vitest.config.ts`.** For a tanstack-start/nitro app, reusing the app's vite config hangs the process — the SSR plugins start servers that never tear down, so vitest exits nonzero even with every test green. Create a dedicated `vitest.config.ts` extending dobby's vitest preset and add only the app-specific bits — use EXACTLY this shape:
+- **KEEP:** `plugins` and any genuine per-project `build`/`server`/`resolve` deltas. The dobby vite preset (`@kvnwolf/dobby/vite`) already provides `resolve.tsconfigPaths: true` (vite@8 native path aliases — do NOT add the `vite-tsconfig-paths` plugin; vitest itself warns to remove it, field case: added then reverted) AND `server.allowedHosts: true` (portless's per-worktree hostnames), so DROP any hand-rolled versions of those and merge only what's left onto the preset.
+- **DELETE:** the vite-plus additions — the `run`/`tasks` table, the `fmt` and `lint` blocks (their content moved to `biome.jsonc` in Step 2), and any `staged` block. The goal is a thin config that merges your plugins onto the dobby base:
 
   ```ts
-  import react from "@vitejs/plugin-react";
-  import { loadEnv } from "vite";
-  import { defineConfig, mergeConfig } from "vitest/config";
-  import dobbyVitest from "@kvnwolf/dobby/vitest";
+  import { defineConfig, mergeConfig } from "vite";
+  import dobbyVite from "@kvnwolf/dobby/vite";
 
-  export default mergeConfig(dobbyVitest, defineConfig({
-  	plugins: [react()], // test plugins ≠ app plugins — never the SSR set
-  	resolve: { tsconfigPaths: true },
-  	test: { env: loadEnv("test", process.cwd(), "") }, // "" prefix: import-time env validation needs EVERY var
-  }));
+  export default mergeConfig(dobbyVite, defineConfig({ plugins: [/* app plugins */] }));
+  ```
+- **An SSR-plugin app needs its own `vitest.config.ts`.** For a tanstack-start/nitro app, reusing the app's vite config hangs the process — the SSR plugins start servers that never tear down, so vitest exits nonzero even with every test green. The react-app wiring (react plugin + native tsconfig paths + import-time `loadEnv`) now ships as `@kvnwolf/dobby/vitest/react`, so a React app with no extra deltas writes ONE line:
+
+  ```ts
+  export { default } from "@kvnwolf/dobby/vitest/react";
   ```
 
-  The preset (`@kvnwolf/dobby/vitest`) already carries the universal wiring: `server.deps.inline: ["zod"]` (vitest-under-bun mangles zod v4's dual export map) and excluding `.claude/**` from discovery (worktree copies would be double-discovered). The consumer adds ONLY plugins + env loading.
+  Reach for `mergeConfig` ONLY when the repo has a real delta (e.g. a mid-migration `server.deps.inline` addition):
+
+  ```ts
+  import { defineConfig, mergeConfig } from "vitest/config";
+  import dobbyVitestReact from "@kvnwolf/dobby/vitest/react";
+
+  export default mergeConfig(dobbyVitestReact, defineConfig({ test: { server: { deps: { inline: ["some-esm-only-dep"] } } } }));
+  ```
+
+  The `vitest/react` variant already carries both the base universal wiring (`server.deps.inline: ["zod"]` — vitest-under-bun mangles zod v4's dual export map — and excluding `.claude/**` from discovery) AND the react layer (`@vitejs/plugin-react`, `resolve.tsconfigPaths`, `test.env: loadEnv("test", cwd, "")` — the `""` prefix loads EVERY var for import-time env validation). A non-React SSR app merges onto the base `@kvnwolf/dobby/vitest` instead and adds its own plugin.
 
 ## Step 4: Remove the dead hook + script machinery
 
@@ -194,8 +209,8 @@ Interact with the user in their language. Write the migrated `dobby.config.json`
 
 - [ ] Preflight ran first: legacy signals detected (`.claude/commit.config.yml`, old-era `dobby.config.json` with `run`, vite-plus/aliases, `.vite-hooks`/`.conductor`); an already-migrated repo was reported and left untouched; the plan (with the two gates flagged) was announced
 - [ ] Deps swapped: `@kvnwolf/dobby` added; present toolchain deps removed (`vite-plus`/`ultracite`/`knip`/`taze`/`oxlint`/`portless`); vite/vitest aliases dropped; real `vite` (and `vitest` if tests) restored; project keys preserved (portless key, `trustedDependencies`)
-- [ ] Thin configs written: `tsconfig.json` `extends @kvnwolf/dobby/tsconfig` keeping only project deltas (paths/include/types); `biome.jsonc` `extends @kvnwolf/dobby/biome/{react|core}` with old `ignorePatterns`→`files.includes` (`**` first, `!`/`!!` negation) and old rules→`overrides`
-- [ ] `vite.config.ts` stripped to real vite config only (plugins/test kept; `run`/`tasks`/`fmt`/`lint`/`staged` blocks deleted)
+- [ ] Thin configs written: `tsconfig.json` `extends @kvnwolf/dobby/tsconfig` (or `/tsconfig/vite` for a Vite app) keeping only project deltas (paths/include/types), absorbed options dropped (`allowImportingTsExtensions`/`noUncheckedSideEffectImports`); `biome.jsonc` `extends @kvnwolf/dobby/biome/{react|core}` with old `ignorePatterns`→`files.includes` (`**` first, `!`/`!!` negation) and old rules→`overrides`; `drizzle.config.ts` re-exports `@kvnwolf/dobby/drizzle` when the repo matches the house convention (spread-override otherwise)
+- [ ] `vite.config.ts` stripped to a `mergeConfig` onto `@kvnwolf/dobby/vite` (plugins/genuine deltas kept, native tsconfig paths + `server.allowedHosts` inherited; `run`/`tasks`/`fmt`/`lint`/`staged` blocks deleted); an SSR app's `vitest.config.ts` is the `@kvnwolf/dobby/vitest/react` one-liner (mergeConfig only for real deltas)
 - [ ] `.vite-hooks/` removed; `prepare` + every `package.json#scripts` entry removed
 - [ ] HUMAN GATE honored before file moves; the canonical-path move done with all imports rewritten atomically (react-email → `src/emails/`); skipped cleanly when N/A
 - [ ] `.worktreeinclude` created (at least `.env.local`) if missing; left as-is if present
