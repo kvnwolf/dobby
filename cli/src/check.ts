@@ -13,6 +13,7 @@ import { detectCapabilities, scanCapabilities } from "./detect.ts";
 import {
 	configArgs,
 	type RunResult,
+	resolveViteConfig,
 	resolveWorkroot,
 	runCapture,
 } from "./runner.ts";
@@ -21,6 +22,7 @@ import {
 	type CheckFlags,
 	checkPipeline,
 	knipConfigSpec,
+	viteBlockedMessage,
 	viteConfigSpec,
 	vitestConfigSpec,
 } from "./tasks.ts";
@@ -249,10 +251,21 @@ export function check(
 					notes.push({ text: step.skipNote, raw: null });
 					break;
 				}
-				const viteCfg = configArgs(
+				const viteCfg = resolveViteConfig(
 					root,
 					viteConfigSpec(capabilities, dependencies),
 				);
+				// BLOCKED (ADR-0015): a config-less tanstack app missing packages the
+				// tanstack default imports has NO import-safe fallback that still serves —
+				// fail loud through the step-failure channel (never a silent base build).
+				if (viteCfg.blocked) {
+					notes.push({
+						text: viteBlockedMessage(viteCfg.missing),
+						raw: null,
+					});
+					fail(1);
+					break;
+				}
 				const built = runBuild(root, viteCfg.args);
 				if (built.note !== null) {
 					notes.push(built.note);

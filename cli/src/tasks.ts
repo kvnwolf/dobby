@@ -231,6 +231,12 @@ function hasAll(
 // + `vite`), else the import-safe base. `--config <file>` — vitest keeps `root = cwd`
 // (the pinned workroot), so discovery is unchanged; the flag only supplies the config.
 //
+// Vitest DEGRADES (falls back to vitest.base) where vite is ALL-OR-ERROR (see
+// `viteConfigSpec`): vitest.base is a FUNCTIONALLY-CORRECT fallback — tests still run,
+// nothing silently broken — so a missing react-variant import can safely land on it;
+// vite.base for a tanstack app has no framework plugins (the app can't serve), so
+// there is no safe fallback and the missing-import case fails loud instead.
+//
 // DELIBERATE STANCE (ADR-0015): `ownFiles` lists ONLY the DEDICATED `vitest.config.*`
 // forms — NEVER `vite.config.*`. Vitest natively FALLS BACK to a `test` block inside
 // `vite.config.*` when no dedicated vitest config exists, so a bare vitest with a
@@ -265,38 +271,100 @@ export function vitestConfigSpec(
 	};
 }
 
-// Vite's default: the house TanStack Start stack when the `tanstack-start`
-// capability is present AND the consumer declares every package `vite.tanstack.mjs`
-// imports (the five in `VITE_TANSTACK_IMPORTS`), else the universal vite base.
-// `--config <file>`. `ownFiles` MIRRORS vite@8's `DEFAULT_CONFIG_FILES` verbatim
-// (verified against vite 8.1.5, `dist/node/chunks/node.js`) — all six extensions
-// vite's bare discovery scans, so a legal `vite.config.cjs`/`.cts` is not SILENTLY
-// overridden. Shared by build, dev, and `check --build` (all three read this spec).
+// ---------------------------------------------------------------------------
+// Vite default selection — ALL-OR-ERROR for tanstack, unlike vitest's DEGRADE.
+//
+// A `tanstack-start` app's default is `vite.tanstack.mjs`, which imports five
+// consumer packages UNCONDITIONALLY. When ANY is missing, dobby has NO import-safe
+// fallback that still SERVES the app: `vite.base.mjs` carries NO plugins, so falling
+// back to it would run dev/build/check with the FRAMEWORK INTEGRATION ABSENT — the
+// app "runs" but cannot actually serve (a silent breakage). So a config-less
+// tanstack app missing any import is BLOCKED — a HARD ERROR naming the missing
+// packages — never a silent base fallback. `vite.base.mjs` stays the default ONLY
+// for a plain vite app (no tanstack), whose sole import (`vite`) is the gating
+// capability, so it is always loadable.
+//
+// This is WHY vite is all-or-error while `vitestConfigSpec` DEGRADES: vitest.base is
+// a FUNCTIONALLY-CORRECT fallback (tests still run, nothing silently broken), so a
+// missing react-variant import can safely fall back to it; vite.base is NOT
+// functionally correct for a tanstack app (no framework plugins), so there is
+// nothing safe to fall back to — the only honest move is to fail loud.
+// ---------------------------------------------------------------------------
+
+// The result of selecting the config-less vite default (ADR-0015). PURE — the impure
+// callers (check build step, planDev/runDev, runBuild) resolve it against the
+// workroot via `runner.resolveViteConfig` and turn `blocked` into a hard error
+// through their existing failure channels (never a silent base fallback):
+//   - `default` — the app is servable with a default: the resolved `ConfigDefaultSpec`
+//     (vite.base for a plain vite app, vite.tanstack when all five imports declared).
+//   - `blocked` — a config-less tanstack app missing packages the tanstack default
+//     imports; `missing` names them and `ownFiles` lets the impure resolver honor a
+//     present consumer vite config as an override (which supersedes the block).
+export type ViteConfigSelection =
+	| { kind: "default"; spec: ConfigDefaultSpec }
+	| { kind: "blocked"; missing: string[]; ownFiles: string[] };
+
+// The config filenames whose presence at the workroot is a TOTAL override of the
+// vite default — vite@8's `DEFAULT_CONFIG_FILES` verbatim (verified against vite
+// 8.1.5, `dist/node/chunks/node.js`), all six extensions vite's bare discovery
+// scans, so a legal `vite.config.cjs`/`.cts` is not SILENTLY overridden. A present
+// one wins over BOTH the default AND the block.
+const VITE_OWN_FILES: readonly string[] = [
+	"vite.config.js",
+	"vite.config.mjs",
+	"vite.config.ts",
+	"vite.config.cjs",
+	"vite.config.mts",
+	"vite.config.cts",
+];
+
+// Vite's default selection. A plain vite app (no `tanstack-start`) → the universal
+// `vite.base.mjs` (always loadable). A `tanstack-start` app → `vite.tanstack.mjs`
+// when the consumer declares EVERY package it imports (the five in
+// `VITE_TANSTACK_IMPORTS`), else BLOCKED (fail loud — there is no import-safe
+// tanstack fallback that still serves the app; see the block comment above). Shared
+// by build, dev, and `check --build` (all three resolve this selection).
 export function viteConfigSpec(
 	capabilities: string[],
 	dependencies: Set<string>,
-): ConfigDefaultSpec {
-	// The tanstack preset imports five consumer packages unconditionally; the
-	// capability fires on only @tanstack/react-start, so require ALL five present —
-	// else the default's import would crash dev/build/check. Fall back to vite.base.
-	const tanstack =
-		capabilities.includes("tanstack-start") &&
-		hasAll(dependencies, VITE_TANSTACK_IMPORTS);
-	return {
+): ViteConfigSelection {
+	const spec = (asset: string, label: string): ConfigDefaultSpec => ({
 		tool: "vite",
-		ownFiles: [
-			"vite.config.js",
-			"vite.config.mjs",
-			"vite.config.ts",
-			"vite.config.cjs",
-			"vite.config.mts",
-			"vite.config.cts",
-		],
+		ownFiles: [...VITE_OWN_FILES],
 		flag: "--config",
 		equals: false,
-		asset: tanstack ? "vite.tanstack.mjs" : "vite.base.mjs",
-		label: tanstack ? "default(tanstack-start)" : "default",
+		asset,
+		label,
+	});
+
+	// A plain vite app (no tanstack) → the universal base; never blocked (its only
+	// import is `vite`, the gating capability, so it always loads).
+	if (!capabilities.includes("tanstack-start")) {
+		return { kind: "default", spec: spec("vite.base.mjs", "default") };
+	}
+
+	// tanstack-start: the preset imports five consumer packages unconditionally; the
+	// capability fires on only @tanstack/react-start, so the other four are unproven.
+	// Missing ANY → BLOCKED (no silent base fallback: base has no framework plugins,
+	// so the app could not serve). All five declared → the tanstack preset.
+	const missing = VITE_TANSTACK_IMPORTS.filter(
+		(name) => !dependencies.has(name),
+	);
+	if (missing.length > 0) {
+		return { kind: "blocked", missing, ownFiles: [...VITE_OWN_FILES] };
+	}
+	return {
+		kind: "default",
+		spec: spec("vite.tanstack.mjs", "default(tanstack-start)"),
 	};
+}
+
+// The HARD-ERROR message for a BLOCKED config-less tanstack app (PURE — the impure
+// callers surface it through their existing failure channels). Names the exact
+// missing packages and BOTH remedies: install them, or write your own vite.config.ts
+// (a present config overrides the default). Identical wording across dev/build/check.
+export function viteBlockedMessage(missing: string[]): string {
+	return `tanstack-start app is missing packages the default vite config imports: ${missing.join(", ")} — install them (bun add -d ${missing.join(" ")}) or write your own vite.config.ts (a present config overrides the default)`;
 }
 
 // Drizzle-kit's default: dobby's `drizzle.base.mjs`. drizzle-kit takes the flag in
@@ -459,6 +527,47 @@ export function usageCommands(capabilities: string[]): UsageCommand[] {
 // db:* task executes.
 function describeDbCommand(command: DbCommand): string {
 	return `${command.tool} ${command.args.join(" ")}`.trimEnd();
+}
+
+// ---------------------------------------------------------------------------
+// Share (ngrok tunnel) decision — PURE (the probe is IMPURE, in lifecycle.ts).
+//
+// The ngrok tunnel is ON BY DEFAULT (a maintainer decision): `dobby dev`/`dobby up`
+// wrap the app in `portless run --ngrok …` so it is reachable from the maintainer's
+// phone. `--no-share` opts out. Because share is the DEFAULT, a machine WITHOUT the
+// `ngrok` binary must not lose its bring-up: it DEGRADES — dropping `--ngrok` and
+// surfacing ONE note — never failing. The ngrok-present fact is discovered by an
+// IMPURE probe (`ngrokAvailable`, lifecycle.ts); this decision takes that fact as
+// DATA so it stays pure and both branches are deterministically testable.
+// ---------------------------------------------------------------------------
+
+// The single note surfaced when share was requested (the default) but the `ngrok`
+// binary is missing — dobby degraded to no tunnel. Names the two one-time fixes.
+const SHARE_OFF_NOTE =
+	"share: off (ngrok not installed — https://ngrok.com/download + ngrok config add-authtoken)";
+
+// The resolved share decision consumed by the dev/up executors:
+//   - `ngrok` — whether `--ngrok` is ACTUALLY applied (share requested AND ngrok present).
+//   - `note`  — the degrade note when share was requested but ngrok is missing, else null.
+export interface ShareDecision {
+	ngrok: boolean;
+	note: string | null;
+}
+
+// Decide the share outcome from the requested intent + the (impurely probed) ngrok
+// presence. Opted out (`share=false`) → no tunnel, no note. Requested + ngrok present
+// → tunnel on. Requested + ngrok absent → DEGRADE (no tunnel, the one note). Pure.
+export function shareDecision(
+	share: boolean,
+	ngrokPresent: boolean,
+): ShareDecision {
+	if (!share) {
+		return { ngrok: false, note: null };
+	}
+	if (ngrokPresent) {
+		return { ngrok: true, note: null };
+	}
+	return { ngrok: false, note: SHARE_OFF_NOTE };
 }
 
 // ---------------------------------------------------------------------------

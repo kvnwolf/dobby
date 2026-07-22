@@ -3,7 +3,7 @@ import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ConfigDefaultSpec } from "./tasks.ts";
+import type { ConfigDefaultSpec, ViteConfigSelection } from "./tasks.ts";
 
 // The single child-process utility every dobby command spawns through. It exists
 // to enforce ONE invariant: every child's working directory is pinned to the
@@ -160,15 +160,60 @@ export function configArgs(
 	return { args, usedDefault: spec.label };
 }
 
+// The result of resolving the vite config-less default against the workroot:
+//   - `{ blocked: false, args, usedDefault }` — the config args to append (bare when
+//     the consumer ships its own vite config, else the default `--config <preset>`),
+//     identical to `configArgs`.
+//   - `{ blocked: true, missing }` — a config-LESS tanstack app missing packages the
+//     tanstack default imports; the caller turns this into a HARD ERROR (never a
+//     silent base fallback). `missing` names the packages for the message.
+export type ViteConfigResolution =
+	| { blocked: false; args: string[]; usedDefault: string | null }
+	| { blocked: true; missing: string[] };
+
+/**
+ * Resolve the pure `ViteConfigSelection` (from tasks.ts) against the workroot — the
+ * IMPURE seam that combines the presence check with the blocked-default enforcement:
+ *   - a "default" selection resolves exactly like `configArgs` (bare when the consumer
+ *     ships its own vite config, else the default preset via `--config`).
+ *   - a "blocked" selection (a config-less tanstack app missing an imported package) is
+ *     BLOCKED — UNLESS the consumer ships its own vite config, a TOTAL override that
+ *     supersedes both the default AND the block (the consumer supplies the plugins).
+ * So only a config-LESS tanstack app is ever blocked; a present config is never blocked.
+ *
+ * @public — the vite callers (check build step, dev planDev, build runBuild) route
+ * through this; on `blocked` they emit the hard error (`viteBlockedMessage`).
+ */
+export function resolveViteConfig(
+	root: string | null,
+	selection: ViteConfigSelection,
+): ViteConfigResolution {
+	if (selection.kind === "default") {
+		return { blocked: false, ...configArgs(root, selection.spec) };
+	}
+	// A present consumer vite config wins over the block (the same override-by-presence
+	// rule `configArgs` applies to a default): only a config-LESS app is blocked.
+	if (root !== null && anyConfigFilePresent(root, selection.ownFiles)) {
+		return { blocked: false, args: [], usedDefault: null };
+	}
+	return { blocked: true, missing: selection.missing };
+}
+
 // Whether the consumer ships its OWN config for a tool at `root`: any of the
 // spec's own-config filenames present, or the spec's package.json key declared.
 function consumerOwnsConfig(root: string, spec: ConfigDefaultSpec): boolean {
-	for (const file of spec.ownFiles) {
-		if (existsSync(join(root, file))) {
-			return true;
-		}
+	if (anyConfigFilePresent(root, spec.ownFiles)) {
+		return true;
 	}
 	return spec.ownPkgKey !== undefined && pkgHasKey(root, spec.ownPkgKey);
+}
+
+// Whether any of `ownFiles` exists at the workroot — a consumer config file present.
+function anyConfigFilePresent(
+	root: string,
+	ownFiles: readonly string[],
+): boolean {
+	return ownFiles.some((file) => existsSync(join(root, file)));
 }
 
 // Whether `<root>/package.json` declares top-level `key` (knip's `#knip`).
