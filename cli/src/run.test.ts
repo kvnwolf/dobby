@@ -1993,6 +1993,213 @@ describe("run() — check command (config checks[] extras)", () => {
 	}, 30000);
 });
 
+// --- A2: the vitest hermeticity / missing-keys advisory -----------------------
+// `check` appends the advisory ONLY when BOTH gates hold (F2 + F3):
+//   - the vitest step ACTUALLY SPAWNED (F2) — a missing consumer bin degrades
+//     WITHOUT running vitest, so nothing is advised on that path.
+//   - the SELECTED config is dobby's react default (F3) — only `vitest.react.mjs`
+//     calls `loadEnv`, so a base preset / consumer-owned config is silent.
+// When both hold, `check` compares env-file KEY SETS (never values, F1): a
+// `.env.local` with no `.env.test` → the inherits note; an INCOMPLETE `.env.test`
+// → a missing-keys note naming the keys still sourced from `.env.local`; a complete
+// superset / no `.env.local` → silent.
+//
+// The step is made to SPAWN without a real vitest via a STUB `node_modules/vitest`
+// bin (the crashing-vite fixture precedent): a fake bin that writes minimal valid
+// `--reporter=json` output and exits with a chosen code. `reactDefault` also
+// declares react + vite + @vitejs/plugin-react so the react default is SELECTED (the
+// only selection F3 lets advise); passing false declares only vitest → the base
+// preset. Independent expected values: the stub's exit code and stdout are written
+// by hand here, and every asserted KEY name is a literal WE put in an env file.
+function makeVitestStubRepo(
+	opts: {
+		reactDefault?: boolean;
+		exitCode?: number;
+		stdout?: (dir: string) => string;
+	} = {},
+): string {
+	const reactDefault = opts.reactDefault ?? true;
+	const devDeps: Record<string, string> = { vitest: "^2.0.0" };
+	if (reactDefault) {
+		devDeps.vite = "^5.0.0";
+		devDeps["@vitejs/plugin-react"] = "^4.0.0";
+	}
+	const dir = makeGateRepo({
+		src: { "src/clean.ts": CLEAN },
+		deps: reactDefault ? { react: "^19.0.0" } : undefined,
+		devDeps,
+	});
+	// A consumer-local vitest whose bin resolves (so runTest spawns it) but never
+	// runs a real suite — it just emits reporter JSON and exits. resolveConsumerBin
+	// reads this package's `bin` field exactly as it reads a real vitest's.
+	const vitestDir = join(dir, "node_modules", "vitest");
+	mkdirSync(vitestDir, { recursive: true });
+	writeFileSync(
+		join(vitestDir, "package.json"),
+		JSON.stringify(
+			{ name: "vitest", version: "0.0.0-stub", bin: { vitest: "./stub.mjs" } },
+			null,
+			2,
+		),
+	);
+	const exitCode = opts.exitCode ?? 0;
+	const stdout = opts.stdout ? opts.stdout(dir) : '{"testResults":[]}';
+	// Ignores every arg (`run --reporter=json --config <preset>`); the spawn's ONLY
+	// job is to make the step "run" so the advisory / A1-parser logic is reached.
+	writeFileSync(
+		join(vitestDir, "stub.mjs"),
+		`process.stdout.write(${JSON.stringify(stdout)});\nprocess.exit(${exitCode});\n`,
+	);
+	return dir;
+}
+
+describe("run() — check test step (A2 hermeticity / missing-keys advisory)", () => {
+	it("warns (inherits note) when the react-default step spawns with .env.local and no .env.test", async () => {
+		const repo = makeVitestStubRepo();
+		writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
+		try {
+			const result = await run(["check", "--test"], repo);
+			expect(
+				hasNoteLine(combined(result), [
+					/vitest inherits \.env\.local/,
+					/\.env\.test/,
+				]),
+			).toBe(true);
+		} finally {
+			rmSync(repo, { recursive: true, force: true });
+		}
+	}, 20000);
+
+	it("warns (missing-keys note) when .env.test is an INCOMPLETE subset of .env.local's keys (F1)", async () => {
+		const repo = makeVitestStubRepo();
+		// .env.local declares DATABASE_URL + AUTH_SECRET (one line uses `export`); the
+		// committed .env.test covers ONLY DATABASE_URL → AUTH_SECRET is still sourced
+		// from .env.local (which CI lacks).
+		writeFileSync(
+			join(repo, ".env.local"),
+			"export DATABASE_URL=postgres://local\nAUTH_SECRET=abc\n",
+		);
+		writeFileSync(join(repo, ".env.test"), "DATABASE_URL=postgres://test\n");
+		try {
+			const result = await run(["check", "--test"], repo);
+			// The missing KEY (AUTH_SECRET) is named; the shared key is not "missing".
+			expect(
+				hasNoteLine(combined(result), [
+					/\.env\.test is missing/,
+					/AUTH_SECRET/,
+					/CI runs without them/,
+				]),
+			).toBe(true);
+			// KEY names only — no VALUE is ever read/compared/logged (both files carry
+			// `postgres://…` values; none may leak into the advisory).
+			expect(combined(result)).not.toMatch(/postgres/);
+		} finally {
+			rmSync(repo, { recursive: true, force: true });
+		}
+	}, 20000);
+
+	it("is silent when .env.test is a COMPLETE superset of .env.local's keys (hermetic)", async () => {
+		const repo = makeVitestStubRepo();
+		writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
+		// Superset: every .env.local key is covered, plus an extra.
+		writeFileSync(
+			join(repo, ".env.test"),
+			"DATABASE_URL=postgres://test\nEXTRA=1\n",
+		);
+		try {
+			const result = await run(["check", "--test"], repo);
+			expect(combined(result)).not.toMatch(/vitest inherits/);
+			expect(combined(result)).not.toMatch(/\.env\.test is missing/);
+		} finally {
+			rmSync(repo, { recursive: true, force: true });
+		}
+	}, 20000);
+
+	it("is silent when there is no .env.local", async () => {
+		const repo = makeVitestStubRepo();
+		try {
+			const result = await run(["check", "--test"], repo);
+			expect(combined(result)).not.toMatch(/vitest inherits/);
+			expect(combined(result)).not.toMatch(/\.env\.test is missing/);
+		} finally {
+			rmSync(repo, { recursive: true, force: true });
+		}
+	}, 20000);
+
+	it("does NOT advise when the step degrades (consumer vitest bin missing — never spawned) (F2)", async () => {
+		// react-default deps make the config selection `default(react)` (F3 would pass),
+		// but WITHOUT the node_modules stub the bin is null → runTest degrades without
+		// spawning → the advisory must stay silent. This isolates the F2 spawn gate.
+		const repo = makeGateRepo({
+			src: { "src/clean.ts": CLEAN },
+			deps: { react: "^19.0.0" },
+			devDeps: {
+				vitest: "^2.0.0",
+				vite: "^5.0.0",
+				"@vitejs/plugin-react": "^4.0.0",
+			},
+		});
+		writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
+		try {
+			const result = await run(["check", "--test"], repo);
+			expect(combined(result)).not.toMatch(/vitest inherits/);
+			expect(combined(result)).not.toMatch(/\.env\.test is missing/);
+		} finally {
+			rmSync(repo, { recursive: true, force: true });
+		}
+	}, 20000);
+
+	it("is silent under the BASE preset even when the step spawns with .env.local and no .env.test (F3)", async () => {
+		// vitest present + stub → the step SPAWNS, but no react/@vitejs/plugin-react →
+		// the SELECTED config is the BASE preset (`default`), which does NOT call
+		// loadEnv, so F3 keeps the advisory silent regardless of the env files.
+		const repo = makeVitestStubRepo({ reactDefault: false });
+		writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
+		try {
+			const result = await run(["check", "--test"], repo);
+			expect(combined(result)).not.toMatch(/vitest inherits/);
+			expect(combined(result)).not.toMatch(/\.env\.test is missing/);
+			// The step DID run under the base default (proves it wasn't silent via a skip).
+			expect(combined(result)).toContain("vitest=default");
+			expect(combined(result)).not.toContain("vitest=default(react)");
+		} finally {
+			rmSync(repo, { recursive: true, force: true });
+		}
+	}, 20000);
+
+	it("summarizes a failed suite parsed from the stubbed reporter JSON (A1 parser seam)", async () => {
+		// The stub exits 1 with a file-level load failure referencing an EXISTING repo
+		// file, so parseVitestFailures + vitestSummary run end-to-end (the A1 parser was
+		// previously unreachable in CI without a real vitest — the stub bin is its seam).
+		const repo = makeVitestStubRepo({
+			exitCode: 1,
+			stdout: (dir) => {
+				const suite = join(dir, "src", "clean.ts");
+				return JSON.stringify({
+					testResults: [
+						{
+							name: suite,
+							status: "failed",
+							message: `AssertionError: boom\n    at load (${suite}:1:1)`,
+						},
+					],
+				});
+			},
+		});
+		try {
+			const result = await run(["check", "--test"], repo);
+			expect(result.exitCode).toBe(1);
+			expect(combined(result)).toMatch(/test: 1 suite\(s\) failed/);
+			expect(combined(result)).toMatch(/src\/clean\.ts/);
+			expect(combined(result)).toMatch(/boom/);
+			// The parsed summary is used, NOT a raw JSON tail dump.
+			expect(combined(result)).not.toMatch(/testResults/);
+		} finally {
+			rmSync(repo, { recursive: true, force: true });
+		}
+	}, 20000);
+});
+
 // --- Slice 5 (review-added): knip's finding-PRESENT path fails the gate --------
 // Every makeGateRepo fixture is knip-CLEAN by construction (entry = ALL of src,
 // so nothing is unused), and the only prior knip assertion (--unused runs knip
