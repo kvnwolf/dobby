@@ -12,11 +12,11 @@ import type { DobbyConfig } from "./config.ts";
 // gate runs ONLY the flagged steps (and config `checks[]` extras are excluded);
 // with NO flag it runs the full gate plus the extras.
 export interface CheckFlags {
-	lint?: boolean;
-	types?: boolean;
-	unused?: boolean;
-	build?: boolean;
-	test?: boolean;
+  build?: boolean;
+  lint?: boolean;
+  test?: boolean;
+  types?: boolean;
+  unused?: boolean;
 }
 
 // One step of the check pipeline, discriminated by `kind`:
@@ -28,12 +28,12 @@ export interface CheckFlags {
 //   - extra              — a config `checks[]` shell command, run last (full gate
 //     only), fail-fast among themselves.
 export type CheckStep =
-	| { kind: "biome" }
-	| { kind: "tsc" }
-	| { kind: "knip" }
-	| { kind: "build"; skipNote: string | null }
-	| { kind: "test"; skipNote: string | null }
-	| { kind: "extra"; name: string; run: string };
+  | { kind: "biome" }
+  | { kind: "tsc" }
+  | { kind: "knip" }
+  | { kind: "build"; skipNote: string | null }
+  | { kind: "test"; skipNote: string | null }
+  | { kind: "extra"; name: string; run: string };
 
 // The full-gate order (no flags): biome, tsc, knip, then the capability-gated
 // build + test, then config `checks[]` extras. Selective flags pick a SUBSET of
@@ -45,55 +45,55 @@ export type CheckStep =
 // silently omitting it. The consumer-local bin resolution + actual run of a
 // present build/test lives in `check.ts`; this module only decides run-vs-skip.
 export function checkPipeline(
-	capabilities: string[],
-	config: DobbyConfig | null,
-	flags: CheckFlags,
+  capabilities: string[],
+  config: DobbyConfig | null,
+  flags: CheckFlags
 ): CheckStep[] {
-	const anyFlag = Boolean(
-		flags.lint || flags.types || flags.unused || flags.build || flags.test,
-	);
-	// A tool step is selected if its flag is set (selective mode) or, with no flag
-	// at all, always (the full gate).
-	const selected = (flag: boolean | undefined): boolean =>
-		anyFlag ? Boolean(flag) : true;
+  const anyFlag = Boolean(
+    flags.lint || flags.types || flags.unused || flags.build || flags.test
+  );
+  // A tool step is selected if its flag is set (selective mode) or, with no flag
+  // at all, always (the full gate).
+  const selected = (flag: boolean | undefined): boolean =>
+    anyFlag ? Boolean(flag) : true;
 
-	const steps: CheckStep[] = [];
+  const steps: CheckStep[] = [];
 
-	if (selected(flags.lint)) {
-		steps.push({ kind: "biome" });
-	}
-	if (selected(flags.types)) {
-		steps.push({ kind: "tsc" });
-	}
-	if (selected(flags.unused)) {
-		steps.push({ kind: "knip" });
-	}
-	if (selected(flags.build)) {
-		steps.push({
-			kind: "build",
-			skipNote: capabilities.includes("vite")
-				? null
-				: "build: skipped (no vite capability)",
-		});
-	}
-	if (selected(flags.test)) {
-		steps.push({
-			kind: "test",
-			skipNote: capabilities.includes("vitest")
-				? null
-				: "test: skipped (no vitest capability)",
-		});
-	}
+  if (selected(flags.lint)) {
+    steps.push({ kind: "biome" });
+  }
+  if (selected(flags.types)) {
+    steps.push({ kind: "tsc" });
+  }
+  if (selected(flags.unused)) {
+    steps.push({ kind: "knip" });
+  }
+  if (selected(flags.build)) {
+    steps.push({
+      kind: "build",
+      skipNote: capabilities.includes("vite")
+        ? null
+        : "build: skipped (no vite capability)",
+    });
+  }
+  if (selected(flags.test)) {
+    steps.push({
+      kind: "test",
+      skipNote: capabilities.includes("vitest")
+        ? null
+        : "test: skipped (no vitest capability)",
+    });
+  }
 
-	// Config `checks[]` extras run LAST and ONLY on the full gate — a selective
-	// flag run is a focused subset and excludes them.
-	if (!anyFlag) {
-		for (const extra of config?.checks ?? []) {
-			steps.push({ kind: "extra", name: extra.name, run: extra.run });
-		}
-	}
+  // Config `checks[]` extras run LAST and ONLY on the full gate — a selective
+  // flag run is a focused subset and excludes them.
+  if (!anyFlag) {
+    for (const extra of config?.checks ?? []) {
+      steps.push({ kind: "extra", name: extra.name, run: extra.run });
+    }
+  }
 
-	return steps;
+  return steps;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,44 +116,55 @@ export function checkPipeline(
 // The config-less default decision for ONE tool invocation — pure data consumed
 // by `runner.configArgs`, which resolves it against the workroot at spawn time.
 export interface ConfigDefaultSpec {
-	// The tool this spec configures (labels the `configs:` note + the docs), e.g.
-	// "biome" / "knip" / "vitest" / "vite" / "drizzle".
-	tool: string;
-	// Consumer config filenames (relative to the workroot) whose presence is a
-	// TOTAL override — ANY present means dobby spawns bare (native discovery).
-	ownFiles: string[];
-	// A package.json key whose presence ALSO overrides (knip's `#knip`), else absent.
-	ownPkgKey?: string;
-	// The tool's native config flag (biome: --config-path; the rest: --config).
-	flag: string;
-	// Whether the flag takes `--flag=value` (drizzle-kit, biome) vs `--flag value`.
-	equals: boolean;
-	// Biome ONLY: also pass `--vcs-root=<workroot>`. The shipped biome preset
-	// extends ultracite, which sets `vcs.useIgnoreFile: true`; without an explicit
-	// vcs-root biome resolves the ignore file beside the PRESET (outside the repo)
-	// and hard-errors. Rooting it at the workroot honors the consumer's .gitignore
-	// (and tolerates its absence). Verified against bundled biome 2.5.4.
-	vcsRoot?: boolean;
-	// The shipped preset (relative to dobby's package root) the flag points at when
-	// the consumer ships nothing — `resolveAsset` turns it into an absolute path.
-	asset: string;
-	// How the `configs:` note names the default source, e.g. "default(react)".
-	label: string;
+  // The shipped preset (relative to dobby's package root) the flag points at when
+  // the consumer ships nothing — `resolveAsset` turns it into an absolute path.
+  asset: string;
+  // Whether the flag takes `--flag=value` (drizzle-kit, biome) vs `--flag value`.
+  equals: boolean;
+  // The tool's native config flag (biome: --config-path; the rest: --config).
+  flag: string;
+  // How the `configs:` note names the default source, e.g. "default(react)".
+  label: string;
+  // Consumer config filenames (relative to the workroot) whose presence is a
+  // TOTAL override — ANY present means dobby spawns bare (native discovery).
+  ownFiles: string[];
+  // A package.json key whose presence ALSO overrides (knip's `#knip`), else absent.
+  ownPkgKey?: string;
+  // The tool this spec configures (labels the `configs:` note + the docs), e.g.
+  // "biome" / "knip" / "vitest" / "vite" / "drizzle".
+  tool: string;
+  // Biome ONLY: also pass `--vcs-root=<workroot>`. The shipped biome preset
+  // extends ultracite, which sets `vcs.useIgnoreFile: true`; without an explicit
+  // vcs-root biome resolves the ignore file beside the PRESET (outside the repo)
+  // and hard-errors. Rooting it at the workroot honors the consumer's .gitignore
+  // (and tolerates its absence). Verified against bundled biome 2.5.4.
+  vcsRoot?: boolean;
 }
 
 // Biome's default: the react preset when the `react` capability is present, else
 // core. Uses `--config-path=<file>` + `--vcs-root=<workroot>` (see `vcsRoot`).
+//
+// The vendored presets (`biome/core.jsonc`, `biome/react.jsonc`) are FLAT — each is
+// ultracite's config inlined verbatim + dobby's modifications — because biome's
+// `extends` is ONE-LEVEL / non-transitive. A REACT app needs BOTH, so the config-less
+// react default points at the internal ROOT WRAPPER (`biome/configless.react.jsonc`,
+// `{ extends: ["./core.jsonc", "./react.jsonc"] }`): biome resolves those extends ONE
+// level from the root config, and since both targets are flat, nothing is lost. NON-react
+// passes flat `biome/core.jsonc` DIRECTLY (`root: false` works as a `--config-path`
+// target — lab-verified against bundled biome 2.5.4). The wrapper is NOT a consumer
+// extends target (package.json exports only `./biome/core` + `./biome/react`) — a
+// consumer with deltas extends BOTH flat files themselves.
 export function biomeConfigSpec(capabilities: string[]): ConfigDefaultSpec {
-	const react = capabilities.includes("react");
-	return {
-		tool: "biome",
-		ownFiles: ["biome.json", "biome.jsonc"],
-		flag: "--config-path",
-		equals: true,
-		vcsRoot: true,
-		asset: react ? "biome/react.jsonc" : "biome/core.jsonc",
-		label: react ? "default(react)" : "default",
-	};
+  const react = capabilities.includes("react");
+  return {
+    asset: react ? "biome/configless.react.jsonc" : "biome/core.jsonc",
+    equals: true,
+    flag: "--config-path",
+    label: react ? "default(react)" : "default",
+    ownFiles: ["biome.json", "biome.jsonc"],
+    tool: "biome",
+    vcsRoot: true,
+  };
 }
 
 // Knip's default: dobby's `knip.base.jsonc` (the test-file-as-entry fix). A
@@ -163,24 +174,24 @@ export function biomeConfigSpec(capabilities: string[]): ConfigDefaultSpec {
 // knip's bare discovery, so listing fewer would let a legal consumer config get
 // SILENTLY overridden by dobby's default (the override-by-presence contract).
 export function knipConfigSpec(): ConfigDefaultSpec {
-	return {
-		tool: "knip",
-		ownFiles: [
-			"knip.json",
-			"knip.jsonc",
-			".knip.json",
-			".knip.jsonc",
-			"knip.ts",
-			"knip.js",
-			"knip.config.ts",
-			"knip.config.js",
-		],
-		ownPkgKey: "knip",
-		flag: "--config",
-		equals: false,
-		asset: "knip.base.jsonc",
-		label: "default",
-	};
+  return {
+    asset: "knip.base.jsonc",
+    equals: false,
+    flag: "--config",
+    label: "default",
+    ownFiles: [
+      "knip.json",
+      "knip.jsonc",
+      ".knip.json",
+      ".knip.jsonc",
+      "knip.ts",
+      "knip.js",
+      "knip.config.ts",
+      "knip.config.js",
+    ],
+    ownPkgKey: "knip",
+    tool: "knip",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -202,11 +213,11 @@ export function knipConfigSpec(): ConfigDefaultSpec {
 // four are unproven; the tanstack default is import-safe ONLY when EVERY one is
 // declared. Cross-ref: cli/src/run.test.ts `PRESET_IMPORTED_PACKAGES`.
 const VITE_TANSTACK_IMPORTS: readonly string[] = [
-	"@tanstack/react-start", // @tanstack/react-start/plugin/vite
-	"@tanstack/devtools-vite",
-	"@tailwindcss/vite",
-	"nitro", // nitro/vite
-	"@vitejs/plugin-react",
+  "@tanstack/react-start", // @tanstack/react-start/plugin/vite
+  "@tanstack/devtools-vite",
+  "@tailwindcss/vite",
+  "nitro", // nitro/vite
+  "@vitejs/plugin-react",
 ];
 
 // The CONSUMER packages `vitest.react.mjs` imports beyond the vitest base — see
@@ -214,16 +225,16 @@ const VITE_TANSTACK_IMPORTS: readonly string[] = [
 // capability fires on `react` alone, so neither is proven; the react vitest variant
 // is import-safe ONLY when BOTH are declared.
 const VITEST_REACT_IMPORTS: readonly string[] = [
-	"@vitejs/plugin-react",
-	"vite",
+  "@vitejs/plugin-react",
+  "vite",
 ];
 
 // Whether the dependency set declares EVERY package a multi-import preset imports.
 function hasAll(
-	dependencies: Set<string>,
-	required: readonly string[],
+  dependencies: Set<string>,
+  required: readonly string[]
 ): boolean {
-	return required.every((name) => dependencies.has(name));
+  return required.every((name) => dependencies.has(name));
 }
 
 // Vitest's default: the react variant when the `react` capability is present AND the
@@ -246,29 +257,29 @@ function hasAll(
 // silently disable dobby's vitest default. Only a DEDICATED `vitest.config.*` counts
 // as the override — otherwise dobby supplies its shipped vitest preset via `--config`.
 export function vitestConfigSpec(
-	capabilities: string[],
-	dependencies: Set<string>,
+  capabilities: string[],
+  dependencies: Set<string>
 ): ConfigDefaultSpec {
-	// The react variant imports @vitejs/plugin-react + vite unconditionally; the
-	// react capability alone does not prove them installed, so require both.
-	const react =
-		capabilities.includes("react") &&
-		hasAll(dependencies, VITEST_REACT_IMPORTS);
-	return {
-		tool: "vitest",
-		ownFiles: [
-			"vitest.config.ts",
-			"vitest.config.mts",
-			"vitest.config.cts",
-			"vitest.config.js",
-			"vitest.config.mjs",
-			"vitest.config.cjs",
-		],
-		flag: "--config",
-		equals: false,
-		asset: react ? "vitest.react.mjs" : "vitest.base.mjs",
-		label: react ? "default(react)" : "default",
-	};
+  // The react variant imports @vitejs/plugin-react + vite unconditionally; the
+  // react capability alone does not prove them installed, so require both.
+  const react =
+    capabilities.includes("react") &&
+    hasAll(dependencies, VITEST_REACT_IMPORTS);
+  return {
+    asset: react ? "vitest.react.mjs" : "vitest.base.mjs",
+    equals: false,
+    flag: "--config",
+    label: react ? "default(react)" : "default",
+    ownFiles: [
+      "vitest.config.ts",
+      "vitest.config.mts",
+      "vitest.config.cts",
+      "vitest.config.js",
+      "vitest.config.mjs",
+      "vitest.config.cjs",
+    ],
+    tool: "vitest",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -301,8 +312,8 @@ export function vitestConfigSpec(
 //     imports; `missing` names them and `ownFiles` lets the impure resolver honor a
 //     present consumer vite config as an override (which supersedes the block).
 export type ViteConfigSelection =
-	| { kind: "default"; spec: ConfigDefaultSpec }
-	| { kind: "blocked"; missing: string[]; ownFiles: string[] };
+  | { kind: "default"; spec: ConfigDefaultSpec }
+  | { kind: "blocked"; missing: string[]; ownFiles: string[] };
 
 // The config filenames whose presence at the workroot is a TOTAL override of the
 // vite default — vite@8's `DEFAULT_CONFIG_FILES` verbatim (verified against vite
@@ -310,12 +321,12 @@ export type ViteConfigSelection =
 // scans, so a legal `vite.config.cjs`/`.cts` is not SILENTLY overridden. A present
 // one wins over BOTH the default AND the block.
 const VITE_OWN_FILES: readonly string[] = [
-	"vite.config.js",
-	"vite.config.mjs",
-	"vite.config.ts",
-	"vite.config.cjs",
-	"vite.config.mts",
-	"vite.config.cts",
+  "vite.config.js",
+  "vite.config.mjs",
+  "vite.config.ts",
+  "vite.config.cjs",
+  "vite.config.mts",
+  "vite.config.cts",
 ];
 
 // Vite's default selection. A plain vite app (no `tanstack-start`) → the universal
@@ -325,38 +336,38 @@ const VITE_OWN_FILES: readonly string[] = [
 // tanstack fallback that still serves the app; see the block comment above). Shared
 // by build, dev, and `check --build` (all three resolve this selection).
 export function viteConfigSpec(
-	capabilities: string[],
-	dependencies: Set<string>,
+  capabilities: string[],
+  dependencies: Set<string>
 ): ViteConfigSelection {
-	const spec = (asset: string, label: string): ConfigDefaultSpec => ({
-		tool: "vite",
-		ownFiles: [...VITE_OWN_FILES],
-		flag: "--config",
-		equals: false,
-		asset,
-		label,
-	});
+  const spec = (asset: string, label: string): ConfigDefaultSpec => ({
+    asset,
+    equals: false,
+    flag: "--config",
+    label,
+    ownFiles: [...VITE_OWN_FILES],
+    tool: "vite",
+  });
 
-	// A plain vite app (no tanstack) → the universal base; never blocked (its only
-	// import is `vite`, the gating capability, so it always loads).
-	if (!capabilities.includes("tanstack-start")) {
-		return { kind: "default", spec: spec("vite.base.mjs", "default") };
-	}
+  // A plain vite app (no tanstack) → the universal base; never blocked (its only
+  // import is `vite`, the gating capability, so it always loads).
+  if (!capabilities.includes("tanstack-start")) {
+    return { kind: "default", spec: spec("vite.base.mjs", "default") };
+  }
 
-	// tanstack-start: the preset imports five consumer packages unconditionally; the
-	// capability fires on only @tanstack/react-start, so the other four are unproven.
-	// Missing ANY → BLOCKED (no silent base fallback: base has no framework plugins,
-	// so the app could not serve). All five declared → the tanstack preset.
-	const missing = VITE_TANSTACK_IMPORTS.filter(
-		(name) => !dependencies.has(name),
-	);
-	if (missing.length > 0) {
-		return { kind: "blocked", missing, ownFiles: [...VITE_OWN_FILES] };
-	}
-	return {
-		kind: "default",
-		spec: spec("vite.tanstack.mjs", "default(tanstack-start)"),
-	};
+  // tanstack-start: the preset imports five consumer packages unconditionally; the
+  // capability fires on only @tanstack/react-start, so the other four are unproven.
+  // Missing ANY → BLOCKED (no silent base fallback: base has no framework plugins,
+  // so the app could not serve). All five declared → the tanstack preset.
+  const missing = VITE_TANSTACK_IMPORTS.filter(
+    (name) => !dependencies.has(name)
+  );
+  if (missing.length > 0) {
+    return { kind: "blocked", missing, ownFiles: [...VITE_OWN_FILES] };
+  }
+  return {
+    kind: "default",
+    spec: spec("vite.tanstack.mjs", "default(tanstack-start)"),
+  };
 }
 
 // The HARD-ERROR message for a BLOCKED config-less tanstack app (PURE — the impure
@@ -364,7 +375,7 @@ export function viteConfigSpec(
 // missing packages and BOTH remedies: install them, or write your own vite.config.ts
 // (a present config overrides the default). Identical wording across dev/build/check.
 export function viteBlockedMessage(missing: string[]): string {
-	return `tanstack-start app is missing packages the default vite config imports: ${missing.join(", ")} — install them (bun add -d ${missing.join(" ")}) or write your own vite.config.ts (a present config overrides the default)`;
+  return `tanstack-start app is missing packages the default vite config imports: ${missing.join(", ")} — install them (bun add -d ${missing.join(" ")}) or write your own vite.config.ts (a present config overrides the default)`;
 }
 
 // Drizzle-kit's default: dobby's `drizzle.base.mjs`. drizzle-kit takes the flag in
@@ -376,14 +387,14 @@ export function viteBlockedMessage(missing: string[]): string {
 // present → dobby spawns bare → drizzle-kit finds nothing → error); `.json` was added
 // because it IS a real discovery target that was previously missing.
 export function drizzleConfigSpec(): ConfigDefaultSpec {
-	return {
-		tool: "drizzle",
-		ownFiles: ["drizzle.config.ts", "drizzle.config.js", "drizzle.config.json"],
-		flag: "--config",
-		equals: true,
-		asset: "drizzle.base.mjs",
-		label: "default",
-	};
+  return {
+    asset: "drizzle.base.mjs",
+    equals: true,
+    flag: "--config",
+    label: "default",
+    ownFiles: ["drizzle.config.ts", "drizzle.config.js", "drizzle.config.json"],
+    tool: "drizzle",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -401,8 +412,8 @@ export function drizzleConfigSpec(): ConfigDefaultSpec {
 // A resolved db command: the tool bin (resolved CONSUMER-local at run time) and
 // its argument vector.
 export interface DbCommand {
-	tool: string;
-	args: string[];
+  args: string[];
+  tool: string;
 }
 
 // The inferred db task set:
@@ -410,33 +421,33 @@ export interface DbCommand {
 //   - `tasks` — the resolvable task name → its command. Keys are the short
 //     `db:*` names, each mapping to drizzle-kit.
 export interface DbTaskSet {
-	mode: "none" | "single";
-	tasks: Map<string, DbCommand>;
+  mode: "none" | "single";
+  tasks: Map<string, DbCommand>;
 }
 
 // The drizzle-kit task suffix → args map. Every command is `drizzle-kit <args>`.
 const DRIZZLE_TASKS: Record<string, string[]> = {
-	generate: ["generate"],
-	migrate: ["migrate"],
-	push: ["push"],
-	check: ["check"],
-	studio: ["studio"],
+  check: ["check"],
+  generate: ["generate"],
+  migrate: ["migrate"],
+  push: ["push"],
+  studio: ["studio"],
 };
 
 // Infer the db task set from the detected capabilities (pure). `drizzle` fires on
 // drizzle-orm/drizzle-kit (see detect.ts) — the ONLY db tool, so the SHORT `db:*`
 // names always map to drizzle-kit. No drizzle → an empty set (mode "none").
 export function dbTasks(capabilities: string[]): DbTaskSet {
-	const tasks = new Map<string, DbCommand>();
+  const tasks = new Map<string, DbCommand>();
 
-	if (capabilities.includes("drizzle")) {
-		for (const [name, args] of Object.entries(DRIZZLE_TASKS)) {
-			tasks.set(`db:${name}`, { tool: "drizzle-kit", args });
-		}
-		return { mode: "single", tasks };
-	}
+  if (capabilities.includes("drizzle")) {
+    for (const [name, args] of Object.entries(DRIZZLE_TASKS)) {
+      tasks.set(`db:${name}`, { args, tool: "drizzle-kit" });
+    }
+    return { mode: "single", tasks };
+  }
 
-	return { mode: "none", tasks };
+  return { mode: "none", tasks };
 }
 
 // The `dobby update` command: taze in interactive mode, resolved from DOBBY's OWN
@@ -469,64 +480,64 @@ export const UPDATE_ARGS: readonly string[] = ["--interactive"];
 // types it plus a one-line description. `run.ts` renders these into aligned
 // columns; the capability filter lives in `usageCommands` (this module).
 export interface UsageCommand {
-	name: string;
-	description: string;
+  description: string;
+  name: string;
 }
 
 export function usageCommands(capabilities: string[]): UsageCommand[] {
-	const commands: UsageCommand[] = [
-		{ name: "env", description: "Print a snapshot of the working environment" },
-		{
-			name: "check [file...]",
-			description:
-				"Run the quality gate (biome, tsc, knip, build, test); file args = biome-only fast path",
-		},
-	];
+  const commands: UsageCommand[] = [
+    { description: "Print a snapshot of the working environment", name: "env" },
+    {
+      description:
+        "Run the quality gate (biome, tsc, knip, build, test); file args = biome-only fast path",
+      name: "check [file...]",
+    },
+  ];
 
-	// dev / up / down — the run lifecycle, gated on a runnable app (the vite capability).
-	if (capabilities.includes("vite")) {
-		commands.push(
-			{
-				name: "dev",
-				description:
-					"Run the app: the portless-wrapped dev server + concurrent secondaries",
-			},
-			{
-				name: "up",
-				description:
-					"Prepare + run the workspace (idempotent): the setup phase (install, worktree copies, setup[] extras) then a liveness-first run (cmux panes or a detached run, neon branch isolation)",
-			},
-			{
-				name: "down",
-				description:
-					"Tear the run down: close panes, kill the run, delete the neon branch, teardown[] extras",
-			},
-			{
-				name: "build",
-				description:
-					"Build the app (vite build) — the inferred Vercel buildCommand (`bunx dobby build`)",
-			},
-		);
-	}
+  // dev / up / down — the run lifecycle, gated on a runnable app (the vite capability).
+  if (capabilities.includes("vite")) {
+    commands.push(
+      {
+        description:
+          "Run the app: the portless-wrapped dev server + concurrent secondaries",
+        name: "dev",
+      },
+      {
+        description:
+          "Prepare + run the workspace (idempotent): the setup phase (install, worktree copies, setup[] extras) then a liveness-first run (cmux panes or a detached run, neon branch isolation)",
+        name: "up",
+      },
+      {
+        description:
+          "Tear the run down: close panes, kill the run, delete the neon branch, teardown[] extras",
+        name: "down",
+      },
+      {
+        description:
+          "Build the app (vite build) — the inferred Vercel buildCommand (`bunx dobby build`)",
+        name: "build",
+      }
+    );
+  }
 
-	// db:* — only when a db capability resolves tasks; the ACTUAL resolved names.
-	for (const [name, command] of dbTasks(capabilities).tasks) {
-		commands.push({ name, description: describeDbCommand(command) });
-	}
+  // db:* — only when a db capability resolves tasks; the ACTUAL resolved names.
+  for (const [name, command] of dbTasks(capabilities).tasks) {
+    commands.push({ description: describeDbCommand(command), name });
+  }
 
-	commands.push({
-		name: "update",
-		description: "Update dependencies interactively (taze)",
-	});
+  commands.push({
+    description: "Update dependencies interactively (taze)",
+    name: "update",
+  });
 
-	return commands;
+  return commands;
 }
 
 // The concrete shell command a resolved db task runs, as one line. Mirrors
 // `run.ts`'s dry-run db plan line, reused here so the help shows exactly what each
 // db:* task executes.
 function describeDbCommand(command: DbCommand): string {
-	return `${command.tool} ${command.args.join(" ")}`.trimEnd();
+  return `${command.tool} ${command.args.join(" ")}`.trimEnd();
 }
 
 // ---------------------------------------------------------------------------
@@ -544,30 +555,30 @@ function describeDbCommand(command: DbCommand): string {
 // The single note surfaced when share was requested (the default) but the `ngrok`
 // binary is missing — dobby degraded to no tunnel. Names the two one-time fixes.
 const SHARE_OFF_NOTE =
-	"share: off (ngrok not installed — https://ngrok.com/download + ngrok config add-authtoken)";
+  "share: off (ngrok not installed — https://ngrok.com/download + ngrok config add-authtoken)";
 
 // The resolved share decision consumed by the dev/up executors:
 //   - `ngrok` — whether `--ngrok` is ACTUALLY applied (share requested AND ngrok present).
 //   - `note`  — the degrade note when share was requested but ngrok is missing, else null.
 export interface ShareDecision {
-	ngrok: boolean;
-	note: string | null;
+  ngrok: boolean;
+  note: string | null;
 }
 
 // Decide the share outcome from the requested intent + the (impurely probed) ngrok
 // presence. Opted out (`share=false`) → no tunnel, no note. Requested + ngrok present
 // → tunnel on. Requested + ngrok absent → DEGRADE (no tunnel, the one note). Pure.
 export function shareDecision(
-	share: boolean,
-	ngrokPresent: boolean,
+  share: boolean,
+  ngrokPresent: boolean
 ): ShareDecision {
-	if (!share) {
-		return { ngrok: false, note: null };
-	}
-	if (ngrokPresent) {
-		return { ngrok: true, note: null };
-	}
-	return { ngrok: false, note: SHARE_OFF_NOTE };
+  if (!share) {
+    return { ngrok: false, note: null };
+  }
+  if (ngrokPresent) {
+    return { ngrok: true, note: null };
+  }
+  return { ngrok: false, note: SHARE_OFF_NOTE };
 }
 
 // ---------------------------------------------------------------------------
@@ -594,23 +605,23 @@ export function shareDecision(
 // portless) at spawn time. `run.ts` renders them for the dry-run plan without ever
 // resolving a bin.
 export interface DevCommand {
-	tool: string;
-	args: string[];
+  args: string[];
+  tool: string;
 }
 
 // The main dev process: the cache-clears that precede it and the app-dev command
 // that is spawned wrapped in `portless run`. Internal to `DevPlan` (structural —
 // no caller names it), so it stays un-exported.
 interface DevMain {
-	cacheClears: DevCommand[];
-	command: DevCommand;
+  cacheClears: DevCommand[];
+  command: DevCommand;
 }
 
 // The ordered `dobby dev` plan. `main` is null for a project with no app (no vite)
 // — the executor turns that into the "nothing to run" gate.
 export interface DevPlan {
-	main: DevMain | null;
-	secondaries: DevCommand[];
+  main: DevMain | null;
+  secondaries: DevCommand[];
 }
 
 // Infer the `dobby dev` plan from the detected capabilities (pure). `config` is
@@ -618,24 +629,22 @@ export interface DevPlan {
 // config-driven dev behavior, so the composition is a pure function of the
 // capabilities; the config presence is only echoed back for callers that thread it.
 export function devPlan(
-	capabilities: string[],
-	config: DobbyConfig | null,
+  capabilities: string[],
+  _config: DobbyConfig | null
 ): DevPlan {
-	void config;
+  // The app main exists ONLY for a vite project. `.vite` cache-clear first, then the
+  // vite dev command (wrapped in `portless run` by the renderer/executor).
+  const main: DevMain | null = capabilities.includes("vite")
+    ? {
+        cacheClears: [{ args: ["-rf", "node_modules/.vite"], tool: "rm" }],
+        command: { args: ["dev"], tool: "vite" },
+      }
+    : null;
 
-	// The app main exists ONLY for a vite project. `.vite` cache-clear first, then the
-	// vite dev command (wrapped in `portless run` by the renderer/executor).
-	const main: DevMain | null = capabilities.includes("vite")
-		? {
-				cacheClears: [{ tool: "rm", args: ["-rf", "node_modules/.vite"] }],
-				command: { tool: "vite", args: ["dev"] },
-			}
-		: null;
+  const secondaries: DevCommand[] = [];
+  if (capabilities.includes("react-email")) {
+    secondaries.push({ args: ["dev", "--dir", "src/emails"], tool: "email" });
+  }
 
-	const secondaries: DevCommand[] = [];
-	if (capabilities.includes("react-email")) {
-		secondaries.push({ tool: "email", args: ["dev", "--dir", "src/emails"] });
-	}
-
-	return { main, secondaries };
+  return { main, secondaries };
 }

@@ -14,10 +14,10 @@ import { join } from "node:path";
 // consume the fields (e.g. the `check` gate reads `checks[]`, and `up`'s setup
 // phase reads `setup[]`) import this type.
 export interface DobbyConfig {
-	files?: Array<{ path: string; update_when: string[] }>;
-	setup?: string[];
-	teardown?: string[];
-	checks?: Array<{ name: string; run: string }>;
+  checks?: Array<{ name: string; run: string }>;
+  files?: Array<{ path: string; update_when: string[] }>;
+  setup?: string[];
+  teardown?: string[];
 }
 
 // The outcome of loading dobby.config.json:
@@ -27,31 +27,31 @@ export interface DobbyConfig {
 //    treats it as config:false.
 //  - `{ ok: true }`  — parsed successfully; `config` carries the schema.
 export type ConfigLoad =
-	| { ok: true; config: DobbyConfig }
-	| { ok: false; error: string };
+  | { ok: true; config: DobbyConfig }
+  | { ok: false; error: string };
 
 // Read + parse `<root>/dobby.config.json`. Never throws: a missing file is a
 // `null` result; an unparseable file is an `{ ok: false, error }` result naming
 // the file. Valid JSON parses into `{ ok: true, config }` (all schema fields are
 // optional, so any parseable object is accepted as-is in this task).
 export function loadConfig(root: string): ConfigLoad | null {
-	const configPath = join(root, "dobby.config.json");
-	if (!existsSync(configPath)) {
-		return null;
-	}
+  const configPath = join(root, "dobby.config.json");
+  if (!existsSync(configPath)) {
+    return null;
+  }
 
-	let raw: string;
-	try {
-		raw = readFileSync(configPath, "utf8");
-	} catch (error) {
-		const detail = error instanceof Error ? error.message : String(error);
-		return { ok: false, error: `could not read ${configPath}: ${detail}` };
-	}
+  let raw: string;
+  try {
+    raw = readFileSync(configPath, "utf8");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { error: `could not read ${configPath}: ${detail}`, ok: false };
+  }
 
-	try {
-		return { ok: true, config: JSON.parse(raw) as DobbyConfig };
-	} catch (error) {
-		const detail = error instanceof Error ? error.message : String(error);
-		return { ok: false, error: `could not parse ${configPath}: ${detail}` };
-	}
+  try {
+    return { config: JSON.parse(raw) as DobbyConfig, ok: true };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { error: `could not parse ${configPath}: ${detail}`, ok: false };
+  }
 }

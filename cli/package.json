@@ -1,92 +1,94 @@
 {
-	"name": "@kvnwolf/dobby",
-	"version": "0.3.1",
-	"bin": {
-		"dobby": "./src/index.ts"
-	},
-	"type": "module",
-	"exports": {
-		"./tsconfig": "./tsconfig.base.json",
-		"./tsconfig/vite": "./tsconfig.vite.json",
-		"./biome/core": "./biome/core.jsonc",
-		"./biome/react": "./biome/react.jsonc",
-		"./vite": {
-			"types": "./vite.base.d.mts",
-			"default": "./vite.base.mjs"
-		},
-		"./vite/tanstack-start": {
-			"types": "./vite.tanstack.d.mts",
-			"default": "./vite.tanstack.mjs"
-		},
-		"./vitest": {
-			"types": "./vitest.base.d.mts",
-			"default": "./vitest.base.mjs"
-		},
-		"./vitest/react": {
-			"types": "./vitest.react.d.mts",
-			"default": "./vitest.react.mjs"
-		},
-		"./drizzle": {
-			"types": "./drizzle.base.d.mts",
-			"default": "./drizzle.base.mjs"
-		}
-	},
-	"files": [
-		"src",
-		"!src/run.test.ts",
-		"biome",
-		"tsconfig.base.json",
-		"tsconfig.vite.json",
-		"vite.base.mjs",
-		"vite.tanstack.mjs",
-		"vitest.base.mjs",
-		"vitest.react.mjs",
-		"drizzle.base.mjs",
-		"*.d.mts",
-		"knip.base.jsonc"
-	],
-	"dependencies": {
-		"@biomejs/biome": "^2.5.4",
-		"knip": "^6.26.0",
-		"portless": "^0.15.3",
-		"taze": "^19.14.1",
-		"typescript": "^7.0.2",
-		"ultracite": "^7.9.4"
-	},
-	"peerDependencies": {
-		"@tailwindcss/vite": "*",
-		"@tanstack/devtools-vite": "*",
-		"@tanstack/react-start": "*",
-		"@vitejs/plugin-react": "*",
-		"drizzle-kit": "*",
-		"nitro": "*",
-		"vite": "*",
-		"vitest": "*"
-	},
-	"peerDependenciesMeta": {
-		"@tailwindcss/vite": {
-			"optional": true
-		},
-		"@tanstack/devtools-vite": {
-			"optional": true
-		},
-		"@tanstack/react-start": {
-			"optional": true
-		},
-		"@vitejs/plugin-react": {
-			"optional": true
-		},
-		"drizzle-kit": {
-			"optional": true
-		},
-		"nitro": {
-			"optional": true
-		},
-		"vite": {
-			"optional": true
-		},
-		"vitest": {
-			"optional": true
-		}
-	}
+  "name": "@kvnwolf/dobby",
+  "version": "0.3.1",
+  "bin": {
+    "dobby": "./src/index.ts"
+  },
+  "type": "module",
+  "exports": {
+    "./tsconfig": "./tsconfig.base.json",
+    "./tsconfig/vite": "./tsconfig.vite.json",
+    "./biome/core": "./biome/core.jsonc",
+    "./biome/react": "./biome/react.jsonc",
+    "./vite": {
+      "types": "./vite.base.d.mts",
+      "default": "./vite.base.mjs"
+    },
+    "./vite/tanstack-start": {
+      "types": "./vite.tanstack.d.mts",
+      "default": "./vite.tanstack.mjs"
+    },
+    "./vitest": {
+      "types": "./vitest.base.d.mts",
+      "default": "./vitest.base.mjs"
+    },
+    "./vitest/react": {
+      "types": "./vitest.react.d.mts",
+      "default": "./vitest.react.mjs"
+    },
+    "./drizzle": {
+      "types": "./drizzle.base.d.mts",
+      "default": "./drizzle.base.mjs"
+    }
+  },
+  "files": [
+    "src",
+    "!src/run.test.ts",
+    "biome",
+    "tsconfig.base.json",
+    "tsconfig.vite.json",
+    "vite.base.mjs",
+    "vite.tanstack.mjs",
+    "vitest.base.mjs",
+    "vitest.react.mjs",
+    "drizzle.base.mjs",
+    "*.d.mts",
+    "knip.base.jsonc"
+  ],
+  "dependencies": {
+    "@biomejs/biome": "^2.5.4",
+    "knip": "^6.26.0",
+    "portless": "^0.15.3",
+    "taze": "^19.14.1",
+    "typescript": "^7.0.2"
+  },
+  "devDependencies": {
+    "ultracite": "^7.9.4"
+  },
+  "peerDependencies": {
+    "@tailwindcss/vite": "*",
+    "@tanstack/devtools-vite": "*",
+    "@tanstack/react-start": "*",
+    "@vitejs/plugin-react": "*",
+    "drizzle-kit": "*",
+    "nitro": "*",
+    "vite": "*",
+    "vitest": "*"
+  },
+  "peerDependenciesMeta": {
+    "@tailwindcss/vite": {
+      "optional": true
+    },
+    "@tanstack/devtools-vite": {
+      "optional": true
+    },
+    "@tanstack/react-start": {
+      "optional": true
+    },
+    "@vitejs/plugin-react": {
+      "optional": true
+    },
+    "drizzle-kit": {
+      "optional": true
+    },
+    "nitro": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    },
+    "vitest": {
+      "optional": true
+    }
+  }
 }

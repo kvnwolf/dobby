@@ -4,19 +4,19 @@ import { type CheckGroup, type CheckNote, check, checkHook } from "./check.ts";
 import { detectCapabilities } from "./detect.ts";
 import { collectEnv, type EnvSnapshot } from "./envinfo.ts";
 import {
-	type DownAction,
-	type DownPlan,
-	planDev,
-	type ResolvedDevCommand,
-	type ResolvedDevPlan,
-	runBuild,
-	runDbTask,
-	runDown,
-	runUp,
-	runUpdate,
-	type SetupAction,
-	type UpAction,
-	type UpPlan,
+  type DownAction,
+  type DownPlan,
+  planDev,
+  type ResolvedDevCommand,
+  type ResolvedDevPlan,
+  runBuild,
+  runDbTask,
+  runDown,
+  runUp,
+  runUpdate,
+  type SetupAction,
+  type UpAction,
+  type UpPlan,
 } from "./lifecycle.ts";
 import { type CheckFlags, type DbCommand, usageCommands } from "./tasks.ts";
 
@@ -35,23 +35,23 @@ import { type CheckFlags, type DbCommand, usageCommands } from "./tasks.ts";
 // The exact upgrade-hint line appended as the second line of an unknown-command
 // error: a version-skew signal telling the caller their dobby is behind the kit.
 const upgradeHint =
-	"if this command is expected, run `bun update @kvnwolf/dobby`";
+  "if this command is expected, run `bun update @kvnwolf/dobby`";
 
 // The Options block — STATIC (a flags reference; it documents every flag and does
 // not vary per repo). The Commands block above it IS capability-filtered, so the
 // help never advertises a command that does not apply to the current repo.
 const OPTION_LINES = [
-	"  --json          Print machine-readable JSON (env)",
-	"  --lint          check: run only biome",
-	"  --types         check: run only tsc",
-	"  --unused        check: run only knip",
-	"  --build         check: run only the build step",
-	"  --test          check: run only the test step",
-	"  --fix           check: apply biome's safe fixes first, then report what remains",
-	"  --hook          check: edit-time PostToolUse mode (payload on stdin)",
-	"  --dry-run       dev / build / db:* / up / down: print the resolved action plan without executing it",
-	"  --no-share      dev / up: disable the ngrok share tunnel (on by default)",
-	"  -v, --version   Print the dobby version and exit",
+  "  --json          Print machine-readable JSON (env)",
+  "  --lint          check: run only biome",
+  "  --types         check: run only tsc",
+  "  --unused        check: run only knip",
+  "  --build         check: run only the build step",
+  "  --test          check: run only the test step",
+  "  --fix           check: apply biome's safe fixes first, then report what remains",
+  "  --hook          check: edit-time PostToolUse mode (payload on stdin)",
+  "  --dry-run       dev / build / db:* / up / down: print the resolved action plan without executing it",
+  "  --no-share      dev / up: disable the ngrok share tunnel (on by default)",
+  "  -v, --version   Print the dobby version and exit",
 ];
 
 // The usage/help text, COMPUTED per repo from the detected capabilities. The first
@@ -61,310 +61,324 @@ const OPTION_LINES = [
 // vite nor a db capability. All rendering (column alignment, headers) lives HERE;
 // `tasks.ts` returns the filtered command data.
 function buildUsage(capabilities: string[]): string {
-	const commands = usageCommands(capabilities);
-	const width = Math.max(...commands.map((c) => c.name.length));
-	const commandLines = commands.map(
-		(c) => `  ${c.name.padEnd(width)}  ${c.description}`,
-	);
-	return [
-		"Usage: dobby [command]",
-		"",
-		"Commands:",
-		...commandLines,
-		"",
-		"Options:",
-		...OPTION_LINES,
-		"",
-	].join("\n");
+  const commands = usageCommands(capabilities);
+  const width = Math.max(...commands.map((c) => c.name.length));
+  const commandLines = commands.map(
+    (c) => `  ${c.name.padEnd(width)}  ${c.description}`
+  );
+  return [
+    "Usage: dobby [command]",
+    "",
+    "Commands:",
+    ...commandLines,
+    "",
+    "Options:",
+    ...OPTION_LINES,
+    "",
+  ].join("\n");
 }
 
+// run() is the command DISPATCHER (a flat switch over every `dobby` subcommand) and is
+// async BY CONTRACT: it is the capture seam the streaming split pairs with the async
+// `runDev` — index.ts awaits BOTH uniformly — and its return type is Promise. Its
+// complexity is the sum of the CLI surface (each arm delegates to a planner/executor),
+// not tangled logic; splitting it would scatter the one legible statement of the contract.
+// It dispatches only synchronous executors today, so a bare `await` would be pure noise.
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: dispatcher breadth, not tangled logic (see above)
+// biome-ignore lint/suspicious/useAwait: async is a deliberate load-bearing contract (see above)
 export async function run(
-	argv: string[],
-	cwd: string,
-	stdin?: string,
+  argv: string[],
+  cwd: string,
+  stdin?: string
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-	// The usage/help text is capability-filtered per repo (the SAME detection env's
-	// `capabilities:` line uses — over the PASSED cwd, never a workroot resolve), so
-	// every path that prints usage (bare, parse error, unknown command) advertises
-	// only the commands that apply here.
-	const usage = buildUsage(detectCapabilities(cwd));
+  // The usage/help text is capability-filtered per repo (the SAME detection env's
+  // `capabilities:` line uses — over the PASSED cwd, never a workroot resolve), so
+  // every path that prints usage (bare, parse error, unknown command) advertises
+  // only the commands that apply here.
+  const usage = buildUsage(detectCapabilities(cwd));
 
-	let positionals: string[];
-	let version: boolean | undefined;
-	let json: boolean | undefined;
-	let hook: boolean | undefined;
-	let fix: boolean | undefined;
-	let dryRun: boolean | undefined;
-	// The ngrok share tunnel is ON BY DEFAULT; `--no-share` opts out (dev / up).
-	let noShare: boolean | undefined;
-	// The selective `check` flags: any present => run ONLY the flagged steps.
-	let checkFlags: CheckFlags = {};
+  let positionals: string[];
+  let version: boolean | undefined;
+  let json: boolean | undefined;
+  let hook: boolean | undefined;
+  let fix: boolean | undefined;
+  let dryRun: boolean | undefined;
+  // The ngrok share tunnel is ON BY DEFAULT; `--no-share` opts out (dev / up).
+  let noShare: boolean | undefined;
+  // The selective `check` flags: any present => run ONLY the flagged steps.
+  let checkFlags: CheckFlags = {};
 
-	try {
-		const parsed = parseArgs({
-			args: argv,
-			options: {
-				version: { type: "boolean", short: "v" },
-				json: { type: "boolean" },
-				lint: { type: "boolean" },
-				types: { type: "boolean" },
-				unused: { type: "boolean" },
-				build: { type: "boolean" },
-				test: { type: "boolean" },
-				fix: { type: "boolean" },
-				hook: { type: "boolean" },
-				"dry-run": { type: "boolean" },
-				"no-share": { type: "boolean" },
-			},
-			allowPositionals: true,
-			strict: true,
-		});
-		positionals = parsed.positionals;
-		version = parsed.values.version;
-		json = parsed.values.json;
-		hook = parsed.values.hook;
-		fix = parsed.values.fix;
-		dryRun = parsed.values["dry-run"];
-		noShare = parsed.values["no-share"];
-		checkFlags = {
-			lint: parsed.values.lint,
-			types: parsed.values.types,
-			unused: parsed.values.unused,
-			build: parsed.values.build,
-			test: parsed.values.test,
-		};
-	} catch (error) {
-		// parseArgs (strict) throws a TypeError on unknown/malformed flags. Emit the
-		// parse error message BEFORE the usage — the order is part of the contract.
-		const message = error instanceof Error ? error.message : String(error);
-		return { exitCode: 1, stdout: "", stderr: `${message}\n\n${usage}` };
-	}
+  try {
+    const parsed = parseArgs({
+      allowPositionals: true,
+      args: argv,
+      options: {
+        build: { type: "boolean" },
+        "dry-run": { type: "boolean" },
+        fix: { type: "boolean" },
+        hook: { type: "boolean" },
+        json: { type: "boolean" },
+        lint: { type: "boolean" },
+        "no-share": { type: "boolean" },
+        test: { type: "boolean" },
+        types: { type: "boolean" },
+        unused: { type: "boolean" },
+        version: { short: "v", type: "boolean" },
+      },
+      strict: true,
+    });
+    ({ positionals } = parsed);
+    ({
+      "dry-run": dryRun,
+      fix,
+      hook,
+      json,
+      "no-share": noShare,
+      version,
+    } = parsed.values);
+    checkFlags = {
+      build: parsed.values.build,
+      lint: parsed.values.lint,
+      test: parsed.values.test,
+      types: parsed.values.types,
+      unused: parsed.values.unused,
+    };
+  } catch (error) {
+    // parseArgs (strict) throws a TypeError on unknown/malformed flags. Emit the
+    // parse error message BEFORE the usage — the order is part of the contract.
+    const message = error instanceof Error ? error.message : String(error);
+    return { exitCode: 1, stderr: `${message}\n\n${usage}`, stdout: "" };
+  }
 
-	if (version) {
-		return { exitCode: 0, stdout: `${pkg.version}\n`, stderr: "" };
-	}
+  if (version) {
+    return { exitCode: 0, stderr: "", stdout: `${pkg.version}\n` };
+  }
 
-	const command = positionals[0];
+  const [command] = positionals;
 
-	if (command === undefined) {
-		return { exitCode: 0, stdout: usage, stderr: "" };
-	}
+  if (command === undefined) {
+    return { exitCode: 0, stderr: "", stdout: usage };
+  }
 
-	if (command === "env") {
-		// env NEVER fails: collectEnv degrades every unresolvable fact to null/false/[]
-		// and formatting cannot throw, so the exit code is always 0.
-		const snapshot = collectEnv(cwd);
-		const stdout = json ? formatEnvJson(snapshot) : formatEnvText(snapshot);
-		return { exitCode: 0, stdout, stderr: "" };
-	}
+  if (command === "env") {
+    // env NEVER fails: collectEnv degrades every unresolvable fact to null/false/[]
+    // and formatting cannot throw, so the exit code is always 0.
+    const snapshot = collectEnv(cwd);
+    const stdout = json ? formatEnvJson(snapshot) : formatEnvText(snapshot);
+    return { exitCode: 0, stderr: "", stdout };
+  }
 
-	if (command === "check") {
-		if (hook) {
-			// Edit-time hook: read the PostToolUse payload from stdin, apply biome's
-			// SAFE fixes to the edited file, and surface ONLY unfixable findings. Every
-			// guard is a SILENT exit 0 (empty stdout AND stderr) — harness noise must
-			// never block an edit. Findings go to STDERR because Claude Code shows the
-			// model stderr (not stdout) on exit 2 — the whole point of the exit-2 code.
-			const outcome = checkHook(stdin, cwd);
-			if (!outcome.surface) {
-				return { exitCode: 0, stdout: "", stderr: "" };
-			}
-			return {
-				exitCode: 2,
-				stdout: "",
-				stderr: formatCheck(outcome.groups, []),
-			};
-		}
-		// Positionals after "check" are file args (per-file fast path); none = the
-		// project-wide gate (subset by the selective flags). `--fix` applies biome's
-		// SAFE fixes first (project-wide, or over the named files) so the pre-commit
-		// gate never fails on formatting the edit hook did not reach, THEN reports what
-		// remains. A hard error (not a git repo / a bundled tool missing) reports on
-		// stderr with exit 1; otherwise the report's aggregated exit code (first failing
-		// step, 0 if all passed) is used.
-		const report = check(positionals.slice(1), cwd, checkFlags, Boolean(fix));
-		if (!report.ok) {
-			return { exitCode: 1, stdout: "", stderr: `${report.error}\n` };
-		}
-		return {
-			exitCode: report.exitCode,
-			stdout: formatCheck(report.groups, report.notes),
-			stderr: "",
-		};
-	}
+  if (command === "check") {
+    if (hook) {
+      // Edit-time hook: read the PostToolUse payload from stdin, apply biome's
+      // SAFE fixes to the edited file, and surface ONLY unfixable findings. Every
+      // guard is a SILENT exit 0 (empty stdout AND stderr) — harness noise must
+      // never block an edit. Findings go to STDERR because Claude Code shows the
+      // model stderr (not stdout) on exit 2 — the whole point of the exit-2 code.
+      const outcome = checkHook(stdin, cwd);
+      if (!outcome.surface) {
+        return { exitCode: 0, stderr: "", stdout: "" };
+      }
+      return {
+        exitCode: 2,
+        stderr: formatCheck(outcome.groups, []),
+        stdout: "",
+      };
+    }
+    // Positionals after "check" are file args (per-file fast path); none = the
+    // project-wide gate (subset by the selective flags). `--fix` applies biome's
+    // SAFE fixes first (project-wide, or over the named files) so the pre-commit
+    // gate never fails on formatting the edit hook did not reach, THEN reports what
+    // remains. A hard error (not a git repo / a bundled tool missing) reports on
+    // stderr with exit 1; otherwise the report's aggregated exit code (first failing
+    // step, 0 if all passed) is used.
+    const report = check(positionals.slice(1), cwd, checkFlags, Boolean(fix));
+    if (!report.ok) {
+      return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
+    }
+    return {
+      exitCode: report.exitCode,
+      stderr: "",
+      stdout: formatCheck(report.groups, report.notes),
+    };
+  }
 
-	if (command === "dev") {
-		// The dev PLAN — the `--dry-run` capture output — plus the no-app gate. A LIVE
-		// dev (a managed group of the portless-wrapped main + concurrent secondaries
-		// with signal forwarding) is owned by the bin's STREAMING path: index.ts
-		// intercepts `dobby dev` before run() is reached, so run() only ever PLANS and
-		// never spawns a dev server (a would-be-live dev reaching here still just prints
-		// the plan). No app (no vite) is a hard error: exit 1 with 'nothing to run'.
-		const report = planDev(cwd, { share: !noShare });
-		if (!report.ok) {
-			return { exitCode: 1, stdout: "", stderr: `${report.error}\n` };
-		}
-		return { exitCode: 0, stdout: formatDevPlan(report.plan), stderr: "" };
-	}
+  if (command === "dev") {
+    // The dev PLAN — the `--dry-run` capture output — plus the no-app gate. A LIVE
+    // dev (a managed group of the portless-wrapped main + concurrent secondaries
+    // with signal forwarding) is owned by the bin's STREAMING path: index.ts
+    // intercepts `dobby dev` before run() is reached, so run() only ever PLANS and
+    // never spawns a dev server (a would-be-live dev reaching here still just prints
+    // the plan). No app (no vite) is a hard error: exit 1 with 'nothing to run'.
+    const report = planDev(cwd, { share: !noShare });
+    if (!report.ok) {
+      return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
+    }
+    return { exitCode: 0, stderr: "", stdout: formatDevPlan(report.plan) };
+  }
 
-	if (command === "build") {
-		// The inferred mechanical build (ADR-0015): external builders (Vercel CI) set
-		// their buildCommand to `bunx dobby build`, so dobby owns the `vite build` spawn
-		// (consumer-local vite + the config-less default `--config` when absent). Gated
-		// on the vite capability (no vite → exit 1 'nothing to build', dev's gate's
-		// twin). FINITE — dispatched here (not the streaming split), inheriting stdio; a
-		// real run streams so only the exit code / failure come back. `--dry-run` renders
-		// the resolved plan without spawning.
-		const report = runBuild(cwd, { dryRun: Boolean(dryRun) });
-		if (!report.ok) {
-			return { exitCode: 1, stdout: "", stderr: `${report.error}\n` };
-		}
-		if (report.kind === "plan") {
-			return {
-				exitCode: 0,
-				stdout: formatBuildPlan(report.bin, report.args, report.cwd),
-				stderr: "",
-			};
-		}
-		return {
-			exitCode: report.exitCode,
-			stdout: "",
-			stderr: report.failure === null ? "" : `${report.failure}\n`,
-		};
-	}
+  if (command === "build") {
+    // The inferred mechanical build (ADR-0015): external builders (Vercel CI) set
+    // their buildCommand to `bunx dobby build`, so dobby owns the `vite build` spawn
+    // (consumer-local vite + the config-less default `--config` when absent). Gated
+    // on the vite capability (no vite → exit 1 'nothing to build', dev's gate's
+    // twin). FINITE — dispatched here (not the streaming split), inheriting stdio; a
+    // real run streams so only the exit code / failure come back. `--dry-run` renders
+    // the resolved plan without spawning.
+    const report = runBuild(cwd, { dryRun: Boolean(dryRun) });
+    if (!report.ok) {
+      return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
+    }
+    if (report.kind === "plan") {
+      return {
+        exitCode: 0,
+        stderr: "",
+        stdout: formatBuildPlan(report.bin, report.args, report.cwd),
+      };
+    }
+    return {
+      exitCode: report.exitCode,
+      stderr: report.failure === null ? "" : `${report.failure}\n`,
+      stdout: "",
+    };
+  }
 
-	if (command === "up") {
-		// Bring the app up (liveness-first, idempotent). Fails hard outside a git repo;
-		// the no-app gate (no vite) is a graceful exit-0 no-op; a neon project with
-		// missing creds fails hard (no main-DB fallback). `--dry-run` renders the
-		// decision-derived plan without probing / spawning / touching cmux or neon; a
-		// real run executes it and reports the outcome (streamed stdio, so no stdout).
-		const report = runUp(cwd, { dryRun: Boolean(dryRun), share: !noShare });
-		if (!report.ok) {
-			return { exitCode: 1, stdout: "", stderr: `${report.error}\n` };
-		}
-		if (report.kind === "noop") {
-			return { exitCode: 0, stdout: `${report.message}\n`, stderr: "" };
-		}
-		if (report.kind === "plan") {
-			return { exitCode: 0, stdout: formatUpPlan(report.plan), stderr: "" };
-		}
-		return {
-			exitCode: report.exitCode,
-			// An advisory note (share degraded / already-live no-tunnel hint) renders on
-			// stdout; a hard failure renders on stderr.
-			stdout: report.note === null ? "" : `${report.note}\n`,
-			stderr: report.failure === null ? "" : `${report.failure}\n`,
-		};
-	}
+  if (command === "up") {
+    // Bring the app up (liveness-first, idempotent). Fails hard outside a git repo;
+    // the no-app gate (no vite) is a graceful exit-0 no-op; a neon project with
+    // missing creds fails hard (no main-DB fallback). `--dry-run` renders the
+    // decision-derived plan without probing / spawning / touching cmux or neon; a
+    // real run executes it and reports the outcome (streamed stdio, so no stdout).
+    const report = runUp(cwd, { dryRun: Boolean(dryRun), share: !noShare });
+    if (!report.ok) {
+      return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
+    }
+    if (report.kind === "noop") {
+      return { exitCode: 0, stderr: "", stdout: `${report.message}\n` };
+    }
+    if (report.kind === "plan") {
+      return { exitCode: 0, stderr: "", stdout: formatUpPlan(report.plan) };
+    }
+    return {
+      exitCode: report.exitCode,
+      stderr: report.failure === null ? "" : `${report.failure}\n`,
+      // An advisory note (share degraded / already-live no-tunnel hint) renders on
+      // stdout; a hard failure renders on stderr.
+      stdout: report.note === null ? "" : `${report.note}\n`,
+    };
+  }
 
-	if (command === "down") {
-		// Tear the run down (close panes, kill the detached run, delete the neon
-		// branch, teardown[] extras). Fails hard outside a git repo; nothing to clean →
-		// exit 0 no-op. `--dry-run` renders the plan without executing.
-		const report = runDown(cwd, { dryRun: Boolean(dryRun) });
-		if (!report.ok) {
-			return { exitCode: 1, stdout: "", stderr: `${report.error}\n` };
-		}
-		if (report.kind === "plan") {
-			return { exitCode: 0, stdout: formatDownPlan(report.plan), stderr: "" };
-		}
-		return {
-			exitCode: report.exitCode,
-			stdout: "",
-			stderr: report.failure === null ? "" : `${report.failure}\n`,
-		};
-	}
+  if (command === "down") {
+    // Tear the run down (close panes, kill the detached run, delete the neon
+    // branch, teardown[] extras). Fails hard outside a git repo; nothing to clean →
+    // exit 0 no-op. `--dry-run` renders the plan without executing.
+    const report = runDown(cwd, { dryRun: Boolean(dryRun) });
+    if (!report.ok) {
+      return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
+    }
+    if (report.kind === "plan") {
+      return { exitCode: 0, stderr: "", stdout: formatDownPlan(report.plan) };
+    }
+    return {
+      exitCode: report.exitCode,
+      stderr: report.failure === null ? "" : `${report.failure}\n`,
+      stdout: "",
+    };
+  }
 
-	if (command.startsWith("db:")) {
-		// Inferred db task: the command name resolves through the capability-driven
-		// db:* map (drizzle is the one db tool, so the short db:* names map to
-		// drizzle-kit). An unknown name is a hard error (exit 1) whose message already
-		// lists what IS available. `--dry-run` prints the resolved command without spawning.
-		const report = runDbTask(command, cwd, { dryRun: Boolean(dryRun) });
-		if (!report.ok) {
-			return { exitCode: 1, stdout: "", stderr: `${report.error}\n` };
-		}
-		if (report.kind === "plan") {
-			return {
-				exitCode: 0,
-				stdout: formatDbPlan(report.bin, report.command, report.cwd),
-				stderr: "",
-			};
-		}
-		// A real run inherited stdio (output streamed straight to the terminal); only
-		// the exit code and an optional failure note come back as data.
-		return {
-			exitCode: report.exitCode,
-			stdout: "",
-			stderr: report.failure === null ? "" : `${report.failure}\n`,
-		};
-	}
+  if (command.startsWith("db:")) {
+    // Inferred db task: the command name resolves through the capability-driven
+    // db:* map (drizzle is the one db tool, so the short db:* names map to
+    // drizzle-kit). An unknown name is a hard error (exit 1) whose message already
+    // lists what IS available. `--dry-run` prints the resolved command without spawning.
+    const report = runDbTask(command, cwd, { dryRun: Boolean(dryRun) });
+    if (!report.ok) {
+      return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
+    }
+    if (report.kind === "plan") {
+      return {
+        exitCode: 0,
+        stderr: "",
+        stdout: formatDbPlan(report.bin, report.command, report.cwd),
+      };
+    }
+    // A real run inherited stdio (output streamed straight to the terminal); only
+    // the exit code and an optional failure note come back as data.
+    return {
+      exitCode: report.exitCode,
+      stderr: report.failure === null ? "" : `${report.failure}\n`,
+      stdout: "",
+    };
+  }
 
-	if (command === "update") {
-		// Interactive dependency update (taze). Inherits stdio — the picker streams to
-		// the user and terminates with them — so only the exit code is captured here.
-		const report = runUpdate(cwd);
-		if (!report.ok) {
-			return { exitCode: 1, stdout: "", stderr: `${report.error}\n` };
-		}
-		return { exitCode: report.exitCode, stdout: "", stderr: "" };
-	}
+  if (command === "update") {
+    // Interactive dependency update (taze). Inherits stdio — the picker streams to
+    // the user and terminates with them — so only the exit code is captured here.
+    const report = runUpdate(cwd);
+    if (!report.ok) {
+      return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
+    }
+    return { exitCode: report.exitCode, stderr: "", stdout: "" };
+  }
 
-	return {
-		exitCode: 1,
-		stdout: "",
-		stderr: `unknown command: ${command}\n${upgradeHint}\n\n${usage}`,
-	};
+  return {
+    exitCode: 1,
+    stderr: `unknown command: ${command}\n${upgradeHint}\n\n${usage}`,
+    stdout: "",
+  };
 }
 
 // Render the env snapshot as `key: value` lines (the default form). Scalars
 // print their value or the literal "null"; capabilities print as a
 // comma-separated list or the literal "none"; config prints "true"/"false".
 function formatEnvText(snapshot: EnvSnapshot): string {
-	const capabilities =
-		snapshot.capabilities.length === 0
-			? "none"
-			: snapshot.capabilities.join(", ");
-	return [
-		`cmux: ${scalar(snapshot.cmux)}`,
-		`worktree: ${scalar(snapshot.worktree)}`,
-		`branch: ${scalar(snapshot.branch)}`,
-		`capabilities: ${capabilities}`,
-		`config: ${snapshot.config}`,
-		`devUrl: ${scalar(snapshot.devUrl)}`,
-		`shareUrl: ${scalar(snapshot.shareUrl)}`,
-		`runPane: ${scalar(snapshot.runPane)}`,
-		`browserPane: ${scalar(snapshot.browserPane)}`,
-	]
-		.join("\n")
-		.concat("\n");
+  const capabilities =
+    snapshot.capabilities.length === 0
+      ? "none"
+      : snapshot.capabilities.join(", ");
+  return [
+    `cmux: ${scalar(snapshot.cmux)}`,
+    `worktree: ${scalar(snapshot.worktree)}`,
+    `branch: ${scalar(snapshot.branch)}`,
+    `capabilities: ${capabilities}`,
+    `config: ${snapshot.config}`,
+    `devUrl: ${scalar(snapshot.devUrl)}`,
+    `shareUrl: ${scalar(snapshot.shareUrl)}`,
+    `runPane: ${scalar(snapshot.runPane)}`,
+    `browserPane: ${scalar(snapshot.browserPane)}`,
+  ]
+    .join("\n")
+    .concat("\n");
 }
 
 // A scalar field for text output: its string value, or the literal "null".
 function scalar(value: string | null): string {
-	return value === null ? "null" : value;
+  return value === null ? "null" : value;
 }
 
 // Render the env snapshot as one JSON object: string|null scalars, a capabilities
 // ARRAY, and a boolean config — the skill-consumable shape. The snapshot already
 // carries exactly these types, so a plain stringify is the whole contract.
 function formatEnvJson(snapshot: EnvSnapshot): string {
-	return `${JSON.stringify(snapshot)}\n`;
+  return `${JSON.stringify(snapshot)}\n`;
 }
 
 // One human line per setup action. The wording carries the load-bearing substrings
 // the contract reads: the literal `bun install`, the copied file's relative path,
 // and each extra's verbatim command.
 function describeSetupAction(action: SetupAction): string {
-	switch (action.kind) {
-		case "install":
-			return "bun install";
-		case "copy":
-			return `copy ${action.rel} (from main checkout)`;
-		case "extra":
-			return `run: ${action.run}`;
-	}
+  switch (action.kind) {
+    case "install":
+      return "bun install";
+    case "copy":
+      return `copy ${action.rel} (from main checkout)`;
+    case "extra":
+      return `run: ${action.run}`;
+    default:
+      // Exhaustive over SetupAction — `action` is `never` here; a future uncased
+      // kind fails tsc rather than silently rendering nothing.
+      return action;
+  }
 }
 
 // Render a resolved db task for `--dry-run`: the RESOLVED tool bin (consumer
@@ -375,8 +389,8 @@ function describeSetupAction(action: SetupAction): string {
 // tests and verify recipes can assert the mapping AND observe the bin resolution
 // (part c).
 function formatDbPlan(bin: string, command: DbCommand, cwd: string): string {
-	const line = `${bin} ${command.args.join(" ")}`.trimEnd();
-	return `db task (dry-run):\n  ${line}\n  cwd: ${cwd}\n`;
+  const line = `${bin} ${command.args.join(" ")}`.trimEnd();
+  return `db task (dry-run):\n  ${line}\n  cwd: ${cwd}\n`;
 }
 
 // Render `dobby build --dry-run`: the RESOLVED consumer vite bin + args (incl. the
@@ -385,8 +399,8 @@ function formatDbPlan(bin: string, command: DbCommand, cwd: string): string {
 // dry-run plan format. NO spawn: this is exactly what a real `bunx dobby build`
 // (the Vercel buildCommand) would execute.
 function formatBuildPlan(bin: string, args: string[], cwd: string): string {
-	const line = `${bin} ${args.join(" ")}`.trimEnd();
-	return `build (dry-run):\n  ${line}\n  cwd: ${cwd}\n`;
+  const line = `${bin} ${args.join(" ")}`.trimEnd();
+  return `build (dry-run):\n  ${line}\n  cwd: ${cwd}\n`;
 }
 
 // Render the RESOLVED dev plan as one shell-style line per command, in EXECUTION
@@ -396,30 +410,30 @@ function formatBuildPlan(bin: string, args: string[], cwd: string): string {
 // paths (part c: the resolution is observable); the `rm` cache-clear stays logical
 // (a native op, never spawned).
 function formatDevPlan(plan: ResolvedDevPlan): string {
-	const lines: string[] = [];
-	if (plan.main !== null) {
-		for (const clear of plan.cacheClears) {
-			lines.push(`  ${clear.tool} ${clear.args.join(" ")}`.trimEnd());
-		}
-		// `--ngrok` (the share tunnel) sits between `run` and the wrapped command; absent
-		// when share is off or ngrok is missing (a `shareNote` then explains the degrade).
-		const ngrok = plan.main.ngrok ? "--ngrok " : "";
-		lines.push(
-			`  ${plan.main.portless} run ${ngrok}${renderResolvedCommand(plan.main.command)}`,
-		);
-	}
-	for (const secondary of plan.secondaries) {
-		lines.push(`  ${renderResolvedCommand(secondary)}`);
-	}
-	if (plan.shareNote !== null) {
-		lines.push(`  ${plan.shareNote}`);
-	}
-	return ["Dev plan (dry-run):", ...lines].join("\n").concat("\n");
+  const lines: string[] = [];
+  if (plan.main !== null) {
+    for (const clear of plan.cacheClears) {
+      lines.push(`  ${clear.tool} ${clear.args.join(" ")}`.trimEnd());
+    }
+    // `--ngrok` (the share tunnel) sits between `run` and the wrapped command; absent
+    // when share is off or ngrok is missing (a `shareNote` then explains the degrade).
+    const ngrok = plan.main.ngrok ? "--ngrok " : "";
+    lines.push(
+      `  ${plan.main.portless} run ${ngrok}${renderResolvedCommand(plan.main.command)}`
+    );
+  }
+  for (const secondary of plan.secondaries) {
+    lines.push(`  ${renderResolvedCommand(secondary)}`);
+  }
+  if (plan.shareNote !== null) {
+    lines.push(`  ${plan.shareNote}`);
+  }
+  return ["Dev plan (dry-run):", ...lines].join("\n").concat("\n");
 }
 
 // One shell-style line for a resolved dev command: `<resolved-bin> <args…>`.
 function renderResolvedCommand(command: ResolvedDevCommand): string {
-	return `${command.bin} ${command.args.join(" ")}`.trimEnd();
+  return `${command.bin} ${command.args.join(" ")}`.trimEnd();
 }
 
 // The placeholder surface refs the `up` plan renders where a real run would capture
@@ -437,97 +451,103 @@ const RUN_SURFACE = "<run-surface>";
 // block renders the exact positional layout (browser `--direction right`, run terminal
 // `new-split down` targeted by `--surface`).
 function formatUpPlan(plan: UpPlan): string {
-	const lines: string[] = [];
-	for (const action of plan.setup) {
-		lines.push(`  ${describeSetupAction(action)}`);
-	}
-	if (plan.renameWorkspace !== null) {
-		lines.push(
-			`  cmux rename-workspace --workspace ${plan.renameWorkspace.workspace} "${plan.renameWorkspace.title}"`,
-		);
-	}
-	for (const action of plan.actions) {
-		for (const line of describeUpAction(action)) {
-			lines.push(`  ${line}`);
-		}
-	}
-	if (plan.runSkipped !== null) {
-		lines.push(`  ${plan.runSkipped}`);
-	}
-	// The share degrade note (share on by default, ngrok missing) — the started dev
-	// will run local-only this session; surfaced in the plan just like dev's.
-	if (plan.shareNote !== null) {
-		lines.push(`  ${plan.shareNote}`);
-	}
-	return ["Up plan (dry-run):", ...lines].join("\n").concat("\n");
+  const lines: string[] = [];
+  for (const action of plan.setup) {
+    lines.push(`  ${describeSetupAction(action)}`);
+  }
+  if (plan.renameWorkspace !== null) {
+    lines.push(
+      `  cmux rename-workspace --workspace ${plan.renameWorkspace.workspace} "${plan.renameWorkspace.title}"`
+    );
+  }
+  for (const action of plan.actions) {
+    for (const line of describeUpAction(action)) {
+      lines.push(`  ${line}`);
+    }
+  }
+  if (plan.runSkipped !== null) {
+    lines.push(`  ${plan.runSkipped}`);
+  }
+  // The share degrade note (share on by default, ngrok missing) — the started dev
+  // will run local-only this session; surfaced in the plan just like dev's.
+  if (plan.shareNote !== null) {
+    lines.push(`  ${plan.shareNote}`);
+  }
+  return ["Up plan (dry-run):", ...lines].join("\n").concat("\n");
 }
 
 // The plan line(s) for one `up` action.
 function describeUpAction(action: UpAction): string[] {
-	switch (action.kind) {
-		case "probe":
-			return [
-				`probe liveness: curl -sf --max-time 5 ${action.url ?? "<devUrl>"}`,
-			];
-		case "neon-branch":
-			return [
-				`bunx neonctl branches create --name ${action.branch} --project-id ${action.projectId} --output json`,
-				"rewrite DATABASE_URL, DATABASE_URL_UNPOOLED in .env.local (from the branch connection strings)",
-			];
-		case "cmux-panes": {
-			const url = action.devUrl === null ? "" : ` --url ${action.devUrl}`;
-			return [
-				`cmux new-pane --workspace ${action.workspace} --type browser${url} --direction right`,
-				`cmux rename-tab --surface ${BROWSER_SURFACE} "${action.browserName}"`,
-				`cmux new-split down --surface ${BROWSER_SURFACE}`,
-				`cmux rename-tab --surface ${RUN_SURFACE} "${action.runName}"`,
-				`cmux send --surface ${RUN_SURFACE} "${action.sendLine}"`,
-			];
-		}
-		case "detached":
-			return [
-				`spawn detached: ${action.command} (pid → ${action.pidRel}, log → ${action.logRel})`,
-			];
-		case "wait":
-			return [
-				`wait for liveness: curl -sf --max-time 5 ${action.url ?? "<devUrl>"} (retry ${action.retries}×${action.intervalSec}s)`,
-			];
-	}
+  switch (action.kind) {
+    case "probe":
+      return [
+        `probe liveness: curl -sf --max-time 5 ${action.url ?? "<devUrl>"}`,
+      ];
+    case "neon-branch":
+      return [
+        `bunx neonctl branches create --name ${action.branch} --project-id ${action.projectId} --output json`,
+        "rewrite DATABASE_URL, DATABASE_URL_UNPOOLED in .env.local (from the branch connection strings)",
+      ];
+    case "cmux-panes": {
+      const url = action.devUrl === null ? "" : ` --url ${action.devUrl}`;
+      return [
+        `cmux new-pane --workspace ${action.workspace} --type browser${url} --direction right`,
+        `cmux rename-tab --surface ${BROWSER_SURFACE} "${action.browserName}"`,
+        `cmux new-split down --surface ${BROWSER_SURFACE}`,
+        `cmux rename-tab --surface ${RUN_SURFACE} "${action.runName}"`,
+        `cmux send --surface ${RUN_SURFACE} "${action.sendLine}"`,
+      ];
+    }
+    case "detached":
+      return [
+        `spawn detached: ${action.command} (pid → ${action.pidRel}, log → ${action.logRel})`,
+      ];
+    case "wait":
+      return [
+        `wait for liveness: curl -sf --max-time 5 ${action.url ?? "<devUrl>"} (retry ${action.retries}×${action.intervalSec}s)`,
+      ];
+    default:
+      // Exhaustive over UpAction — `action` is `never` here (compile-time guard).
+      return action;
+  }
 }
 
 // Render the `down` plan as one shell-style line per planned action (close panes →
 // kill the detached run → delete the neon branch → teardown[] extras). An empty
 // plan prints a `(nothing to clean)` line.
 function formatDownPlan(plan: DownPlan): string {
-	const lines: string[] = [];
-	for (const action of plan.actions) {
-		for (const line of describeDownAction(action)) {
-			lines.push(`  ${line}`);
-		}
-	}
-	const body = lines.length === 0 ? ["  (nothing to clean)"] : lines;
-	return ["Down plan (dry-run):", ...body].join("\n").concat("\n");
+  const lines: string[] = [];
+  for (const action of plan.actions) {
+    for (const line of describeDownAction(action)) {
+      lines.push(`  ${line}`);
+    }
+  }
+  const body = lines.length === 0 ? ["  (nothing to clean)"] : lines;
+  return ["Down plan (dry-run):", ...body].join("\n").concat("\n");
 }
 
 // The plan line(s) for one `down` action.
 function describeDownAction(action: DownAction): string[] {
-	switch (action.kind) {
-		case "cmux-close":
-			return [
-				`cmux close-surface --surface <${action.browserName}>`,
-				`cmux close-surface --surface <${action.runName}>`,
-			];
-		case "kill-pidfile":
-			return [
-				`kill process group from ${action.pidRel} (SIGTERM; stale pid → remove the file)`,
-			];
-		case "neon-delete":
-			return [
-				`bunx neonctl branches delete ${action.branch} --project-id ${action.projectId}`,
-			];
-		case "extra":
-			return [`run: ${action.run}`];
-	}
+  switch (action.kind) {
+    case "cmux-close":
+      return [
+        `cmux close-surface --surface <${action.browserName}>`,
+        `cmux close-surface --surface <${action.runName}>`,
+      ];
+    case "kill-pidfile":
+      return [
+        `kill process group from ${action.pidRel} (SIGTERM; stale pid → remove the file)`,
+      ];
+    case "neon-delete":
+      return [
+        `bunx neonctl branches delete ${action.branch} --project-id ${action.projectId}`,
+      ];
+    case "extra":
+      return [`run: ${action.run}`];
+    default:
+      // Exhaustive over DownAction — `action` is `never` here (compile-time guard).
+      return action;
+  }
 }
 
 // The per-tool cap on printed findings: the model needs a representative sample,
@@ -541,28 +561,28 @@ const FINDING_CAP = 50;
 // (a crashed tool) renders its raw-output tail under the note line. An empty run
 // (no findings, no notes) prints a single "No findings." line.
 function formatCheck(groups: CheckGroup[], notes: CheckNote[]): string {
-	const blocks: string[] = [];
-	for (const group of groups) {
-		if (group.findings.length === 0) {
-			continue;
-		}
-		const lines = [`${group.tool} (${group.findings.length}):`];
-		const shown = group.findings.slice(0, FINDING_CAP);
-		for (const finding of shown) {
-			lines.push(
-				`  ${finding.file}:${finding.line} ${finding.message}`.trimEnd(),
-			);
-		}
-		const overflow = group.findings.length - shown.length;
-		if (overflow > 0) {
-			lines.push(`  …${overflow} more`);
-		}
-		blocks.push(lines.join("\n"));
-	}
-	for (const note of notes) {
-		blocks.push(renderNote(note));
-	}
-	return blocks.length === 0 ? "No findings.\n" : `${blocks.join("\n\n")}\n`;
+  const blocks: string[] = [];
+  for (const group of groups) {
+    if (group.findings.length === 0) {
+      continue;
+    }
+    const lines = [`${group.tool} (${group.findings.length}):`];
+    const shown = group.findings.slice(0, FINDING_CAP);
+    for (const finding of shown) {
+      lines.push(
+        `  ${finding.file}:${finding.line} ${finding.message}`.trimEnd()
+      );
+    }
+    const overflow = group.findings.length - shown.length;
+    if (overflow > 0) {
+      lines.push(`  …${overflow} more`);
+    }
+    blocks.push(lines.join("\n"));
+  }
+  for (const note of notes) {
+    blocks.push(renderNote(note));
+  }
+  return blocks.length === 0 ? "No findings.\n" : `${blocks.join("\n\n")}\n`;
 }
 
 // A step note as one block: the note line, then — when the step CRASHED (a
@@ -570,12 +590,12 @@ function formatCheck(groups: CheckGroup[], notes: CheckNote[]): string {
 // output beneath it (the diagnosability fix; the tail is already capped by
 // check.ts). An ordinary note (skip / findings-backed failure) is just its line.
 function renderNote(note: CheckNote): string {
-	if (note.raw === null) {
-		return note.text;
-	}
-	const body = note.raw
-		.split("\n")
-		.map((line) => `    ${line}`.trimEnd())
-		.join("\n");
-	return `${note.text}\n  raw output (tail):\n${body}`;
+  if (note.raw === null) {
+    return note.text;
+  }
+  const body = note.raw
+    .split("\n")
+    .map((line) => `    ${line}`.trimEnd())
+    .join("\n");
+  return `${note.text}\n  raw output (tail):\n${body}`;
 }

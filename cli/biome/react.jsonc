@@ -1,5 +1,35 @@
+// Vendored from ultracite@7.9.4 — regenerate: bun cli/scripts/vendor-biome.ts
+// DO NOT EDIT: dobby's modifications are applied by the generator; drift is gated by src/vendor-biome.test.ts.
 {
-	// Multi-level extends: core brings ultracite/biome/core + the common ignores,
-	// so react-app consumers extend ONLY @kvnwolf/dobby/biome/react.
-	"extends": ["./core.jsonc", "ultracite/biome/react"]
+  "root": false,
+  "$schema": "https://biomejs.dev/schemas/2.5.4/schema.json",
+  "linter": {
+    "rules": {
+      "correctness": {
+        "noChildrenProp": "error",
+        "noNestedComponentDefinitions": "error",
+        "noReactPropAssignments": "error",
+        "noRenderReturnValue": "error",
+        "noVoidElementsWithChildren": "error",
+        "useExhaustiveDependencies": "error",
+        "useHookAtTopLevel": "error",
+        "useJsxKeyInIterable": "error"
+      },
+      "suspicious": {
+        // ultracite/biome/react re-enables noArrayIndexKey as an error; dobby
+        // disables it again (same house-style reason as core). A consumer extends
+        // BOTH core and react, so this last-in-chain value is what wins.
+        "noArrayIndexKey": "off",
+        "noDuplicateJsxProps": "error",
+        "noLeakedRender": "error",
+        "noReactForwardRef": "error",
+        "noSuspiciousSemicolonInJsx": "error",
+        "noUnknownAttribute": "error",
+        "noReactSpecificProps": "off"
+      },
+      "style": {
+        "useReactFunctionComponents": "error"
+      }
+    }
+  }
 }

@@ -18,24 +18,24 @@ import type { ConfigDefaultSpec, ViteConfigSelection } from "./tasks.ts";
 // never fail because a tool (portless, cmux) is absent.
 
 export interface RunResult {
-	// The child's exit code, or null when it was killed by a signal or never
-	// started (a missing binary — `error` is then set). Callers treat anything
-	// other than 0 as failure.
-	status: number | null;
-	stdout: string;
-	stderr: string;
-	// Set when the process could not be spawned at all (ENOENT for a missing
-	// binary, etc.); callers fold this into the same failure path as status != 0.
-	error?: Error;
+  // Set when the process could not be spawned at all (ENOENT for a missing
+  // binary, etc.); callers fold this into the same failure path as status != 0.
+  error?: Error;
+  // The child's exit code, or null when it was killed by a signal or never
+  // started (a missing binary — `error` is then set). Callers treat anything
+  // other than 0 as failure.
+  status: number | null;
+  stderr: string;
+  stdout: string;
 }
 
 export interface RunOptions {
-	// The resolved workroot; the child's cwd is pinned HERE, never the ambient cwd.
-	root: string;
-	// Optional stdin payload (e.g. a PostToolUse hook body). Omitted -> stdin ignored.
-	input?: string;
-	// Optional env overrides; omitted -> the child inherits process.env.
-	env?: NodeJS.ProcessEnv;
+  // Optional env overrides; omitted -> the child inherits process.env.
+  env?: NodeJS.ProcessEnv;
+  // Optional stdin payload (e.g. a PostToolUse hook body). Omitted -> stdin ignored.
+  input?: string;
+  // The resolved workroot; the child's cwd is pinned HERE, never the ambient cwd.
+  root: string;
 }
 
 // Resolve the enclosing git worktree root for `cwd`: `git rev-parse
@@ -44,16 +44,16 @@ export interface RunOptions {
 // spawn pins to the result. Returns the top-level path, or null outside a git
 // repo / when git is absent. Never throws.
 export function resolveWorkroot(cwd: string): string | null {
-	const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-		cwd,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "ignore"],
-	});
-	if (result.error || result.status !== 0) {
-		return null;
-	}
-	const top = (result.stdout ?? "").trim();
-	return top === "" ? null : top;
+  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (result.error || result.status !== 0) {
+    return null;
+  }
+  const top = (result.stdout ?? "").trim();
+  return top === "" ? null : top;
 }
 
 /**
@@ -66,13 +66,13 @@ export function resolveWorkroot(cwd: string): string | null {
  * (up/down/dev).
  */
 export function requireWorkroot(cwd: string): string {
-	const root = resolveWorkroot(cwd);
-	if (root === null) {
-		throw new Error(
-			"dobby must run inside a git repository — no git worktree found for the current directory",
-		);
-	}
-	return root;
+  const root = resolveWorkroot(cwd);
+  if (root === null) {
+    throw new Error(
+      "dobby must run inside a git repository — no git worktree found for the current directory"
+    );
+  }
+  return root;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ const packageRoot = dirname(runnerDir);
  * default tool configs.
  */
 export function resolveAsset(relPath: string): string {
-	return join(packageRoot, relPath);
+  return join(packageRoot, relPath);
 }
 
 /**
@@ -144,20 +144,20 @@ export function resolveAsset(relPath: string): string {
  * through (check biome/knip/vite/vitest, dev/build vite, db drizzle-kit).
  */
 export function configArgs(
-	root: string | null,
-	spec: ConfigDefaultSpec,
+  root: string | null,
+  spec: ConfigDefaultSpec
 ): { args: string[]; usedDefault: string | null } {
-	if (root !== null && consumerOwnsConfig(root, spec)) {
-		return { args: [], usedDefault: null };
-	}
-	const assetPath = resolveAsset(spec.asset);
-	const args = spec.equals
-		? [`${spec.flag}=${assetPath}`]
-		: [spec.flag, assetPath];
-	if (spec.vcsRoot && root !== null) {
-		args.push(`--vcs-root=${root}`);
-	}
-	return { args, usedDefault: spec.label };
+  if (root !== null && consumerOwnsConfig(root, spec)) {
+    return { args: [], usedDefault: null };
+  }
+  const assetPath = resolveAsset(spec.asset);
+  const args = spec.equals
+    ? [`${spec.flag}=${assetPath}`]
+    : [spec.flag, assetPath];
+  if (spec.vcsRoot && root !== null) {
+    args.push(`--vcs-root=${root}`);
+  }
+  return { args, usedDefault: spec.label };
 }
 
 // The result of resolving the vite config-less default against the workroot:
@@ -168,8 +168,8 @@ export function configArgs(
 //     tanstack default imports; the caller turns this into a HARD ERROR (never a
 //     silent base fallback). `missing` names the packages for the message.
 export type ViteConfigResolution =
-	| { blocked: false; args: string[]; usedDefault: string | null }
-	| { blocked: true; missing: string[] };
+  | { blocked: false; args: string[]; usedDefault: string | null }
+  | { blocked: true; missing: string[] };
 
 /**
  * Resolve the pure `ViteConfigSelection` (from tasks.ts) against the workroot — the
@@ -185,48 +185,48 @@ export type ViteConfigResolution =
  * through this; on `blocked` they emit the hard error (`viteBlockedMessage`).
  */
 export function resolveViteConfig(
-	root: string | null,
-	selection: ViteConfigSelection,
+  root: string | null,
+  selection: ViteConfigSelection
 ): ViteConfigResolution {
-	if (selection.kind === "default") {
-		return { blocked: false, ...configArgs(root, selection.spec) };
-	}
-	// A present consumer vite config wins over the block (the same override-by-presence
-	// rule `configArgs` applies to a default): only a config-LESS app is blocked.
-	if (root !== null && anyConfigFilePresent(root, selection.ownFiles)) {
-		return { blocked: false, args: [], usedDefault: null };
-	}
-	return { blocked: true, missing: selection.missing };
+  if (selection.kind === "default") {
+    return { blocked: false, ...configArgs(root, selection.spec) };
+  }
+  // A present consumer vite config wins over the block (the same override-by-presence
+  // rule `configArgs` applies to a default): only a config-LESS app is blocked.
+  if (root !== null && anyConfigFilePresent(root, selection.ownFiles)) {
+    return { args: [], blocked: false, usedDefault: null };
+  }
+  return { blocked: true, missing: selection.missing };
 }
 
 // Whether the consumer ships its OWN config for a tool at `root`: any of the
 // spec's own-config filenames present, or the spec's package.json key declared.
 function consumerOwnsConfig(root: string, spec: ConfigDefaultSpec): boolean {
-	if (anyConfigFilePresent(root, spec.ownFiles)) {
-		return true;
-	}
-	return spec.ownPkgKey !== undefined && pkgHasKey(root, spec.ownPkgKey);
+  if (anyConfigFilePresent(root, spec.ownFiles)) {
+    return true;
+  }
+  return spec.ownPkgKey !== undefined && pkgHasKey(root, spec.ownPkgKey);
 }
 
 // Whether any of `ownFiles` exists at the workroot — a consumer config file present.
 function anyConfigFilePresent(
-	root: string,
-	ownFiles: readonly string[],
+  root: string,
+  ownFiles: readonly string[]
 ): boolean {
-	return ownFiles.some((file) => existsSync(join(root, file)));
+  return ownFiles.some((file) => existsSync(join(root, file)));
 }
 
 // Whether `<root>/package.json` declares top-level `key` (knip's `#knip`).
 // Tolerant: an absent/unparseable manifest is "no key".
 function pkgHasKey(root: string, key: string): boolean {
-	try {
-		const manifest = JSON.parse(
-			readFileSync(join(root, "package.json"), "utf8"),
-		) as Record<string, unknown>;
-		return manifest[key] !== undefined;
-	} catch {
-		return false;
-	}
+  try {
+    const manifest = JSON.parse(
+      readFileSync(join(root, "package.json"), "utf8")
+    ) as Record<string, unknown>;
+    return manifest[key] !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 // The npm package shipping each bundled bin (bin name -> package), for the
@@ -234,11 +234,11 @@ function pkgHasKey(root: string, key: string): boolean {
 // name and package name differ for some tools (`biome` <- @biomejs/biome,
 // `tsc` <- typescript), so the map is explicit.
 const BUNDLED_PACKAGES: Record<string, string> = {
-	portless: "portless",
-	biome: "@biomejs/biome",
-	tsc: "typescript",
-	knip: "knip",
-	taze: "taze",
+  biome: "@biomejs/biome",
+  knip: "knip",
+  portless: "portless",
+  taze: "taze",
+  tsc: "typescript",
 };
 
 /**
@@ -256,19 +256,19 @@ const BUNDLED_PACKAGES: Record<string, string> = {
  * bare by design and never call this.
  */
 export function resolveBin(
-	name: string,
-	opts: { scope: BinScope; root?: string },
+  name: string,
+  opts: { scope: BinScope; root?: string }
 ): string {
-	if (opts.scope === "consumer") {
-		if (opts.root !== undefined) {
-			const local = join(opts.root, "node_modules", ".bin", name);
-			if (existsSync(local)) {
-				return local;
-			}
-		}
-		return name;
-	}
-	return resolveBundledBin(name);
+  if (opts.scope === "consumer") {
+    if (opts.root !== undefined) {
+      const local = join(opts.root, "node_modules", ".bin", name);
+      if (existsSync(local)) {
+        return local;
+      }
+    }
+    return name;
+  }
+  return resolveBundledBin(name);
 }
 
 // Walk `node_modules/.bin/<name>` from the runner's directory up to the
@@ -278,71 +278,71 @@ export function resolveBin(
 // fallback covers install modes where `.bin` was not materialized; the bare name
 // is the final fallback.
 function resolveBundledBin(name: string): string {
-	let dir = runnerDir;
-	for (let depth = 0; depth < 24; depth++) {
-		const candidate = join(dir, "node_modules", ".bin", name);
-		if (existsSync(candidate)) {
-			return candidate;
-		}
-		const parent = dirname(dir);
-		if (parent === dir) {
-			break;
-		}
-		dir = parent;
-	}
-	const pkg = BUNDLED_PACKAGES[name];
-	if (pkg !== undefined) {
-		const entry = bundledPackageBin(pkg, name);
-		if (entry !== null) {
-			return entry;
-		}
-	}
-	return name;
+  let dir = runnerDir;
+  for (let depth = 0; depth < 24; depth += 1) {
+    const candidate = join(dir, "node_modules", ".bin", name);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  const pkg = BUNDLED_PACKAGES[name];
+  if (pkg !== undefined) {
+    const entry = bundledPackageBin(pkg, name);
+    if (entry !== null) {
+      return entry;
+    }
+  }
+  return name;
 }
 
 // The `bin` JS entry of a bundled package, resolved via dobby's own require
 // (version-robust — read from the package.json `bin` field, no hard-coded path).
 // Null when the package or the named bin can't be resolved.
 function bundledPackageBin(pkg: string, binName: string): string | null {
-	let pkgJsonPath: string;
-	try {
-		pkgJsonPath = requireFromRunner.resolve(`${pkg}/package.json`);
-	} catch {
-		return null;
-	}
-	try {
-		const manifest = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as {
-			bin?: string | Record<string, string>;
-		};
-		const bin = manifest.bin;
-		const rel = typeof bin === "string" ? bin : bin?.[binName];
-		return rel === undefined ? null : join(dirname(pkgJsonPath), rel);
-	} catch {
-		return null;
-	}
+  let pkgJsonPath: string;
+  try {
+    pkgJsonPath = requireFromRunner.resolve(`${pkg}/package.json`);
+  } catch {
+    return null;
+  }
+  try {
+    const manifest = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as {
+      bin?: string | Record<string, string>;
+    };
+    const { bin } = manifest;
+    const rel = typeof bin === "string" ? bin : bin?.[binName];
+    return rel === undefined ? null : join(dirname(pkgJsonPath), rel);
+  } catch {
+    return null;
+  }
 }
 
 // Run a child process CAPTURING stdout/stderr, cwd pinned to opts.root. Never
 // throws: a nonzero exit or a missing binary is returned in RunResult. Used for
 // the finite, output-parsed spawns (git facts, `portless get`, `cmux list-*`).
 export function runCapture(
-	cmd: string,
-	args: string[],
-	opts: RunOptions,
+  cmd: string,
+  args: string[],
+  opts: RunOptions
 ): RunResult {
-	const result = spawnSync(cmd, args, {
-		cwd: opts.root,
-		encoding: "utf8",
-		input: opts.input,
-		env: opts.env,
-		stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-	});
-	return {
-		status: result.status,
-		stdout: result.stdout ?? "",
-		stderr: result.stderr ?? "",
-		error: result.error,
-	};
+  const result = spawnSync(cmd, args, {
+    cwd: opts.root,
+    encoding: "utf8",
+    env: opts.env,
+    input: opts.input,
+    stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+  });
+  return {
+    error: result.error,
+    status: result.status,
+    stderr: result.stderr ?? "",
+    stdout: result.stdout ?? "",
+  };
 }
 
 /**
@@ -355,16 +355,16 @@ export function runCapture(
  * (dev/up).
  */
 export function runInherit(
-	cmd: string,
-	args: string[],
-	opts: RunOptions,
+  cmd: string,
+  args: string[],
+  opts: RunOptions
 ): number {
-	const result = spawnSync(cmd, args, {
-		cwd: opts.root,
-		stdio: "inherit",
-		env: opts.env,
-	});
-	return result.status ?? 1;
+  const result = spawnSync(cmd, args, {
+    cwd: opts.root,
+    env: opts.env,
+    stdio: "inherit",
+  });
+  return result.status ?? 1;
 }
 
 /**
@@ -381,16 +381,16 @@ export function runInherit(
  * @public — consumed by the streaming `dev` executor in `lifecycle.ts`.
  */
 export function spawnDetached(
-	cmd: string,
-	args: string[],
-	opts: RunOptions,
+  cmd: string,
+  args: string[],
+  opts: RunOptions
 ): ChildProcess {
-	return spawn(cmd, args, {
-		cwd: opts.root,
-		stdio: "inherit",
-		detached: true,
-		env: opts.env,
-	});
+  return spawn(cmd, args, {
+    cwd: opts.root,
+    detached: true,
+    env: opts.env,
+    stdio: "inherit",
+  });
 }
 
 /**
@@ -408,31 +408,33 @@ export function spawnDetached(
  * @public — consumed by the `up` detached-start path in `lifecycle.ts`.
  */
 export function spawnBackground(
-	cmd: string,
-	args: string[],
-	opts: { root: string; logPath: string },
+  cmd: string,
+  args: string[],
+  opts: { root: string; logPath: string }
 ): number | undefined {
-	// openSync lives INSIDE the try so a throw (bad logPath, permission) is caught too;
-	// `out` stays undefined until it opens, so the finally only closes a real descriptor.
-	let out: number | undefined;
-	try {
-		out = openSync(opts.logPath, "a");
-		const child = spawn(cmd, args, {
-			cwd: opts.root,
-			detached: true,
-			stdio: ["ignore", out, out],
-		});
-		child.unref();
-		return child.pid;
-	} catch {
-		// openSync or spawn threw synchronously — the background start failed. Never let
-		// it propagate: undefined routes the caller onto its fail-fast path.
-		return undefined;
-	} finally {
-		// The child dup'd its own descriptor for the log; the parent's is done with.
-		// Close it on BOTH the success and the throw path (only if it ever opened).
-		if (out !== undefined) {
-			closeSync(out);
-		}
-	}
+  // openSync lives INSIDE the try so a throw (bad logPath, permission) is caught too;
+  // `out` stays undefined until it opens, so the finally only closes a real descriptor.
+  // `pid` carries the result out of the try/finally: a synchronous openSync/spawn
+  // failure leaves it undefined, which routes `up` onto its fail-fast path.
+  let out: number | undefined;
+  let pid: number | undefined;
+  try {
+    out = openSync(opts.logPath, "a");
+    const child = spawn(cmd, args, {
+      cwd: opts.root,
+      detached: true,
+      stdio: ["ignore", out, out],
+    });
+    child.unref();
+    ({ pid } = child);
+  } catch {
+    pid = undefined;
+  } finally {
+    // The child dup'd its own descriptor for the log; the parent's is done with.
+    // Close it on BOTH the success and the throw path (only if it ever opened).
+    if (out !== undefined) {
+      closeSync(out);
+    }
+  }
+  return pid;
 }

@@ -44,8 +44,8 @@ When you need deltas, `extends` (tsconfig/biome) or `mergeConfig`/re-export (vit
 | --- | --- |
 | `@kvnwolf/dobby/tsconfig` | The strict bundler TypeScript base (`strict`, `noUncheckedIndexedAccess`, `noUncheckedSideEffectImports`, `allowImportingTsExtensions`, `noEmit`, `module: preserve`, `moduleResolution: bundler`, …). |
 | `@kvnwolf/dobby/tsconfig/vite` | The vite-app tsconfig variant — extends the base and adds `types: ["vite/client"]`. |
-| `@kvnwolf/dobby/biome/core` | Biome preset extending `ultracite/biome/core` (framework-agnostic). |
-| `@kvnwolf/dobby/biome/react` | Biome preset extending both `ultracite/biome/core` and `ultracite/biome/react`. |
+| `@kvnwolf/dobby/biome/core` | Flat Biome preset — ultracite's core config vendored verbatim + dobby's mods (framework-agnostic). |
+| `@kvnwolf/dobby/biome/react` | Flat Biome preset — ultracite's react config vendored + dobby's mods. React apps extend BOTH core and react (biome's `extends` is one-level / non-transitive, so each preset is flat and stands alone). |
 | `@kvnwolf/dobby/vite` | The universal Vite app config — native tsconfig path aliases (`resolve.tsconfigPaths`, vite@8) + `server.allowedHosts: true` (portless serves through per-worktree custom hostnames). No plugins — you merge yours on top. |
 | `@kvnwolf/dobby/vitest` | The universal Vitest base — inlines `zod` (so vitest-under-bun can't mangle its export map) and excludes `.claude/**`. A default-exported config you merge your app-specific bits onto. |
 | `@kvnwolf/dobby/vitest/react` | The React-app Vitest variant — the base plus `@vitejs/plugin-react`, native tsconfig paths, and import-time env loading (`loadEnv`). Lives apart from the base so the base stays importable without Vite. |
@@ -59,10 +59,19 @@ The tsconfig and Biome presets are `extends` targets; the Vite/Vitest/drizzle pr
 { "extends": "@kvnwolf/dobby/tsconfig/vite", "compilerOptions": { "paths": { "@/*": ["./src/*"] } }, "include": ["src"] }
 ```
 
-**`biome.jsonc`** — only when you need lint/format deltas; extend the react (or core) preset:
+**`biome.jsonc`** — only when you need lint/format deltas. Biome's `extends` is **one-level (non-transitive)**, so the presets ship flat (ultracite vendored in, not re-extended) and a **React app extends BOTH**; a non-React app extends just core:
 
 ```jsonc
-{ "extends": ["@kvnwolf/dobby/biome/react"] }
+{ "extends": ["@kvnwolf/dobby/biome/core", "@kvnwolf/dobby/biome/react"] }
+```
+
+For a **progressive migration**, use a **denylist**: biome unions `files.includes` across `extends`, so the preset's `**` always applies — you subtract paths to opt out (an allowlist can't survive it, since `"!**"` would exclude everything):
+
+```jsonc
+{
+  "extends": ["@kvnwolf/dobby/biome/core", "@kvnwolf/dobby/biome/react"],
+  "files": { "includes": ["!legacy/**"] }
+}
 ```
 
 **`vite.config.ts`** — merge your app plugins onto the dobby base:

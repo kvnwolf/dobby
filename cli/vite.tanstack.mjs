@@ -22,14 +22,14 @@ import dobbyVite from "./vite.base.mjs";
 // invariant). `routeFileIgnorePattern` encodes the house test-co-location
 // convention: `*.test.*` files live beside routes and must not be treated as ones.
 export default mergeConfig(
-	dobbyVite,
-	defineConfig({
-		plugins: [
-			devtools(),
-			tailwindcss(),
-			tanstackStart({ router: { routeFileIgnorePattern: "\\.test\\." } }),
-			nitro(),
-			viteReact(),
-		],
-	}),
+  dobbyVite,
+  defineConfig({
+    plugins: [
+      devtools(),
+      tailwindcss(),
+      tanstackStart({ router: { routeFileIgnorePattern: "\\.test\\." } }),
+      nitro(),
+      viteReact(),
+    ],
+  })
 );

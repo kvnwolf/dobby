@@ -12,7 +12,7 @@
     },
     "cli": {
       "name": "@kvnwolf/dobby",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "bin": {
         "dobby": "./src/index.ts",
       },
@@ -22,8 +22,30 @@
         "portless": "^0.15.3",
         "taze": "^19.14.1",
         "typescript": "^7.0.2",
+      },
+      "devDependencies": {
         "ultracite": "^7.9.4",
       },
+      "peerDependencies": {
+        "@tailwindcss/vite": "*",
+        "@tanstack/devtools-vite": "*",
+        "@tanstack/react-start": "*",
+        "@vitejs/plugin-react": "*",
+        "drizzle-kit": "*",
+        "nitro": "*",
+        "vite": "*",
+        "vitest": "*",
+      },
+      "optionalPeers": [
+        "@tailwindcss/vite",
+        "@tanstack/devtools-vite",
+        "@tanstack/react-start",
+        "@vitejs/plugin-react",
+        "drizzle-kit",
+        "nitro",
+        "vite",
+        "vitest",
+      ],
     },
   },
   "packages": {

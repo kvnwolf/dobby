@@ -1,13 +1,13 @@
 import { execFileSync } from "node:child_process";
 import {
-	chmodSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	realpathSync,
-	rmSync,
-	writeFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -20,8 +20,8 @@ import { run } from "./run.ts";
 // so `run(["env"], cwd)` reads a stable, hand-written sample project. The
 // `__fixtures__` dir sits beside `src/`, so we climb one level out of `src/`.
 const fixturesDir = resolve(
-	dirname(fileURLToPath(import.meta.url)),
-	"../__fixtures__",
+  dirname(fileURLToPath(import.meta.url)),
+  "../__fixtures__"
 );
 const fixture = (name: string) => resolve(fixturesDir, name);
 
@@ -39,69 +39,69 @@ const cwd = process.cwd();
 // The exact upgrade-hint line the spec requires as the SECOND line of every
 // unknown-command error (a literal, not derived from any code path).
 const upgradeHint =
-	"if this command is expected, run `bun update @kvnwolf/dobby`";
+  "if this command is expected, run `bun update @kvnwolf/dobby`";
 
 describe("run() — CLI dispatch seam", () => {
-	describe("bare invocation (no arguments)", () => {
-		it("prints usage on stdout (first line begins 'Usage: dobby'), exits 0, empty stderr", async () => {
-			const result = await run([], cwd);
-			expect(result.stdout.startsWith("Usage: dobby")).toBe(true);
-			expect(result.exitCode).toBe(0);
-			expect(result.stderr).toBe("");
-		});
+  describe("bare invocation (no arguments)", () => {
+    it("prints usage on stdout (first line begins 'Usage: dobby'), exits 0, empty stderr", async () => {
+      const result = await run([], cwd);
+      expect(result.stdout.startsWith("Usage: dobby")).toBe(true);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+    });
 
-		it("advertises the 'env' command in the usage text", async () => {
-			// The `capabilities` command is deleted this task and `env` takes its slot,
-			// so the usage Commands block must list `env` (a line indented then `env`).
-			const result = await run([], cwd);
-			const advertisesEnv = result.stdout
-				.split("\n")
-				.some((line) => /^\s+env\b/.test(line));
-			expect(advertisesEnv).toBe(true);
-		});
-	});
+    it("advertises the 'env' command in the usage text", async () => {
+      // The `capabilities` command is deleted this task and `env` takes its slot,
+      // so the usage Commands block must list `env` (a line indented then `env`).
+      const result = await run([], cwd);
+      const advertisesEnv = result.stdout
+        .split("\n")
+        .some((line) => /^\s+env\b/.test(line));
+      expect(advertisesEnv).toBe(true);
+    });
+  });
 
-	describe("version flag", () => {
-		it("prints the package version plus a single trailing newline, exits 0, empty stderr", async () => {
-			const result = await run(["--version"], cwd);
-			expect(result.stdout).toBe(`${pkg.version}\n`);
-			expect(result.exitCode).toBe(0);
-			expect(result.stderr).toBe("");
-		});
+  describe("version flag", () => {
+    it("prints the package version plus a single trailing newline, exits 0, empty stderr", async () => {
+      const result = await run(["--version"], cwd);
+      expect(result.stdout).toBe(`${pkg.version}\n`);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+    });
 
-		it("treats the short flag -v identically to --version", async () => {
-			const result = await run(["-v"], cwd);
-			expect(result.stdout).toBe(`${pkg.version}\n`);
-			expect(result.exitCode).toBe(0);
-		});
-	});
+    it("treats the short flag -v identically to --version", async () => {
+      const result = await run(["-v"], cwd);
+      expect(result.stdout).toBe(`${pkg.version}\n`);
+      expect(result.exitCode).toBe(0);
+    });
+  });
 
-	describe("unknown subcommand", () => {
-		it("errors to stderr with the command name, the usage text, and the upgrade hint, exits 1, empty stdout", async () => {
-			const result = await run(["frobnicate"], cwd);
-			expect(result.stderr).toContain("unknown command: frobnicate");
-			expect(result.stderr).toContain("Usage: dobby");
-			expect(result.exitCode).toBe(1);
-			expect(result.stdout).toBe("");
-		});
+  describe("unknown subcommand", () => {
+    it("errors to stderr with the command name, the usage text, and the upgrade hint, exits 1, empty stdout", async () => {
+      const result = await run(["frobnicate"], cwd);
+      expect(result.stderr).toContain("unknown command: frobnicate");
+      expect(result.stderr).toContain("Usage: dobby");
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+    });
 
-		it("appends the 'bun update @kvnwolf/dobby' upgrade hint as a second line on unknown commands", async () => {
-			const result = await run(["frobnicate"], cwd);
-			expect(result.stderr).toContain(upgradeHint);
-		});
-	});
+    it("appends the 'bun update @kvnwolf/dobby' upgrade hint as a second line on unknown commands", async () => {
+      const result = await run(["frobnicate"], cwd);
+      expect(result.stderr).toContain(upgradeHint);
+    });
+  });
 
-	describe("malformed flags (parseArgs strict)", () => {
-		it("catches the parse error: the message precedes the usage on stderr, exits 1, empty stdout", async () => {
-			const result = await run(["--nope"], cwd);
-			expect(result.exitCode).toBe(1);
-			expect(result.stdout).toBe("");
-			expect(result.stderr).toContain("Usage: dobby");
-			// Spec order is "parse error message + usage": usage is present but is NOT
-			// the first thing on stderr — the error message precedes it.
-			expect(result.stderr.startsWith("Usage: dobby")).toBe(false);
-		});
-	});
+  describe("malformed flags (parseArgs strict)", () => {
+    it("catches the parse error: the message precedes the usage on stderr, exits 1, empty stdout", async () => {
+      const result = await run(["--nope"], cwd);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("Usage: dobby");
+      // Spec order is "parse error message + usage": usage is present but is NOT
+      // the first thing on stderr — the error message precedes it.
+      expect(result.stderr.startsWith("Usage: dobby")).toBe(false);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -121,80 +121,89 @@ const scratchDirs: string[] = [];
 // Isolate repo creation from ambient git config (gpg signing, hooks, templates,
 // identity) so a commit always succeeds regardless of the developer's setup.
 const gitEnv = {
-	...process.env,
-	GIT_CONFIG_GLOBAL: "/dev/null",
-	GIT_CONFIG_SYSTEM: "/dev/null",
-	GIT_TERMINAL_PROMPT: "0",
-	GIT_AUTHOR_NAME: "dobby-test",
-	GIT_AUTHOR_EMAIL: "test@dobby.invalid",
-	GIT_COMMITTER_NAME: "dobby-test",
-	GIT_COMMITTER_EMAIL: "test@dobby.invalid",
+  ...process.env,
+  GIT_AUTHOR_EMAIL: "test@dobby.invalid",
+  GIT_AUTHOR_NAME: "dobby-test",
+  GIT_COMMITTER_EMAIL: "test@dobby.invalid",
+  GIT_COMMITTER_NAME: "dobby-test",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+  GIT_TERMINAL_PROMPT: "0",
 };
 
 // Build a real git repo in a fresh temp dir on a KNOWN branch, optionally with a
 // package.json and a (valid or deliberately broken) dobby.config.json. Returns
 // the repo root. Registered for cleanup in afterAll.
 function makeGitRepo(
-	branch: string,
-	opts: { pkg?: unknown; config?: unknown; brokenConfig?: boolean } = {},
+  branch: string,
+  opts: { pkg?: unknown; config?: unknown; brokenConfig?: boolean } = {}
 ): string {
-	const dir = mkdtempSync(join(tmpdir(), "dobby-env-git-"));
-	scratchDirs.push(dir);
-	const git = (...args: string[]) =>
-		execFileSync("git", args, { cwd: dir, stdio: "ignore", env: gitEnv });
+  const dir = mkdtempSync(join(tmpdir(), "dobby-env-git-"));
+  scratchDirs.push(dir);
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: dir, env: gitEnv, stdio: "ignore" });
 
-	git("init", "-q");
-	git("checkout", "-q", "-b", branch);
-	writeFileSync(join(dir, "README"), "scratch\n");
-	if (opts.pkg !== undefined) {
-		writeFileSync(join(dir, "package.json"), JSON.stringify(opts.pkg, null, 2));
-	}
-	if (opts.brokenConfig) {
-		writeFileSync(join(dir, "dobby.config.json"), "{ this is not valid json");
-	} else if (opts.config !== undefined) {
-		writeFileSync(
-			join(dir, "dobby.config.json"),
-			JSON.stringify(opts.config, null, 2),
-		);
-	}
-	git("add", "-A");
-	git("commit", "-q", "-m", "scratch");
-	return dir;
+  git("init", "-q");
+  git("checkout", "-q", "-b", branch);
+  writeFileSync(join(dir, "README"), "scratch\n");
+  if (opts.pkg !== undefined) {
+    writeFileSync(join(dir, "package.json"), JSON.stringify(opts.pkg, null, 2));
+  }
+  if (opts.brokenConfig) {
+    writeFileSync(join(dir, "dobby.config.json"), "{ this is not valid json");
+  } else if (opts.config !== undefined) {
+    writeFileSync(
+      join(dir, "dobby.config.json"),
+      JSON.stringify(opts.config, null, 2)
+    );
+  }
+  git("add", "-A");
+  git("commit", "-q", "-m", "scratch");
+  return dir;
 }
 
 // A plain temp dir that is NOT a git repo and has no package.json/config — the
 // "outside a project" case where every resolvable fact must degrade to null.
 function makeNonGitDir(): string {
-	const dir = mkdtempSync(join(tmpdir(), "dobby-env-plain-"));
-	scratchDirs.push(dir);
-	return dir;
+  const dir = mkdtempSync(join(tmpdir(), "dobby-env-plain-"));
+  scratchDirs.push(dir);
+  return dir;
 }
 
 // Parse `key: value` text output into a map (values are raw strings, e.g. the
 // literal text "null"). Splitting on the FIRST colon is safe: none of the field
 // values (paths, ids, "none", "null", "true"/"false") contain a leading colon.
-function parseEnvText(stdout: string): Record<string, string> {
-	const map: Record<string, string> = {};
-	for (const line of stdout.split("\n")) {
-		if (line.trim() === "") continue;
-		const idx = line.indexOf(":");
-		if (idx === -1) continue;
-		map[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-	}
-	return map;
+// Values are `| undefined` on purpose: a key the CLI did not print is absent, and
+// the tests deliberately guard for that (and for the "none"/"null" sentinels) — a
+// total-map type would make biome flag those real runtime guards as unnecessary.
+function parseEnvText(stdout: string): Record<string, string | undefined> {
+  const map: Record<string, string | undefined> = {};
+  for (const line of stdout.split("\n")) {
+    if (line.trim() === "") {
+      continue;
+    }
+    const idx = line.indexOf(":");
+    if (idx === -1) {
+      continue;
+    }
+    map[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+  }
+  return map;
 }
 
 // The detected capabilities as a sorted array (order-independent): the spec
 // defines the capabilities `env` reports as a "comma-separated list or none" but
 // does NOT fix their order, so tests assert the SET, never a sequence.
 function capsSet(stdout: string): string[] {
-	const value = parseEnvText(stdout).capabilities;
-	if (value === undefined || value === "none") return [];
-	return value
-		.split(",")
-		.map((s) => s.trim())
-		.filter((s) => s !== "")
-		.sort();
+  const value = parseEnvText(stdout).capabilities;
+  if (value === undefined || value === "none") {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "")
+    .sort();
 }
 
 // run(["env"], cwd) — the environment snapshot. Every expected value is an
@@ -204,140 +213,144 @@ function capsSet(stdout: string): string[] {
 // devUrl null are the spec's literal contract, and capability names come from
 // the spec's fixed signal map applied to hand-written fixtures.
 describe("run() — env command (environment snapshot)", () => {
-	// A complete project: a git repo on a known branch, a package.json declaring
-	// two signals (drizzle, vitest), and a valid dobby.config.json at its root.
-	let gitProject: string;
-	// A git repo with NO dobby.config.json — worktree resolves, config is false.
-	let gitNoConfig: string;
-	// A git repo whose dobby.config.json is unparseable — env tolerates it (false).
-	let gitBrokenConfig: string;
-	// Not a git repo, no package.json — every resolvable fact degrades to null.
-	let nonGitDir: string;
+  // A complete project: a git repo on a known branch, a package.json declaring
+  // two signals (drizzle, vitest), and a valid dobby.config.json at its root.
+  let gitProject: string;
+  // A git repo with NO dobby.config.json — worktree resolves, config is false.
+  let gitNoConfig: string;
+  // A git repo whose dobby.config.json is unparseable — env tolerates it (false).
+  let gitBrokenConfig: string;
+  // Not a git repo, no package.json — every resolvable fact degrades to null.
+  let nonGitDir: string;
 
-	let originalCmux: string | undefined;
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-		gitProject = makeGitRepo("dobby-env-test", {
-			pkg: {
-				name: "scratch-project",
-				dependencies: { "drizzle-orm": "^0.30.0" },
-				devDependencies: { vitest: "^2.0.0" },
-			},
-			config: { files: [] },
-		});
-		gitNoConfig = makeGitRepo("dobby-noconfig", {
-			pkg: { name: "scratch-noconfig" },
-		});
-		gitBrokenConfig = makeGitRepo("dobby-broken", {
-			pkg: { name: "scratch-broken" },
-			brokenConfig: true,
-		});
-		nonGitDir = makeNonGitDir();
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    gitProject = makeGitRepo("dobby-env-test", {
+      config: { files: [] },
+      pkg: {
+        dependencies: { "drizzle-orm": "^0.30.0" },
+        devDependencies: { vitest: "^2.0.0" },
+        name: "scratch-project",
+      },
+    });
+    gitNoConfig = makeGitRepo("dobby-noconfig", {
+      pkg: { name: "scratch-noconfig" },
+    });
+    gitBrokenConfig = makeGitRepo("dobby-broken", {
+      brokenConfig: true,
+      pkg: { name: "scratch-broken" },
+    });
+    nonGitDir = makeNonGitDir();
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		for (const dir of scratchDirs)
-			rmSync(dir, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    for (const dir of scratchDirs) {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
 
-	// Baseline: no cmux unless a test opts in, isolating from an ambient cmux pane.
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  // Baseline: no cmux unless a test opts in, isolating from an ambient cmux pane.
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("exits 0 and prints all six snapshot fields as `key: value` lines", async () => {
-		const result = await run(["env"], gitProject);
-		expect(result.exitCode).toBe(0);
-		const env = parseEnvText(result.stdout);
-		for (const key of [
-			"cmux",
-			"worktree",
-			"branch",
-			"capabilities",
-			"config",
-			"devUrl",
-		]) {
-			expect(env[key], `missing field: ${key}`).toBeDefined();
-		}
-	});
+  it("exits 0 and prints all six snapshot fields as `key: value` lines", async () => {
+    const result = await run(["env"], gitProject);
+    expect(result.exitCode).toBe(0);
+    const env = parseEnvText(result.stdout);
+    for (const key of [
+      "cmux",
+      "worktree",
+      "branch",
+      "capabilities",
+      "config",
+      "devUrl",
+    ]) {
+      expect(env[key], `missing field: ${key}`).toBeDefined();
+    }
+  });
 
-	it("reports cmux as the CMUX_WORKSPACE_ID value when the variable is set", async () => {
-		process.env[CMUX] = "cmux-ws-abc123";
-		const result = await run(["env"], gitProject);
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).cmux).toBe("cmux-ws-abc123");
-	});
+  it("reports cmux as the CMUX_WORKSPACE_ID value when the variable is set", async () => {
+    process.env[CMUX] = "cmux-ws-abc123";
+    const result = await run(["env"], gitProject);
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).cmux).toBe("cmux-ws-abc123");
+  });
 
-	it("reports cmux as null when CMUX_WORKSPACE_ID is not set", async () => {
-		const result = await run(["env"], gitProject);
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).cmux).toBe("null");
-	});
+  it("reports cmux as null when CMUX_WORKSPACE_ID is not set", async () => {
+    const result = await run(["env"], gitProject);
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).cmux).toBe("null");
+  });
 
-	it("reports worktree as the enclosing git repo root", async () => {
-		const result = await run(["env"], gitProject);
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).worktree).toBe(realpathSync(gitProject));
-	});
+  it("reports worktree as the enclosing git repo root", async () => {
+    const result = await run(["env"], gitProject);
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).worktree).toBe(realpathSync(gitProject));
+  });
 
-	it("reports branch as the current git branch", async () => {
-		const result = await run(["env"], gitProject);
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).branch).toBe("dobby-env-test");
-	});
+  it("reports branch as the current git branch", async () => {
+    const result = await run(["env"], gitProject);
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).branch).toBe("dobby-env-test");
+  });
 
-	it("reports config true when a valid dobby.config.json exists at the root", async () => {
-		const result = await run(["env"], gitProject);
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).config).toBe("true");
-	});
+  it("reports config true when a valid dobby.config.json exists at the root", async () => {
+    const result = await run(["env"], gitProject);
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).config).toBe("true");
+  });
 
-	it("reports config false when no dobby.config.json exists (worktree still resolves)", async () => {
-		const result = await run(["env"], gitNoConfig);
-		expect(result.exitCode).toBe(0);
-		const env = parseEnvText(result.stdout);
-		expect(env.config).toBe("false");
-		// Discriminator: this is a real git repo, so worktree is NON-null — only
-		// config is false, proving config is a distinct fact from the git facts.
-		expect(env.worktree).toBe(realpathSync(gitNoConfig));
-	});
+  it("reports config false when no dobby.config.json exists (worktree still resolves)", async () => {
+    const result = await run(["env"], gitNoConfig);
+    expect(result.exitCode).toBe(0);
+    const env = parseEnvText(result.stdout);
+    expect(env.config).toBe("false");
+    // Discriminator: this is a real git repo, so worktree is NON-null — only
+    // config is false, proving config is a distinct fact from the git facts.
+    expect(env.worktree).toBe(realpathSync(gitNoConfig));
+  });
 
-	it("reports config false when dobby.config.json exists but is unparseable (never fails)", async () => {
-		const result = await run(["env"], gitBrokenConfig);
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).config).toBe("false");
-	});
+  it("reports config false when dobby.config.json exists but is unparseable (never fails)", async () => {
+    const result = await run(["env"], gitBrokenConfig);
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).config).toBe("false");
+  });
 
-	it("reports devUrl as null in this task", async () => {
-		const result = await run(["env"], gitProject);
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).devUrl).toBe("null");
-	});
+  it("reports devUrl as null in this task", async () => {
+    const result = await run(["env"], gitProject);
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).devUrl).toBe("null");
+  });
 
-	it("exits 0 outside a git repo and with no package.json (never fails)", async () => {
-		const result = await run(["env"], nonGitDir);
-		expect(result.exitCode).toBe(0);
-		expect(result.stderr).toBe("");
-	});
+  it("exits 0 outside a git repo and with no package.json (never fails)", async () => {
+    const result = await run(["env"], nonGitDir);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+  });
 
-	it("reports worktree and branch as null outside a git repo", async () => {
-		const result = await run(["env"], nonGitDir);
-		expect(result.exitCode).toBe(0);
-		const env = parseEnvText(result.stdout);
-		expect(env.worktree).toBe("null");
-		expect(env.branch).toBe("null");
-	});
+  it("reports worktree and branch as null outside a git repo", async () => {
+    const result = await run(["env"], nonGitDir);
+    expect(result.exitCode).toBe(0);
+    const env = parseEnvText(result.stdout);
+    expect(env.worktree).toBe("null");
+    expect(env.branch).toBe("null");
+  });
 
-	it("reports capabilities as none and config false in a bare non-project dir", async () => {
-		const result = await run(["env"], nonGitDir);
-		expect(result.exitCode).toBe(0);
-		const env = parseEnvText(result.stdout);
-		expect(env.capabilities).toBe("none");
-		expect(env.config).toBe("false");
-	});
+  it("reports capabilities as none and config false in a bare non-project dir", async () => {
+    const result = await run(["env"], nonGitDir);
+    expect(result.exitCode).toBe(0);
+    const env = parseEnvText(result.stdout);
+    expect(env.capabilities).toBe("none");
+    expect(env.config).toBe("false");
+  });
 });
 
 // run(["env", "--json"], cwd) — the same facts as one JSON object.
@@ -348,61 +361,64 @@ describe("run() — env command (environment snapshot)", () => {
 // scalars, a capabilities ARRAY, and a boolean config. If the product wants a
 // different shape a human must adjust these assertions.
 describe("run() — env command (--json)", () => {
-	let gitProject: string;
-	let originalCmux: string | undefined;
+  let gitProject: string;
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-		gitProject = makeGitRepo("dobby-env-json", {
-			pkg: {
-				name: "scratch-json",
-				dependencies: { "drizzle-orm": "^0.30.0" },
-				devDependencies: { vitest: "^2.0.0" },
-			},
-			config: { files: [] },
-		});
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    gitProject = makeGitRepo("dobby-env-json", {
+      config: { files: [] },
+      pkg: {
+        dependencies: { "drizzle-orm": "^0.30.0" },
+        devDependencies: { vitest: "^2.0.0" },
+        name: "scratch-json",
+      },
+    });
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		// gitProject is registered in the shared scratchDirs list, cleaned above.
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    // gitProject is registered in the shared scratchDirs list, cleaned above.
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("emits one parseable JSON object, exit 0", async () => {
-		const result = await run(["env", "--json"], gitProject);
-		expect(result.exitCode).toBe(0);
-		expect(() => JSON.parse(result.stdout)).not.toThrow();
-	});
+  it("emits one parseable JSON object, exit 0", async () => {
+    const result = await run(["env", "--json"], gitProject);
+    expect(result.exitCode).toBe(0);
+    expect(() => JSON.parse(result.stdout)).not.toThrow();
+  });
 
-	it("carries the scalar facts (cmux, worktree, branch, devUrl) with JSON null for the absent ones", async () => {
-		process.env[CMUX] = "cmux-ws-json";
-		const result = await run(["env", "--json"], gitProject);
-		expect(result.exitCode).toBe(0);
-		const env = JSON.parse(result.stdout);
-		expect(env.cmux).toBe("cmux-ws-json");
-		expect(env.worktree).toBe(realpathSync(gitProject));
-		expect(env.branch).toBe("dobby-env-json");
-		expect(env.devUrl).toBe(null);
-	});
+  it("carries the scalar facts (cmux, worktree, branch, devUrl) with JSON null for the absent ones", async () => {
+    process.env[CMUX] = "cmux-ws-json";
+    const result = await run(["env", "--json"], gitProject);
+    expect(result.exitCode).toBe(0);
+    const env = JSON.parse(result.stdout);
+    expect(env.cmux).toBe("cmux-ws-json");
+    expect(env.worktree).toBe(realpathSync(gitProject));
+    expect(env.branch).toBe("dobby-env-json");
+    expect(env.devUrl).toBe(null);
+  });
 
-	it("carries config as a JSON boolean", async () => {
-		const result = await run(["env", "--json"], gitProject);
-		expect(result.exitCode).toBe(0);
-		expect(JSON.parse(result.stdout).config).toBe(true);
-	});
+  it("carries config as a JSON boolean", async () => {
+    const result = await run(["env", "--json"], gitProject);
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).config).toBe(true);
+  });
 
-	it("carries capabilities as a JSON array of the detected capability names", async () => {
-		const result = await run(["env", "--json"], gitProject);
-		expect(result.exitCode).toBe(0);
-		const env = JSON.parse(result.stdout);
-		expect(Array.isArray(env.capabilities)).toBe(true);
-		expect([...env.capabilities].sort()).toEqual(["drizzle", "vitest"]);
-	});
+  it("carries capabilities as a JSON array of the detected capability names", async () => {
+    const result = await run(["env", "--json"], gitProject);
+    expect(result.exitCode).toBe(0);
+    const env = JSON.parse(result.stdout);
+    expect(Array.isArray(env.capabilities)).toBe(true);
+    expect([...env.capabilities].sort()).toEqual(["drizzle", "vitest"]);
+  });
 });
 
 // run(["env"], cwd) — capability detection catalog (task 1b).
@@ -413,119 +429,119 @@ describe("run() — env command (--json)", () => {
 // __fixtures__/<name>/package.json this suite ships — never recomputed by the
 // detector. Order is unspecified by the spec, so assertions compare SETS.
 describe("run() — env command (capability detection)", () => {
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("detects the surviving catalog across dependencies AND devDependencies, and NEVER convex", async () => {
-		// env-many declares, split across deps/devDeps: react, convex (a REMOVED
-		// signal), @neondatabase/serverless, drizzle-orm (deps) and vite, vitest,
-		// @react-email/components (devDeps). Expected SET pins the deps-union-devDeps
-		// rule and the six SURVIVING signals — and, because the fixture DECLARES a
-		// convex dependency yet `convex` is NOT in the expected set, it doubles as the
-		// convex-removal proof within a rich multi-signal project (the `convex` and
-		// `supabase-local` signals were deleted this task).
-		const result = await run(["env"], fixture("env-many"));
-		expect(result.exitCode).toBe(0);
-		expect(capsSet(result.stdout)).toEqual([
-			"drizzle",
-			"neon",
-			"react",
-			"react-email",
-			"vite",
-			"vitest",
-		]);
-	});
+  it("detects the surviving catalog across dependencies AND devDependencies, and NEVER convex", async () => {
+    // env-many declares, split across deps/devDeps: react, convex (a REMOVED
+    // signal), @neondatabase/serverless, drizzle-orm (deps) and vite, vitest,
+    // @react-email/components (devDeps). Expected SET pins the deps-union-devDeps
+    // rule and the six SURVIVING signals — and, because the fixture DECLARES a
+    // convex dependency yet `convex` is NOT in the expected set, it doubles as the
+    // convex-removal proof within a rich multi-signal project (the `convex` and
+    // `supabase-local` signals were deleted this task).
+    const result = await run(["env"], fixture("env-many"));
+    expect(result.exitCode).toBe(0);
+    expect(capsSet(result.stdout)).toEqual([
+      "drizzle",
+      "neon",
+      "react",
+      "react-email",
+      "vite",
+      "vitest",
+    ]);
+  });
 
-	it("no longer detects supabase-local from the 'supabase' dependency OR a supabase/ directory (signal removed)", async () => {
-		// env-removed-signals DECLARES a `supabase` dependency AND carries a
-		// `supabase/` directory (both halves of the deleted signal) alongside a single
-		// SURVIVING signal (`react`). The expected set is exactly `["react"]`: neither
-		// the supabase dep nor the supabase/ dir contributes a capability now that the
-		// signal is deleted. If either still fired, `supabase-local` would appear and
-		// this would fail — so it pins the removal of BOTH supabase signal forms.
-		const result = await run(["env"], fixture("env-removed-signals"));
-		expect(result.exitCode).toBe(0);
-		expect(capsSet(result.stdout)).toEqual(["react"]);
-	});
+  it("no longer detects supabase-local from the 'supabase' dependency OR a supabase/ directory (signal removed)", async () => {
+    // env-removed-signals DECLARES a `supabase` dependency AND carries a
+    // `supabase/` directory (both halves of the deleted signal) alongside a single
+    // SURVIVING signal (`react`). The expected set is exactly `["react"]`: neither
+    // the supabase dep nor the supabase/ dir contributes a capability now that the
+    // signal is deleted. If either still fired, `supabase-local` would appear and
+    // this would fail — so it pins the removal of BOTH supabase signal forms.
+    const result = await run(["env"], fixture("env-removed-signals"));
+    expect(result.exitCode).toBe(0);
+    expect(capsSet(result.stdout)).toEqual(["react"]);
+  });
 
-	it("no longer detects convex from the 'convex' dependency (signal removed)", async () => {
-		// env-removed-signals also declares a `convex` dependency; it must NOT surface
-		// as a capability. Asserting the whole set is `["react"]` above already implies
-		// this, but this focused assertion makes the convex-removal contract explicit.
-		const result = await run(["env"], fixture("env-removed-signals"));
-		expect(result.exitCode).toBe(0);
-		expect(capsSet(result.stdout)).not.toContain("convex");
-	});
+  it("no longer detects convex from the 'convex' dependency (signal removed)", async () => {
+    // env-removed-signals also declares a `convex` dependency; it must NOT surface
+    // as a capability. Asserting the whole set is `["react"]` above already implies
+    // this, but this focused assertion makes the convex-removal contract explicit.
+    const result = await run(["env"], fixture("env-removed-signals"));
+    expect(result.exitCode).toBe(0);
+    expect(capsSet(result.stdout)).not.toContain("convex");
+  });
 
-	it("detects drizzle from the 'drizzle-kit' dependency (the alternate drizzle form)", async () => {
-		const result = await run(["env"], fixture("env-drizzle-kit"));
-		expect(result.exitCode).toBe(0);
-		expect(capsSet(result.stdout)).toEqual(["drizzle"]);
-	});
+  it("detects drizzle from the 'drizzle-kit' dependency (the alternate drizzle form)", async () => {
+    const result = await run(["env"], fixture("env-drizzle-kit"));
+    expect(result.exitCode).toBe(0);
+    expect(capsSet(result.stdout)).toEqual(["drizzle"]);
+  });
 
-	it("detects react-email from the plain 'react-email' dependency, without also flagging react", async () => {
-		// Discriminator: the exact-name `react` signal must NOT match "react-email".
-		const result = await run(["env"], fixture("env-react-email-plain"));
-		expect(result.exitCode).toBe(0);
-		expect(capsSet(result.stdout)).toEqual(["react-email"]);
-	});
+  it("detects react-email from the plain 'react-email' dependency, without also flagging react", async () => {
+    // Discriminator: the exact-name `react` signal must NOT match "react-email".
+    const result = await run(["env"], fixture("env-react-email-plain"));
+    expect(result.exitCode).toBe(0);
+    expect(capsSet(result.stdout)).toEqual(["react-email"]);
+  });
 
-	it("still detects the existing vite/tanstack-start/neon signals", async () => {
-		// Regression: the pre-existing catalog must survive the expansion.
-		const result = await run(["env"], fixture("tanstack-app"));
-		expect(result.exitCode).toBe(0);
-		expect(capsSet(result.stdout)).toEqual(["neon", "tanstack-start", "vite"]);
-	});
+  it("still detects the existing vite/tanstack-start/neon signals", async () => {
+    // Regression: the pre-existing catalog must survive the expansion.
+    const result = await run(["env"], fixture("tanstack-app"));
+    expect(result.exitCode).toBe(0);
+    expect(capsSet(result.stdout)).toEqual(["neon", "tanstack-start", "vite"]);
+  });
 
-	it("still detects the existing expo signal", async () => {
-		const result = await run(["env"], fixture("expo-app"));
-		expect(result.exitCode).toBe(0);
-		expect(capsSet(result.stdout)).toEqual(["expo"]);
-	});
+  it("still detects the existing expo signal", async () => {
+    const result = await run(["env"], fixture("expo-app"));
+    expect(result.exitCode).toBe(0);
+    expect(capsSet(result.stdout)).toEqual(["expo"]);
+  });
 
-	it("reports none when a valid package.json declares no matching signals", async () => {
-		const result = await run(["env"], fixture("empty-pkg"));
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).capabilities).toBe("none");
-	});
+  it("reports none when a valid package.json declares no matching signals", async () => {
+    const result = await run(["env"], fixture("empty-pkg"));
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).capabilities).toBe("none");
+  });
 
-	it("never reads peerDependencies: signals present only there yield none", async () => {
-		// peer-only declares vite + expo ONLY in peerDependencies.
-		const result = await run(["env"], fixture("peer-only"));
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).capabilities).toBe("none");
-	});
+  it("never reads peerDependencies: signals present only there yield none", async () => {
+    // peer-only declares vite + expo ONLY in peerDependencies.
+    const result = await run(["env"], fixture("peer-only"));
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).capabilities).toBe("none");
+  });
 
-	it("tolerates a missing package.json: capabilities none, exit 0 (env never fails)", async () => {
-		// Contrast with the deleted `capabilities` command, which exited 1 here.
-		const result = await run(["env"], fixture("no-pkg"));
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).capabilities).toBe("none");
-	});
+  it("tolerates a missing package.json: capabilities none, exit 0 (env never fails)", async () => {
+    // Contrast with the deleted `capabilities` command, which exited 1 here.
+    const result = await run(["env"], fixture("no-pkg"));
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).capabilities).toBe("none");
+  });
 
-	it("tolerates an unparseable package.json: capabilities none, exit 0 (env never fails)", async () => {
-		const result = await run(["env"], fixture("broken-json"));
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).capabilities).toBe("none");
-	});
+  it("tolerates an unparseable package.json: capabilities none, exit 0 (env never fails)", async () => {
+    const result = await run(["env"], fixture("broken-json"));
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).capabilities).toBe("none");
+  });
 });
 
 // The `capabilities` command is DELETED this task; `env` replaces it. Its old
 // invocation must now fall through to the unknown-command path (exit 1, usage,
 // upgrade hint). Expected substrings are the spec's literal wording.
 describe("run() — capabilities command is removed", () => {
-	it("treats `capabilities` as an unknown command (exit 1, names it, empty stdout)", async () => {
-		const result = await run(["capabilities"], cwd);
-		expect(result.exitCode).toBe(1);
-		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("unknown command: capabilities");
-	});
+  it("treats `capabilities` as an unknown command (exit 1, names it, empty stdout)", async () => {
+    const result = await run(["capabilities"], cwd);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("unknown command: capabilities");
+  });
 
-	it("includes the upgrade hint when the removed `capabilities` command is invoked", async () => {
-		const result = await run(["capabilities"], cwd);
-		expect(result.stderr).toContain(upgradeHint);
-	});
+  it("includes the upgrade hint when the removed `capabilities` command is invoked", async () => {
+    const result = await run(["capabilities"], cwd);
+    expect(result.stderr).toContain(upgradeHint);
+  });
 });
 
 // ===========================================================================
@@ -554,53 +570,56 @@ describe("run() — capabilities command is removed", () => {
 // (ambient) cwd instead of `git rev-parse --show-toplevel` would report the
 // subdir here and fail this slice.
 describe("run() — env command (workroot resolved from a nested subdirectory)", () => {
-	let gitRoot: string;
-	let nestedSubdir: string;
-	let originalCmux: string | undefined;
+  let gitRoot: string;
+  let nestedSubdir: string;
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-		gitRoot = makeGitRepo("dobby-workroot", {
-			pkg: { name: "scratch-workroot" },
-		});
-		// Two levels deep — the runner must climb to the git top-level regardless.
-		nestedSubdir = join(gitRoot, "packages", "inner");
-		mkdirSync(nestedSubdir, { recursive: true });
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    gitRoot = makeGitRepo("dobby-workroot", {
+      pkg: { name: "scratch-workroot" },
+    });
+    // Two levels deep — the runner must climb to the git top-level regardless.
+    nestedSubdir = join(gitRoot, "packages", "inner");
+    mkdirSync(nestedSubdir, { recursive: true });
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		rmSync(gitRoot, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    rmSync(gitRoot, { force: true, recursive: true });
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("reports the git repo ROOT as the worktree when env runs from a nested subdirectory", async () => {
-		const result = await run(["env"], nestedSubdir);
-		expect(result.exitCode).toBe(0);
-		// Independent expected value: the root WE created, not the subdir we invoked from.
-		expect(parseEnvText(result.stdout).worktree).toBe(realpathSync(gitRoot));
-	});
+  it("reports the git repo ROOT as the worktree when env runs from a nested subdirectory", async () => {
+    const result = await run(["env"], nestedSubdir);
+    expect(result.exitCode).toBe(0);
+    // Independent expected value: the root WE created, not the subdir we invoked from.
+    expect(parseEnvText(result.stdout).worktree).toBe(realpathSync(gitRoot));
+  });
 
-	it("reports the same resolved workroot in --json when run from a nested subdirectory", async () => {
-		const result = await run(["env", "--json"], nestedSubdir);
-		expect(result.exitCode).toBe(0);
-		expect(JSON.parse(result.stdout).worktree).toBe(realpathSync(gitRoot));
-	});
+  it("reports the same resolved workroot in --json when run from a nested subdirectory", async () => {
+    const result = await run(["env", "--json"], nestedSubdir);
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).worktree).toBe(realpathSync(gitRoot));
+  });
 
-	it("still exits 0 with a null worktree when the subdirectory is not inside any git repo", async () => {
-		// A subdir of a plain (non-git) temp dir — resolveWorkroot must yield null,
-		// and env (the snapshot exception) must never fail on that.
-		const plainRoot = makeNonGitDir();
-		const plainSub = join(plainRoot, "nested");
-		mkdirSync(plainSub, { recursive: true });
-		const result = await run(["env"], plainSub);
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).worktree).toBe("null");
-	});
+  it("still exits 0 with a null worktree when the subdirectory is not inside any git repo", async () => {
+    // A subdir of a plain (non-git) temp dir — resolveWorkroot must yield null,
+    // and env (the snapshot exception) must never fail on that.
+    const plainRoot = makeNonGitDir();
+    const plainSub = join(plainRoot, "nested");
+    mkdirSync(plainSub, { recursive: true });
+    const result = await run(["env"], plainSub);
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).worktree).toBe("null");
+  });
 });
 
 // --- Slice 2: kit pane refs (the clearest NEW-field signal) ----------------
@@ -610,60 +629,63 @@ describe("run() — env command (workroot resolved from a nested subdirectory)",
 // can't be reached (the CI/test condition), they degrade to null while env stays
 // exit 0.
 describe("run() — env command (kit pane refs)", () => {
-	let gitProject: string;
-	let originalCmux: string | undefined;
+  let gitProject: string;
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-		gitProject = makeGitRepo("dobby-panes", { pkg: { name: "scratch-panes" } });
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    gitProject = makeGitRepo("dobby-panes", { pkg: { name: "scratch-panes" } });
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		rmSync(gitProject, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    rmSync(gitProject, { force: true, recursive: true });
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("exposes runPane and browserPane fields in the snapshot", async () => {
-		const result = await run(["env"], gitProject);
-		expect(result.exitCode).toBe(0);
-		const env = parseEnvText(result.stdout);
-		expect(env.runPane, "missing field: runPane").toBeDefined();
-		expect(env.browserPane, "missing field: browserPane").toBeDefined();
-	});
+  it("exposes runPane and browserPane fields in the snapshot", async () => {
+    const result = await run(["env"], gitProject);
+    expect(result.exitCode).toBe(0);
+    const env = parseEnvText(result.stdout);
+    expect(env.runPane, "missing field: runPane").toBeDefined();
+    expect(env.browserPane, "missing field: browserPane").toBeDefined();
+  });
 
-	it("reports runPane and browserPane as null when CMUX_WORKSPACE_ID is unset", async () => {
-		const result = await run(["env"], gitProject);
-		expect(result.exitCode).toBe(0);
-		const env = parseEnvText(result.stdout);
-		expect(env.runPane).toBe("null");
-		expect(env.browserPane).toBe("null");
-	});
+  it("reports runPane and browserPane as null when CMUX_WORKSPACE_ID is unset", async () => {
+    const result = await run(["env"], gitProject);
+    expect(result.exitCode).toBe(0);
+    const env = parseEnvText(result.stdout);
+    expect(env.runPane).toBe("null");
+    expect(env.browserPane).toBe("null");
+  });
 
-	it("degrades pane refs to null and still exits 0 when cmux is set but no matching panes are reachable", async () => {
-		// CMUX_WORKSPACE_ID present but no reachable cmux surface for this repo's
-		// unique basename (the CI/test condition: no cmux) — every failure of the
-		// `cmux list-panes` / `cmux list-pane-surfaces` discovery must fold to null,
-		// never a nonzero exit.
-		process.env[CMUX] = "cmux-ws-nonexistent-xyz";
-		const result = await run(["env"], gitProject);
-		expect(result.exitCode).toBe(0);
-		const env = parseEnvText(result.stdout);
-		expect(env.runPane).toBe("null");
-		expect(env.browserPane).toBe("null");
-	});
+  it("degrades pane refs to null and still exits 0 when cmux is set but no matching panes are reachable", async () => {
+    // CMUX_WORKSPACE_ID present but no reachable cmux surface for this repo's
+    // unique basename (the CI/test condition: no cmux) — every failure of the
+    // `cmux list-panes` / `cmux list-pane-surfaces` discovery must fold to null,
+    // never a nonzero exit.
+    process.env[CMUX] = "cmux-ws-nonexistent-xyz";
+    const result = await run(["env"], gitProject);
+    expect(result.exitCode).toBe(0);
+    const env = parseEnvText(result.stdout);
+    expect(env.runPane).toBe("null");
+    expect(env.browserPane).toBe("null");
+  });
 
-	it("carries runPane and browserPane as JSON null in --json output", async () => {
-		const result = await run(["env", "--json"], gitProject);
-		expect(result.exitCode).toBe(0);
-		const env = JSON.parse(result.stdout);
-		expect(env.runPane).toBe(null);
-		expect(env.browserPane).toBe(null);
-	});
+  it("carries runPane and browserPane as JSON null in --json output", async () => {
+    const result = await run(["env", "--json"], gitProject);
+    expect(result.exitCode).toBe(0);
+    const env = JSON.parse(result.stdout);
+    expect(env.runPane).toBe(null);
+    expect(env.browserPane).toBe(null);
+  });
 });
 
 // --- Slice 3: devUrl (portless resolution via dobby's BUNDLED portless) -----
@@ -680,63 +702,66 @@ describe("run() — env command (kit pane refs)", () => {
 // code, which resolves the bin then parses portless's stdout). A project WITHOUT
 // the vite capability never attempts resolution → still null.
 describe("run() — env command (devUrl resolution)", () => {
-	let gitVite: string;
-	let gitNoVite: string;
-	let originalCmux: string | undefined;
+  let gitVite: string;
+  let gitNoVite: string;
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-		gitVite = makeGitRepo("dobby-vite", {
-			pkg: { name: "scratch-vite", dependencies: { vite: "^5.0.0" } },
-		});
-		gitNoVite = makeGitRepo("dobby-novite", {
-			pkg: { name: "scratch-novite" },
-		});
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    gitVite = makeGitRepo("dobby-vite", {
+      pkg: { dependencies: { vite: "^5.0.0" }, name: "scratch-vite" },
+    });
+    gitNoVite = makeGitRepo("dobby-novite", {
+      pkg: { name: "scratch-novite" },
+    });
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		rmSync(gitVite, { recursive: true, force: true });
-		rmSync(gitNoVite, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    rmSync(gitVite, { force: true, recursive: true });
+    rmSync(gitNoVite, { force: true, recursive: true });
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("resolves devUrl via the bundled portless when the vite capability is present (field-bug fix: portless need not be on PATH)", async () => {
-		const result = await run(["env"], gitVite);
-		expect(result.exitCode).toBe(0);
-		const env = parseEnvText(result.stdout);
-		// The vite capability IS detected (independent fact) — so devUrl resolution
-		// is genuinely attempted here, and it SUCCEEDS via dobby's bundled portless
-		// (the field bug was exactly a null devUrl in a vite worktree).
-		expect(capsSet(result.stdout)).toContain("vite");
-		expect(env.devUrl).not.toBe("null");
-		// The resolved URL carries the project name (`portless get <name>`, name =
-		// the package.json name `scratch-vite`). The protocol is the MACHINE's
-		// portless CA state (https after `portless trust`, plain http on a fresh
-		// runner/CI) — dobby's contract is resolution, not the scheme.
-		expect(env.devUrl).toContain("scratch-vite");
-		expect(env.devUrl).toMatch(/^https?:\/\//);
-	}, 20000);
+  it("resolves devUrl via the bundled portless when the vite capability is present (field-bug fix: portless need not be on PATH)", async () => {
+    const result = await run(["env"], gitVite);
+    expect(result.exitCode).toBe(0);
+    const env = parseEnvText(result.stdout);
+    // The vite capability IS detected (independent fact) — so devUrl resolution
+    // is genuinely attempted here, and it SUCCEEDS via dobby's bundled portless
+    // (the field bug was exactly a null devUrl in a vite worktree).
+    expect(capsSet(result.stdout)).toContain("vite");
+    expect(env.devUrl).not.toBe("null");
+    // The resolved URL carries the project name (`portless get <name>`, name =
+    // the package.json name `scratch-vite`). The protocol is the MACHINE's
+    // portless CA state (https after `portless trust`, plain http on a fresh
+    // runner/CI) — dobby's contract is resolution, not the scheme.
+    expect(env.devUrl).toContain("scratch-vite");
+    expect(env.devUrl).toMatch(/^https?:\/\//);
+  }, 20_000);
 
-	it("reports devUrl as null for a project WITHOUT the vite capability (resolution never attempted)", async () => {
-		const result = await run(["env"], gitNoVite);
-		expect(result.exitCode).toBe(0);
-		const env = parseEnvText(result.stdout);
-		expect(env.capabilities).toBe("none");
-		expect(env.devUrl).toBe("null");
-	});
+  it("reports devUrl as null for a project WITHOUT the vite capability (resolution never attempted)", async () => {
+    const result = await run(["env"], gitNoVite);
+    expect(result.exitCode).toBe(0);
+    const env = parseEnvText(result.stdout);
+    expect(env.capabilities).toBe("none");
+    expect(env.devUrl).toBe("null");
+  });
 
-	it("carries the resolved devUrl (not null) in --json when the vite capability is present", async () => {
-		const result = await run(["env", "--json"], gitVite);
-		expect(result.exitCode).toBe(0);
-		const devUrl = JSON.parse(result.stdout).devUrl;
-		expect(devUrl).not.toBe(null);
-		expect(devUrl).toContain("scratch-vite");
-	}, 20000);
+  it("carries the resolved devUrl (not null) in --json when the vite capability is present", async () => {
+    const result = await run(["env", "--json"], gitVite);
+    expect(result.exitCode).toBe(0);
+    const { devUrl } = JSON.parse(result.stdout);
+    expect(devUrl).not.toBe(null);
+    expect(devUrl).toContain("scratch-vite");
+  }, 20_000);
 });
 
 // run(["env"], cwd) — shareUrl (the public ngrok tunnel URL) resolution.
@@ -750,102 +775,110 @@ describe("run() — env command (devUrl resolution)", () => {
 // bundled portless resolve — than the shareUrl file read under test), so the match is
 // exact without hard-coding portless's hostname scheme. A missing/mismatched route → null.
 describe("run() — env command (shareUrl from portless routes.json)", () => {
-	const STATE = "PORTLESS_STATE_DIR";
-	const stateDirs: string[] = [];
-	let gitVite: string;
-	let originalCmux: string | undefined;
-	let originalState: string | undefined;
+  const STATE = "PORTLESS_STATE_DIR";
+  const stateDirs: string[] = [];
+  let gitVite: string;
+  let originalCmux: string | undefined;
+  let originalState: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-		originalState = process.env[STATE];
-		gitVite = makeGitRepo("dobby-share", {
-			pkg: { name: "scratch-share", dependencies: { vite: "^5.0.0" } },
-		});
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    originalState = process.env[STATE];
+    gitVite = makeGitRepo("dobby-share", {
+      pkg: { dependencies: { vite: "^5.0.0" }, name: "scratch-share" },
+    });
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		if (originalState === undefined) delete process.env[STATE];
-		else process.env[STATE] = originalState;
-		rmSync(gitVite, { recursive: true, force: true });
-		for (const d of stateDirs) rmSync(d, { recursive: true, force: true });
-		stateDirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    if (originalState === undefined) {
+      delete process.env[STATE];
+    } else {
+      process.env[STATE] = originalState;
+    }
+    rmSync(gitVite, { force: true, recursive: true });
+    for (const d of stateDirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    stateDirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-		delete process.env[STATE];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+    delete process.env[STATE];
+  });
 
-	// Write a routes.json into a fresh temp state dir; return the dir for PORTLESS_STATE_DIR.
-	function craftStateDir(routes: unknown): string {
-		const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-portless-")));
-		stateDirs.push(dir);
-		writeFileSync(join(dir, "routes.json"), JSON.stringify(routes));
-		return dir;
-	}
+  // Write a routes.json into a fresh temp state dir; return the dir for PORTLESS_STATE_DIR.
+  function craftStateDir(routes: unknown): string {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-portless-")));
+    stateDirs.push(dir);
+    writeFileSync(join(dir, "routes.json"), JSON.stringify(routes));
+    return dir;
+  }
 
-	// The devUrl hostname the bundled portless assigns this project — read from env's OWN
-	// output (STATE unset → shareUrl irrelevant), so routes.json can be keyed to match it.
-	async function devHostname(): Promise<string> {
-		delete process.env[STATE];
-		const result = await run(["env"], gitVite);
-		const devUrl = parseEnvText(result.stdout).devUrl;
-		if (devUrl === undefined || devUrl === "null") {
-			throw new Error(`expected a resolved devUrl, got: ${devUrl}`);
-		}
-		return new URL(devUrl).hostname;
-	}
+  // The devUrl hostname the bundled portless assigns this project — read from env's OWN
+  // output (STATE unset → shareUrl irrelevant), so routes.json can be keyed to match it.
+  async function devHostname(): Promise<string> {
+    delete process.env[STATE];
+    const result = await run(["env"], gitVite);
+    const { devUrl } = parseEnvText(result.stdout);
+    if (devUrl === undefined || devUrl === "null") {
+      throw new Error(`expected a resolved devUrl, got: ${devUrl}`);
+    }
+    return new URL(devUrl).hostname;
+  }
 
-	it("reports shareUrl (the ngrokUrl) when routes.json has a route matching the devUrl hostname", async () => {
-		const hostname = await devHostname();
-		process.env[STATE] = craftStateDir({
-			[hostname]: { ngrokUrl: "https://abc123.ngrok.app" },
-		});
-		const result = await run(["env"], gitVite);
-		expect(result.exitCode).toBe(0);
-		const env = parseEnvText(result.stdout);
-		expect(env.devUrl).toContain("scratch-share");
-		expect(env.shareUrl).toBe("https://abc123.ngrok.app");
-		// Ordering: shareUrl sits right after devUrl in the text output.
-		expect(result.stdout.indexOf("devUrl:")).toBeLessThan(
-			result.stdout.indexOf("shareUrl:"),
-		);
-	}, 20000);
+  it("reports shareUrl (the ngrokUrl) when routes.json has a route matching the devUrl hostname", async () => {
+    const hostname = await devHostname();
+    process.env[STATE] = craftStateDir({
+      [hostname]: { ngrokUrl: "https://abc123.ngrok.app" },
+    });
+    const result = await run(["env"], gitVite);
+    expect(result.exitCode).toBe(0);
+    const env = parseEnvText(result.stdout);
+    expect(env.devUrl).toContain("scratch-share");
+    expect(env.shareUrl).toBe("https://abc123.ngrok.app");
+    // Ordering: shareUrl sits right after devUrl in the text output.
+    expect(result.stdout.indexOf("devUrl:")).toBeLessThan(
+      result.stdout.indexOf("shareUrl:")
+    );
+  }, 20_000);
 
-	it("reports shareUrl null when routes.json has only a DIFFERENT hostname (no match)", async () => {
-		process.env[STATE] = craftStateDir({
-			"someone-else.localhost": { ngrokUrl: "https://other.ngrok.app" },
-		});
-		const result = await run(["env"], gitVite);
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).shareUrl).toBe("null");
-	}, 20000);
+  it("reports shareUrl null when routes.json has only a DIFFERENT hostname (no match)", async () => {
+    process.env[STATE] = craftStateDir({
+      "someone-else.localhost": { ngrokUrl: "https://other.ngrok.app" },
+    });
+    const result = await run(["env"], gitVite);
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).shareUrl).toBe("null");
+  }, 20_000);
 
-	it("reports shareUrl null when the state dir has no routes.json (tolerant of a missing file)", async () => {
-		const dir = realpathSync(
-			mkdtempSync(join(tmpdir(), "dobby-portless-empty-")),
-		);
-		stateDirs.push(dir);
-		process.env[STATE] = dir;
-		const result = await run(["env"], gitVite);
-		expect(result.exitCode).toBe(0);
-		expect(parseEnvText(result.stdout).shareUrl).toBe("null");
-	}, 20000);
+  it("reports shareUrl null when the state dir has no routes.json (tolerant of a missing file)", async () => {
+    const dir = realpathSync(
+      mkdtempSync(join(tmpdir(), "dobby-portless-empty-"))
+    );
+    stateDirs.push(dir);
+    process.env[STATE] = dir;
+    const result = await run(["env"], gitVite);
+    expect(result.exitCode).toBe(0);
+    expect(parseEnvText(result.stdout).shareUrl).toBe("null");
+  }, 20_000);
 
-	it("carries shareUrl (the matched tunnel URL) in --json", async () => {
-		const hostname = await devHostname();
-		process.env[STATE] = craftStateDir({
-			[hostname]: { ngrokUrl: "https://json123.ngrok.app" },
-		});
-		const result = await run(["env", "--json"], gitVite);
-		expect(result.exitCode).toBe(0);
-		expect(JSON.parse(result.stdout).shareUrl).toBe(
-			"https://json123.ngrok.app",
-		);
-	}, 20000);
+  it("carries shareUrl (the matched tunnel URL) in --json", async () => {
+    const hostname = await devHostname();
+    process.env[STATE] = craftStateDir({
+      [hostname]: { ngrokUrl: "https://json123.ngrok.app" },
+    });
+    const result = await run(["env", "--json"], gitVite);
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).shareUrl).toBe(
+      "https://json123.ngrok.app"
+    );
+  }, 20_000);
 });
 
 // ===========================================================================
@@ -879,19 +912,20 @@ const cliFile = (rel: string) => resolve(cliDir, rel);
 // as a clean assertion ("" never matches the expected content) rather than a
 // thrown ENOENT.
 const safeRead = (rel: string) =>
-	existsSync(cliFile(rel)) ? readFileSync(cliFile(rel), "utf8") : "";
+  existsSync(cliFile(rel)) ? readFileSync(cliFile(rel), "utf8") : "";
 
 // The cli/package.json manifest, re-read at runtime (not the static import) so
 // edits by the implementor are reflected.
 function readCliManifest(): {
-	exports?: Record<string, unknown>;
-	bin?: Record<string, string>;
-	dependencies?: Record<string, string>;
-	peerDependencies?: Record<string, string>;
-	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
-	files?: string[];
+  exports?: Record<string, unknown>;
+  bin?: Record<string, string>;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+  files?: string[];
 } {
-	return JSON.parse(readFileSync(cliFile("package.json"), "utf8"));
+  return JSON.parse(readFileSync(cliFile("package.json"), "utf8"));
 }
 
 // Build a THROWAWAY git repo carrying a biome.jsonc (ONE explicit lint rule, so
@@ -902,47 +936,47 @@ function readCliManifest(): {
 // workroot). A git-init is enough — `git rev-parse --show-toplevel` resolves the
 // workroot with no commit. Returns the repo root.
 function makeCheckRepo(srcFiles: Record<string, string>): string {
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-check-")));
-	execFileSync("git", ["init", "-q"], {
-		cwd: dir,
-		stdio: "ignore",
-		env: gitEnv,
-	});
-	writeFileSync(
-		join(dir, "biome.jsonc"),
-		JSON.stringify(
-			{
-				formatter: { enabled: false },
-				assist: { enabled: false },
-				linter: {
-					enabled: true,
-					rules: {
-						recommended: false,
-						suspicious: { noDoubleEquals: "error" },
-					},
-				},
-			},
-			null,
-			2,
-		),
-	);
-	writeFileSync(
-		join(dir, "tsconfig.json"),
-		JSON.stringify(
-			{
-				compilerOptions: { strict: true, noEmit: true, skipLibCheck: true },
-				include: ["src"],
-			},
-			null,
-			2,
-		),
-	);
-	for (const [rel, content] of Object.entries(srcFiles)) {
-		const full = join(dir, rel);
-		mkdirSync(dirname(full), { recursive: true });
-		writeFileSync(full, content);
-	}
-	return dir;
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-check-")));
+  execFileSync("git", ["init", "-q"], {
+    cwd: dir,
+    env: gitEnv,
+    stdio: "ignore",
+  });
+  writeFileSync(
+    join(dir, "biome.jsonc"),
+    JSON.stringify(
+      {
+        assist: { enabled: false },
+        formatter: { enabled: false },
+        linter: {
+          enabled: true,
+          rules: {
+            recommended: false,
+            suspicious: { noDoubleEquals: "error" },
+          },
+        },
+      },
+      null,
+      2
+    )
+  );
+  writeFileSync(
+    join(dir, "tsconfig.json"),
+    JSON.stringify(
+      {
+        compilerOptions: { noEmit: true, skipLibCheck: true, strict: true },
+        include: ["src"],
+      },
+      null,
+      2
+    )
+  );
+  for (const [rel, content] of Object.entries(srcFiles)) {
+    const full = join(dir, rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  }
+  return dir;
 }
 
 // Hand-written sources, each isolating ONE tool's finding so the two groups never
@@ -953,10 +987,10 @@ function makeCheckRepo(srcFiles: Record<string, string>): string {
 //     stays silent.
 //   - clean.ts:   neither -> both tools pass.
 const LINTBAD =
-	"export function eq(a: number, b: number): boolean {\n  return a == b;\n}\n";
+  "export function eq(a: number, b: number): boolean {\n  return a == b;\n}\n";
 const TYPEBAD = 'export const wrong: number = "not a number";\n';
 const CLEAN =
-	"export function ok(a: number, b: number): number {\n  return a + b;\n}\n";
+  "export function ok(a: number, b: number): number {\n  return a + b;\n}\n";
 
 // --- Tracer bullet: `dobby check` runs real biome + tsc, project-wide --------
 // The headline behavior of this task. A dirty project (one lint error + one type
@@ -964,189 +998,244 @@ const CLEAN =
 // findings appearing proves biome AND tsc ran (they are the "grouped per tool"
 // evidence — the exact section labels are the implementor's presentation choice).
 describe("run() — check command (project-wide biome + tsc)", () => {
-	let dirty: string;
-	let clean: string;
+  let dirty: string;
+  let clean: string;
 
-	beforeAll(() => {
-		dirty = makeCheckRepo({
-			"src/clean.ts": CLEAN,
-			"src/lintbad.ts": LINTBAD,
-			"src/typebad.ts": TYPEBAD,
-		});
-		clean = makeCheckRepo({ "src/clean.ts": CLEAN });
-	});
+  beforeAll(() => {
+    dirty = makeCheckRepo({
+      "src/clean.ts": CLEAN,
+      "src/lintbad.ts": LINTBAD,
+      "src/typebad.ts": TYPEBAD,
+    });
+    clean = makeCheckRepo({ "src/clean.ts": CLEAN });
+  });
 
-	afterAll(() => {
-		rmSync(dirty, { recursive: true, force: true });
-		rmSync(clean, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    rmSync(dirty, { force: true, recursive: true });
+    rmSync(clean, { force: true, recursive: true });
+  });
 
-	it("exits 1 when the project has findings (and NOT via the unknown-command path)", async () => {
-		const result = await run(["check"], dirty);
-		expect(result.exitCode).toBe(1);
-		// Anti-tautology guard: an unimplemented `check` ALSO exits 1 through the
-		// unknown-command branch — assert this is genuinely the check path.
-		expect(result.stderr).not.toContain("unknown command");
-	}, 20000);
+  it("exits 1 when the project has findings (and NOT via the unknown-command path)", async () => {
+    const result = await run(["check"], dirty);
+    expect(result.exitCode).toBe(1);
+    // Anti-tautology guard: an unimplemented `check` ALSO exits 1 through the
+    // unknown-command branch — assert this is genuinely the check path.
+    expect(result.stderr).not.toContain("unknown command");
+  }, 20_000);
 
-	it("reports the biome lint finding as `file:line` (lintbad.ts, line 2)", async () => {
-		const result = await run(["check"], dirty);
-		expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
-	}, 20000);
+  it("reports the biome lint finding as `file:line` (lintbad.ts, line 2)", async () => {
+    const result = await run(["check"], dirty);
+    expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
+  }, 20_000);
 
-	it("reports the tsc type finding as `file:line` (typebad.ts, line 1)", async () => {
-		const result = await run(["check"], dirty);
-		expect(result.stdout).toMatch(/typebad\.ts:1\b/);
-	}, 20000);
+  it("reports the tsc type finding as `file:line` (typebad.ts, line 1)", async () => {
+    const result = await run(["check"], dirty);
+    expect(result.stdout).toMatch(/typebad\.ts:1\b/);
+  }, 20_000);
 
-	it("surfaces BOTH tools' findings in one report (biome ran AND tsc ran)", async () => {
-		const result = await run(["check"], dirty);
-		expect(result.stdout).toMatch(/lintbad\.ts/);
-		expect(result.stdout).toMatch(/typebad\.ts/);
-	}, 20000);
+  it("surfaces BOTH tools' findings in one report (biome ran AND tsc ran)", async () => {
+    const result = await run(["check"], dirty);
+    expect(result.stdout).toMatch(/lintbad\.ts/);
+    expect(result.stdout).toMatch(/typebad\.ts/);
+  }, 20_000);
 
-	it("exits 0 on a clean project and reports no `file:line` findings", async () => {
-		const result = await run(["check"], clean);
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).not.toMatch(/\.ts:\d/);
-	}, 20000);
+  it("exits 0 on a clean project and reports no `file:line` findings", async () => {
+    const result = await run(["check"], clean);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toMatch(/\.ts:\d/);
+  }, 20_000);
 });
 
 // --- `dobby check <file...>` — the per-file fast path: biome only, NO tsc ----
 // The discriminator for "tsc is skipped": the project carries a type error in
 // typebad.ts, but a per-file check must never surface it — tsc never runs.
 describe("run() — check command (per-file fast path skips tsc)", () => {
-	let dirty: string;
+  let dirty: string;
 
-	beforeAll(() => {
-		dirty = makeCheckRepo({
-			"src/clean.ts": CLEAN,
-			"src/lintbad.ts": LINTBAD,
-			"src/typebad.ts": TYPEBAD,
-		});
-	});
+  beforeAll(() => {
+    dirty = makeCheckRepo({
+      "src/clean.ts": CLEAN,
+      "src/lintbad.ts": LINTBAD,
+      "src/typebad.ts": TYPEBAD,
+    });
+  });
 
-	afterAll(() => {
-		rmSync(dirty, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    rmSync(dirty, { force: true, recursive: true });
+  });
 
-	it("a lint-clean file passes (exit 0) even though the project has a type error — tsc did not run", async () => {
-		const result = await run(["check", "src/clean.ts"], dirty);
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).not.toMatch(/typebad\.ts/);
-	}, 20000);
+  it("a lint-clean file passes (exit 0) even though the project has a type error — tsc did not run", async () => {
+    const result = await run(["check", "src/clean.ts"], dirty);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toMatch(/typebad\.ts/);
+  }, 20_000);
 
-	it("flags a lint error in the named file (exit 1) and never reports the untouched file's type error", async () => {
-		const result = await run(["check", "src/lintbad.ts"], dirty);
-		expect(result.exitCode).toBe(1);
-		expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
-		expect(result.stdout).not.toMatch(/typebad\.ts/);
-	}, 20000);
+  it("flags a lint error in the named file (exit 1) and never reports the untouched file's type error", async () => {
+    const result = await run(["check", "src/lintbad.ts"], dirty);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
+    expect(result.stdout).not.toMatch(/typebad\.ts/);
+  }, 20_000);
 });
 
 // --- Preset exports (thin-file model): consumers extend @kvnwolf/dobby/* ------
 // Every target is a spec literal.
 describe("dobby presets — package.json exports", () => {
-	it("maps ./tsconfig to ./tsconfig.base.json", () => {
-		expect(readCliManifest().exports?.["./tsconfig"]).toBe(
-			"./tsconfig.base.json",
-		);
-	});
+  it("maps ./tsconfig to ./tsconfig.base.json", () => {
+    expect(readCliManifest().exports?.["./tsconfig"]).toBe(
+      "./tsconfig.base.json"
+    );
+  });
 
-	it("maps ./biome/core to ./biome/core.jsonc", () => {
-		expect(readCliManifest().exports?.["./biome/core"]).toBe(
-			"./biome/core.jsonc",
-		);
-	});
+  it("maps ./biome/core to ./biome/core.jsonc", () => {
+    expect(readCliManifest().exports?.["./biome/core"]).toBe(
+      "./biome/core.jsonc"
+    );
+  });
 
-	it("maps ./biome/react to ./biome/react.jsonc", () => {
-		expect(readCliManifest().exports?.["./biome/react"]).toBe(
-			"./biome/react.jsonc",
-		);
-	});
+  it("maps ./biome/react to ./biome/react.jsonc", () => {
+    expect(readCliManifest().exports?.["./biome/react"]).toBe(
+      "./biome/react.jsonc"
+    );
+  });
 
-	it("maps ./vitest to ./vitest.base.mjs (via the default condition)", () => {
-		const vitest = readCliManifest().exports?.["./vitest"] as {
-			default?: string;
-		};
-		expect(vitest?.default).toBe("./vitest.base.mjs");
-	});
+  it("maps ./vitest to ./vitest.base.mjs (via the default condition)", () => {
+    const vitest = readCliManifest().exports?.["./vitest"] as {
+      default?: string;
+    };
+    expect(vitest.default).toBe("./vitest.base.mjs");
+  });
 
-	it("keeps the existing dobby bin entry intact", () => {
-		expect(readCliManifest().bin?.dobby).toBe("./src/index.ts");
-	});
+  it("keeps the existing dobby bin entry intact", () => {
+    expect(readCliManifest().bin?.dobby).toBe("./src/index.ts");
+  });
 });
 
 // --- Bundled toolchain as RUNTIME dependencies (consumers install nothing) ---
-// biome, ultracite (the presets' extends target), and typescript must be runtime
-// `dependencies` — not devDependencies — so a consumer inherits the tool bins and
-// the preset resolution transitively. Names are spec literals.
+// biome and typescript must be runtime `dependencies` — not devDependencies — so a
+// consumer inherits the tool bins transitively. Names are spec literals.
 describe("dobby dependencies — bundled toolchain in runtime dependencies", () => {
-	for (const name of ["@biomejs/biome", "ultracite", "typescript"]) {
-		it(`declares ${name} as a runtime dependency`, () => {
-			const deps = readCliManifest().dependencies ?? {};
-			expect(deps[name], `missing runtime dependency: ${name}`).toBeDefined();
-		});
-	}
+  for (const name of ["@biomejs/biome", "typescript"]) {
+    it(`declares ${name} as a runtime dependency`, () => {
+      const deps = readCliManifest().dependencies ?? {};
+      expect(deps[name], `missing runtime dependency: ${name}`).toBeDefined();
+    });
+  }
+
+  // ultracite is DEV-only now: the biome presets are VENDORED FLAT (ultracite's
+  // config inlined, not extended — biome's `extends` is non-transitive), so a
+  // consumer needs nothing from ultracite at runtime. It is used ONLY by the
+  // vendoring generator (cli/scripts/vendor-biome.ts) + its drift test.
+  it("keeps ultracite OUT of runtime dependencies (vendored flat, dev-only)", () => {
+    const manifest = readCliManifest();
+    expect(manifest.dependencies?.ultracite).toBeUndefined();
+    expect(manifest.devDependencies?.ultracite).toBeDefined();
+  });
 });
 
 // --- tsconfig.base.json — strict base for consumer apps ----------------------
 // Substring/regex assertions tolerate JSONC comments and whitespace; every flag
 // is a spec literal from the enumerated strict base.
 describe("dobby preset — tsconfig.base.json", () => {
-	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("tsconfig.base.json"))).toBe(true);
-	});
+  it("exists as an exported preset file", () => {
+    expect(existsSync(cliFile("tsconfig.base.json"))).toBe(true);
+  });
 
-	it("declares the strict compiler flags the spec enumerates", () => {
-		const raw = safeRead("tsconfig.base.json");
-		expect(raw).toMatch(/"strict"\s*:\s*true/);
-		expect(raw).toMatch(/"noUncheckedIndexedAccess"\s*:\s*true/);
-		expect(raw).toMatch(/"noEmit"\s*:\s*true/);
-		expect(raw).toMatch(/"skipLibCheck"\s*:\s*true/);
-		expect(raw).toMatch(/"isolatedModules"\s*:\s*true/);
-		expect(raw).toMatch(/"esModuleInterop"\s*:\s*true/);
-		expect(raw).toMatch(/"resolveJsonModule"\s*:\s*true/);
-	});
+  it("declares the strict compiler flags the spec enumerates", () => {
+    const raw = safeRead("tsconfig.base.json");
+    expect(raw).toMatch(/"strict"\s*:\s*true/);
+    expect(raw).toMatch(/"noUncheckedIndexedAccess"\s*:\s*true/);
+    expect(raw).toMatch(/"noEmit"\s*:\s*true/);
+    expect(raw).toMatch(/"skipLibCheck"\s*:\s*true/);
+    expect(raw).toMatch(/"isolatedModules"\s*:\s*true/);
+    expect(raw).toMatch(/"esModuleInterop"\s*:\s*true/);
+    expect(raw).toMatch(/"resolveJsonModule"\s*:\s*true/);
+  });
 
-	it("uses bundler-style module settings (module preserve, moduleResolution bundler)", () => {
-		const raw = safeRead("tsconfig.base.json");
-		expect(raw).toMatch(/"module"\s*:\s*"preserve"/);
-		expect(raw).toMatch(/"moduleResolution"\s*:\s*"bundler"/);
-	});
+  it("uses bundler-style module settings (module preserve, moduleResolution bundler)", () => {
+    const raw = safeRead("tsconfig.base.json");
+    expect(raw).toMatch(/"module"\s*:\s*"preserve"/);
+    expect(raw).toMatch(/"moduleResolution"\s*:\s*"bundler"/);
+  });
 });
 
-// --- biome presets — thin files extending ultracite -------------------------
-describe("dobby preset — biome/core.jsonc", () => {
-	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("biome/core.jsonc"))).toBe(true);
-	});
+// --- biome presets — VENDORED FLAT (ultracite inlined, not extended) ---------
+// Biome's `extends` is ONE-LEVEL / non-transitive, so dobby cannot WRAP ultracite;
+// it vendors ultracite's core + react configs FLAT (verbatim + dobby's mods). The
+// files therefore carry NO `ultracite/biome/*` extends reference and NO `extends` of
+// their own — they ARE the full config. The exact bytes are owned by the generator
+// (cli/scripts/vendor-biome.ts) + the drift test (vendor-biome.test.ts); these
+// assertions pin the flatness invariant + the dobby-specific modifications.
+describe("dobby preset — biome/core.jsonc (vendored flat)", () => {
+  it("exists as an exported preset file", () => {
+    expect(existsSync(cliFile("biome/core.jsonc"))).toBe(true);
+  });
 
-	it("extends ultracite's biome core preset", () => {
-		expect(safeRead("biome/core.jsonc")).toMatch(/"ultracite\/biome\/core"/);
-	});
+  it("is flat — carries the vendored header, no ultracite extends, no extends key", () => {
+    const raw = safeRead("biome/core.jsonc");
+    expect(raw).toMatch(/Vendored from ultracite@/);
+    expect(raw).not.toMatch(/"ultracite\/biome/);
+    expect(raw).not.toMatch(/"extends"/);
+  });
 
-	it("does not pull in the react preset (core stays framework-agnostic)", () => {
-		// Require the file to EXIST first, so this negative assertion is not
-		// vacuously true when the preset is simply absent.
-		expect(existsSync(cliFile("biome/core.jsonc"))).toBe(true);
-		expect(safeRead("biome/core.jsonc")).not.toMatch(/ultracite\/biome\/react/);
-	});
+  it("inlines representative ultracite rules verbatim", () => {
+    // A JS rule (noExplicitAny) + a CSS rule (noEmptySource) prove the full config
+    // is present, not just a stub.
+    const raw = safeRead("biome/core.jsonc");
+    expect(raw).toMatch(/"noExplicitAny"\s*:\s*"error"/);
+    expect(raw).toMatch(/"noEmptySource"\s*:\s*"error"/);
+  });
+
+  it("applies dobby's modifications (noArrayIndexKey off + common ignores)", () => {
+    const raw = safeRead("biome/core.jsonc");
+    expect(raw).toMatch(/"noArrayIndexKey"\s*:\s*"off"/);
+    for (const ignore of ["!.claude", "!.dobby", "!.github", "!**/*.md"]) {
+      expect(raw).toContain(`"${ignore}"`);
+    }
+  });
 });
 
-describe("dobby preset — biome/react.jsonc", () => {
-	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("biome/react.jsonc"))).toBe(true);
-	});
+describe("dobby preset — biome/react.jsonc (vendored flat)", () => {
+  it("exists as an exported preset file", () => {
+    expect(existsSync(cliFile("biome/react.jsonc"))).toBe(true);
+  });
 
-	it("extends the dobby core preset (multi-level) plus the ultracite react preset", () => {
-		// react → ./core.jsonc → ultracite/biome/core: consumers extend ONLY
-		// @kvnwolf/dobby/biome/react and inherit core's common ignores transitively.
-		const raw = safeRead("biome/react.jsonc");
-		expect(raw).toMatch(/"\.\/core\.jsonc"/);
-		expect(raw).toMatch(/"ultracite\/biome\/react"/);
-		expect(safeRead("biome/core.jsonc")).toMatch(/"ultracite\/biome\/core"/);
-	});
+  it("is flat — vendored header, no ultracite extends, no extends key", () => {
+    const raw = safeRead("biome/react.jsonc");
+    expect(raw).toMatch(/Vendored from ultracite@/);
+    expect(raw).not.toMatch(/"ultracite\/biome/);
+    expect(raw).not.toMatch(/"extends"/);
+  });
+
+  it("re-disables noArrayIndexKey (ultracite react re-enables it as an error)", () => {
+    // The critical vendoring detail: a react consumer extends BOTH flat files, so
+    // react's value is last-in-chain — it MUST be off, matching core's house style.
+    expect(safeRead("biome/react.jsonc")).toMatch(
+      /"noArrayIndexKey"\s*:\s*"off"/
+    );
+  });
+});
+
+// --- biome/configless.react.jsonc — the INTERNAL config-less wrapper ---------
+// A react app needs BOTH flat files. dobby's config-less biome default points
+// `--config-path` at this wrapper (extends resolves ONE level from the root config,
+// and both targets are flat, so nothing is lost). It is NOT a consumer extends
+// target — package.json exports expose ONLY ./biome/core + ./biome/react, so a
+// consumer can never `extends` this by package specifier (the very bug the vendoring
+// kills). Read as a file.
+describe("dobby preset — biome/configless.react.jsonc (internal wrapper)", () => {
+  it("exists and extends BOTH flat vendored files", () => {
+    const raw = safeRead("biome/configless.react.jsonc");
+    expect(raw).toMatch(/"\.\/core\.jsonc"/);
+    expect(raw).toMatch(/"\.\/react\.jsonc"/);
+  });
+
+  it("is NOT a consumer extends target (exports expose only core + react)", () => {
+    const { exports } = readCliManifest();
+    expect(exports?.["./biome/core"]).toBeDefined();
+    expect(exports?.["./biome/react"]).toBeDefined();
+    expect(exports?.["./biome/configless.react"]).toBeUndefined();
+  });
 });
 
 // --- vitest preset — the universal test wiring consumers merge on top ---------
@@ -1159,40 +1248,40 @@ describe("dobby preset — biome/react.jsonc", () => {
 // resists a clean direct-import shape assertion). The mergeConfig pointer is a spec
 // literal in the file's own header comment.
 describe("dobby preset — vitest.base.mjs", () => {
-	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("vitest.base.mjs"))).toBe(true);
-	});
+  it("exists as an exported preset file", () => {
+    expect(existsSync(cliFile("vitest.base.mjs"))).toBe(true);
+  });
 
-	it("is built with vitest's own defineConfig (a mergeable base, not a bespoke object)", () => {
-		const raw = safeRead("vitest.base.mjs");
-		expect(raw).toMatch(/from\s+"vitest\/config"/);
-		expect(raw).toMatch(/defineConfig/);
-		// Default export so consumers `import dobbyVitest from "@kvnwolf/dobby/vitest"`.
-		expect(raw).toMatch(/export\s+default\s+defineConfig/);
-	});
+  it("is built with vitest's own defineConfig (a mergeable base, not a bespoke object)", () => {
+    const raw = safeRead("vitest.base.mjs");
+    expect(raw).toMatch(/from\s+"vitest\/config"/);
+    expect(raw).toMatch(/defineConfig/);
+    // Default export so consumers `import dobbyVitest from "@kvnwolf/dobby/vitest"`.
+    expect(raw).toMatch(/export\s+default\s+defineConfig/);
+  });
 
-	it("inlines zod (server.deps.inline) so vitest-under-bun can't mangle its export map", () => {
-		const raw = safeRead("vitest.base.mjs");
-		expect(raw).toMatch(/inline/);
-		expect(raw).toMatch(/"zod"/);
-	});
+  it("inlines zod (server.deps.inline) so vitest-under-bun can't mangle its export map", () => {
+    const raw = safeRead("vitest.base.mjs");
+    expect(raw).toMatch(/inline/);
+    expect(raw).toMatch(/"zod"/);
+  });
 
-	it("excludes .claude/** on top of vitest's own defaults (no double-discovery)", () => {
-		const raw = safeRead("vitest.base.mjs");
-		expect(raw).toMatch(/configDefaults\.exclude/);
-		expect(raw).toMatch(/"\.claude\/\*\*"/);
-	});
+  it("excludes .claude/** on top of vitest's own defaults (no double-discovery)", () => {
+    const raw = safeRead("vitest.base.mjs");
+    expect(raw).toMatch(/configDefaults\.exclude/);
+    expect(raw).toMatch(/"\.claude\/\*\*"/);
+  });
 
-	it("points consumers at mergeConfig in its header (the documented merge-on shape)", () => {
-		expect(safeRead("vitest.base.mjs")).toMatch(/mergeConfig/);
-	});
+  it("points consumers at mergeConfig in its header (the documented merge-on shape)", () => {
+    expect(safeRead("vitest.base.mjs")).toMatch(/mergeConfig/);
+  });
 
-	it("never adds vitest as a dobby dependency (dual-Vite invariant)", () => {
-		// vitest resolves from the CONSUMER's tree at config-load time; bundling a
-		// second copy in dobby would clash with the consumer's Vite plugins.
-		const deps = readCliManifest().dependencies ?? {};
-		expect(deps.vitest).toBeUndefined();
-	});
+  it("never adds vitest as a dobby dependency (dual-Vite invariant)", () => {
+    // vitest resolves from the CONSUMER's tree at config-load time; bundling a
+    // second copy in dobby would clash with the consumer's Vite plugins.
+    const deps = readCliManifest().dependencies ?? {};
+    expect(deps.vitest).toBeUndefined();
+  });
 });
 
 // ===========================================================================
@@ -1212,44 +1301,44 @@ describe("dobby preset — vitest.base.mjs", () => {
 // documented consumer snippet in a file's header (vite.base.mjs legitimately shows
 // `plugins:` inside its header comment; the config body must NOT declare it).
 const codeOnly = (raw: string) =>
-	raw
-		.split("\n")
-		.filter((line) => !line.trim().startsWith("//"))
-		.join("\n");
+  raw
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("//"))
+    .join("\n");
 
 // --- package.json exports for the four new presets --------------------------
 describe("dobby stack presets — package.json exports", () => {
-	it("maps ./tsconfig/vite to ./tsconfig.vite.json", () => {
-		expect(readCliManifest().exports?.["./tsconfig/vite"]).toBe(
-			"./tsconfig.vite.json",
-		);
-	});
+  it("maps ./tsconfig/vite to ./tsconfig.vite.json", () => {
+    expect(readCliManifest().exports?.["./tsconfig/vite"]).toBe(
+      "./tsconfig.vite.json"
+    );
+  });
 
-	it("maps ./vite to ./vite.base.mjs (via the default condition)", () => {
-		const vite = readCliManifest().exports?.["./vite"] as { default?: string };
-		expect(vite?.default).toBe("./vite.base.mjs");
-	});
+  it("maps ./vite to ./vite.base.mjs (via the default condition)", () => {
+    const vite = readCliManifest().exports?.["./vite"] as { default?: string };
+    expect(vite.default).toBe("./vite.base.mjs");
+  });
 
-	it("maps ./vitest/react to ./vitest.react.mjs (via the default condition)", () => {
-		const react = readCliManifest().exports?.["./vitest/react"] as {
-			default?: string;
-		};
-		expect(react?.default).toBe("./vitest.react.mjs");
-	});
+  it("maps ./vitest/react to ./vitest.react.mjs (via the default condition)", () => {
+    const react = readCliManifest().exports?.["./vitest/react"] as {
+      default?: string;
+    };
+    expect(react.default).toBe("./vitest.react.mjs");
+  });
 
-	it("maps ./drizzle to ./drizzle.base.mjs (via the default condition)", () => {
-		const drizzle = readCliManifest().exports?.["./drizzle"] as {
-			default?: string;
-		};
-		expect(drizzle?.default).toBe("./drizzle.base.mjs");
-	});
+  it("maps ./drizzle to ./drizzle.base.mjs (via the default condition)", () => {
+    const drizzle = readCliManifest().exports?.["./drizzle"] as {
+      default?: string;
+    };
+    expect(drizzle.default).toBe("./drizzle.base.mjs");
+  });
 
-	it("maps ./vite/tanstack-start to ./vite.tanstack.mjs (via the default condition)", () => {
-		const tanstack = readCliManifest().exports?.["./vite/tanstack-start"] as {
-			default?: string;
-		};
-		expect(tanstack?.default).toBe("./vite.tanstack.mjs");
-	});
+  it("maps ./vite/tanstack-start to ./vite.tanstack.mjs (via the default condition)", () => {
+    const tanstack = readCliManifest().exports?.["./vite/tanstack-start"] as {
+      default?: string;
+    };
+    expect(tanstack.default).toBe("./vite.tanstack.mjs");
+  });
 });
 
 // --- Type declarations (.d.mts) for every .mjs preset (D1/D2) -----------------
@@ -1260,65 +1349,65 @@ describe("dobby stack presets — package.json exports", () => {
 // Asserted by FILE READ + the manifest — the declaration's type import per preset
 // and the types-condition target are LITERALS the spec states outright.
 describe("dobby preset type declarations — sibling .d.mts files", () => {
-	// [preset, declaration file, the exact type import the declaration must carry].
-	const decls: [string, string, RegExp][] = [
-		[
-			"vite.base",
-			"vite.base.d.mts",
-			/import\s+type\s+\{\s*UserConfig\s*\}\s+from\s+"vite"/,
-		],
-		[
-			"vitest.base",
-			"vitest.base.d.mts",
-			/import\s+type\s+\{\s*UserConfig\s*\}\s+from\s+"vitest\/config"/,
-		],
-		[
-			"vitest.react",
-			"vitest.react.d.mts",
-			/import\s+type\s+\{\s*UserConfig\s*\}\s+from\s+"vitest\/config"/,
-		],
-		[
-			"drizzle.base",
-			"drizzle.base.d.mts",
-			/import\s+type\s+\{\s*Config\s*\}\s+from\s+"drizzle-kit"/,
-		],
-		[
-			"vite.tanstack",
-			"vite.tanstack.d.mts",
-			/import\s+type\s+\{\s*UserConfig\s*\}\s+from\s+"vite"/,
-		],
-	];
+  // [preset, declaration file, the exact type import the declaration must carry].
+  const decls: [string, string, RegExp][] = [
+    [
+      "vite.base",
+      "vite.base.d.mts",
+      /import\s+type\s+\{\s*UserConfig\s*\}\s+from\s+"vite"/,
+    ],
+    [
+      "vitest.base",
+      "vitest.base.d.mts",
+      /import\s+type\s+\{\s*UserConfig\s*\}\s+from\s+"vitest\/config"/,
+    ],
+    [
+      "vitest.react",
+      "vitest.react.d.mts",
+      /import\s+type\s+\{\s*UserConfig\s*\}\s+from\s+"vitest\/config"/,
+    ],
+    [
+      "drizzle.base",
+      "drizzle.base.d.mts",
+      /import\s+type\s+\{\s*Config\s*\}\s+from\s+"drizzle-kit"/,
+    ],
+    [
+      "vite.tanstack",
+      "vite.tanstack.d.mts",
+      /import\s+type\s+\{\s*UserConfig\s*\}\s+from\s+"vite"/,
+    ],
+  ];
 
-	for (const [preset, file, typeImport] of decls) {
-		it(`${preset} ships a ${file} declaring the right type import`, () => {
-			expect(existsSync(cliFile(file))).toBe(true);
-			const raw = safeRead(file);
-			expect(raw).toMatch(typeImport);
-			// Types the default export the .mjs re-exports.
-			expect(raw).toMatch(/export\s+default\s+config/);
-		});
-	}
+  for (const [preset, file, typeImport] of decls) {
+    it(`${preset} ships a ${file} declaring the right type import`, () => {
+      expect(existsSync(cliFile(file))).toBe(true);
+      const raw = safeRead(file);
+      expect(raw).toMatch(typeImport);
+      // Types the default export the .mjs re-exports.
+      expect(raw).toMatch(/export\s+default\s+config/);
+    });
+  }
 
-	// The `types` condition must sit FIRST in each export object AND point at the
-	// sibling declaration — the two facts TypeScript needs to resolve the preset.
-	const typed: [string, string][] = [
-		["./vite", "./vite.base.d.mts"],
-		["./vite/tanstack-start", "./vite.tanstack.d.mts"],
-		["./vitest", "./vitest.base.d.mts"],
-		["./vitest/react", "./vitest.react.d.mts"],
-		["./drizzle", "./drizzle.base.d.mts"],
-	];
+  // The `types` condition must sit FIRST in each export object AND point at the
+  // sibling declaration — the two facts TypeScript needs to resolve the preset.
+  const typed: [string, string][] = [
+    ["./vite", "./vite.base.d.mts"],
+    ["./vite/tanstack-start", "./vite.tanstack.d.mts"],
+    ["./vitest", "./vitest.base.d.mts"],
+    ["./vitest/react", "./vitest.react.d.mts"],
+    ["./drizzle", "./drizzle.base.d.mts"],
+  ];
 
-	for (const [subpath, target] of typed) {
-		it(`exports["${subpath}"] carries a types condition -> ${target}`, () => {
-			const entry = readCliManifest().exports?.[subpath] as
-				| Record<string, string>
-				| undefined;
-			expect(entry?.types).toBe(target);
-			// types FIRST: TypeScript reads conditions top-down.
-			expect(Object.keys(entry ?? {})[0]).toBe("types");
-		});
-	}
+  for (const [subpath, target] of typed) {
+    it(`exports["${subpath}"] carries a types condition -> ${target}`, () => {
+      const entry = readCliManifest().exports?.[subpath] as
+        | Record<string, string>
+        | undefined;
+      expect(entry?.types).toBe(target);
+      // types FIRST: TypeScript reads conditions top-down.
+      expect(Object.keys(entry ?? {})[0]).toBe("types");
+    });
+  }
 });
 
 // --- vite.tanstack.mjs — the house TanStack Start app stack (D2) ---------------
@@ -1327,36 +1416,36 @@ describe("dobby preset type declarations — sibling .d.mts files", () => {
 // Markers are spec literals; comments are stripped so the header's mergeConfig
 // snippet never satisfies a config-body assertion.
 describe("dobby preset — vite.tanstack.mjs", () => {
-	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("vite.tanstack.mjs"))).toBe(true);
-	});
+  it("exists as an exported preset file", () => {
+    expect(existsSync(cliFile("vite.tanstack.mjs"))).toBe(true);
+  });
 
-	it("layers on the vite base (imports ./vite.base.mjs)", () => {
-		expect(safeRead("vite.tanstack.mjs")).toMatch(
-			/from\s+"\.\/vite\.base\.mjs"/,
-		);
-	});
+  it("layers on the vite base (imports ./vite.base.mjs)", () => {
+    expect(safeRead("vite.tanstack.mjs")).toMatch(
+      /from\s+"\.\/vite\.base\.mjs"/
+    );
+  });
 
-	it("merges via mergeConfig on the dobby vite base", () => {
-		expect(codeOnly(safeRead("vite.tanstack.mjs"))).toMatch(
-			/mergeConfig\(\s*dobbyVite/,
-		);
-	});
+  it("merges via mergeConfig on the dobby vite base", () => {
+    expect(codeOnly(safeRead("vite.tanstack.mjs"))).toMatch(
+      /mergeConfig\(\s*dobbyVite/
+    );
+  });
 
-	it("wires the five house TanStack Start plugins", () => {
-		const raw = safeRead("vite.tanstack.mjs");
-		expect(raw).toMatch(/@tailwindcss\/vite/);
-		expect(raw).toMatch(/@tanstack\/devtools-vite/);
-		expect(raw).toMatch(/@tanstack\/react-start\/plugin\/vite/);
-		expect(raw).toMatch(/@vitejs\/plugin-react/);
-		expect(raw).toMatch(/nitro\/vite/);
-	});
+  it("wires the five house TanStack Start plugins", () => {
+    const raw = safeRead("vite.tanstack.mjs");
+    expect(raw).toMatch(/@tailwindcss\/vite/);
+    expect(raw).toMatch(/@tanstack\/devtools-vite/);
+    expect(raw).toMatch(/@tanstack\/react-start\/plugin\/vite/);
+    expect(raw).toMatch(/@vitejs\/plugin-react/);
+    expect(raw).toMatch(/nitro\/vite/);
+  });
 
-	it("encodes the house test-co-location convention (routeFileIgnorePattern)", () => {
-		expect(codeOnly(safeRead("vite.tanstack.mjs"))).toMatch(
-			/routeFileIgnorePattern/,
-		);
-	});
+  it("encodes the house test-co-location convention (routeFileIgnorePattern)", () => {
+    expect(codeOnly(safeRead("vite.tanstack.mjs"))).toMatch(
+      /routeFileIgnorePattern/
+    );
+  });
 });
 
 // --- biome/core.jsonc house override (D3) ------------------------------------
@@ -1364,10 +1453,10 @@ describe("dobby preset — vite.tanstack.mjs", () => {
 // where biome can't anchor a suppression; the rule's value doesn't pay its cost
 // for AI-written code). The rule sits in biome's `suspicious` group.
 describe("dobby preset — biome/core.jsonc house linter override", () => {
-	it("turns suspicious/noArrayIndexKey off", () => {
-		const raw = safeRead("biome/core.jsonc");
-		expect(raw).toMatch(/"noArrayIndexKey"\s*:\s*"off"/);
-	});
+  it("turns suspicious/noArrayIndexKey off", () => {
+    const raw = safeRead("biome/core.jsonc");
+    expect(raw).toMatch(/"noArrayIndexKey"\s*:\s*"off"/);
+  });
 });
 
 // --- knip.base.jsonc — dobby's default knip config for config-less consumers (D4)
@@ -1377,23 +1466,23 @@ describe("dobby preset — biome/core.jsonc house linter override", () => {
 // the config re-states knip's own default entry globs PLUS the test glob. Asserted
 // by FILE READ (the config is passed to knip via --config, never imported).
 describe("dobby preset — knip.base.jsonc", () => {
-	it("exists as a shipped preset file", () => {
-		expect(existsSync(cliFile("knip.base.jsonc"))).toBe(true);
-	});
+  it("exists as a shipped preset file", () => {
+    expect(existsSync(cliFile("knip.base.jsonc"))).toBe(true);
+  });
 
-	it("adds test files as entries (src/**/*.test glob)", () => {
-		expect(safeRead("knip.base.jsonc")).toMatch(
-			/"src\/\*\*\/\*\.test\.\{ts,tsx\}"/,
-		);
-	});
+  it("adds test files as entries (src/**/*.test glob)", () => {
+    expect(safeRead("knip.base.jsonc")).toMatch(
+      /"src\/\*\*\/\*\.test\.\{ts,tsx\}"/
+    );
+  });
 
-	it("re-states knip's default entry globs (entry REPLACES, is not additive)", () => {
-		// Because `entry` overrides knip's defaults, the config must carry knip's own
-		// {index,cli,main} entry globs or genuine entry files would be flagged unused.
-		const raw = safeRead("knip.base.jsonc");
-		expect(raw).toMatch(/\{index,cli,main\}/);
-		expect(raw).toMatch(/src\/\{index,cli,main\}/);
-	});
+  it("re-states knip's default entry globs (entry REPLACES, is not additive)", () => {
+    // Because `entry` overrides knip's defaults, the config must carry knip's own
+    // {index,cli,main} entry globs or genuine entry files would be flagged unused.
+    const raw = safeRead("knip.base.jsonc");
+    expect(raw).toMatch(/\{index,cli,main\}/);
+    expect(raw).toMatch(/src\/\{index,cli,main\}/);
+  });
 });
 
 // --- package.json `files` allowlist — the packed tarball ships only presets --
@@ -1404,82 +1493,82 @@ describe("dobby preset — knip.base.jsonc", () => {
 // manifest (the pack itself is verified out-of-band via `bun pm pack`). Every
 // expected entry is a spec literal.
 describe("dobby packaging — package.json files allowlist", () => {
-	it("declares a files allowlist array", () => {
-		expect(Array.isArray(readCliManifest().files)).toBe(true);
-	});
+  it("declares a files allowlist array", () => {
+    expect(Array.isArray(readCliManifest().files)).toBe(true);
+  });
 
-	it("ships src and the biome presets", () => {
-		const files = readCliManifest().files ?? [];
-		expect(files).toContain("src");
-		expect(files).toContain("biome");
-	});
+  it("ships src and the biome presets", () => {
+    const files = readCliManifest().files ?? [];
+    expect(files).toContain("src");
+    expect(files).toContain("biome");
+  });
 
-	it("excludes the co-located run.test.ts via a negation entry", () => {
-		// The `!src/run.test.ts` negation keeps the test out of the tarball while
-		// still shipping the rest of src/.
-		expect(readCliManifest().files ?? []).toContain("!src/run.test.ts");
-	});
+  it("excludes the co-located run.test.ts via a negation entry", () => {
+    // The `!src/run.test.ts` negation keeps the test out of the tarball while
+    // still shipping the rest of src/.
+    expect(readCliManifest().files ?? []).toContain("!src/run.test.ts");
+  });
 
-	it("never lists the __fixtures__ dir (test fixtures must not ship)", () => {
-		const files = readCliManifest().files ?? [];
-		expect(files.some((entry) => entry.includes("__fixtures__"))).toBe(false);
-	});
+  it("never lists the __fixtures__ dir (test fixtures must not ship)", () => {
+    const files = readCliManifest().files ?? [];
+    expect(files.some((entry) => entry.includes("__fixtures__"))).toBe(false);
+  });
 
-	it("ships the two tsconfig presets and the four .mjs config presets", () => {
-		const files = readCliManifest().files ?? [];
-		for (const asset of [
-			"tsconfig.base.json",
-			"tsconfig.vite.json",
-			"vite.base.mjs",
-			"vitest.base.mjs",
-			"vitest.react.mjs",
-			"drizzle.base.mjs",
-		]) {
-			expect(files, `missing packaged asset: ${asset}`).toContain(asset);
-		}
-	});
+  it("ships the two tsconfig presets and the four .mjs config presets", () => {
+    const files = readCliManifest().files ?? [];
+    for (const asset of [
+      "tsconfig.base.json",
+      "tsconfig.vite.json",
+      "vite.base.mjs",
+      "vitest.base.mjs",
+      "vitest.react.mjs",
+      "drizzle.base.mjs",
+    ]) {
+      expect(files, `missing packaged asset: ${asset}`).toContain(asset);
+    }
+  });
 
-	it("ships the new config-less assets: the tanstack preset, the .d.mts declarations, and the knip default", () => {
-		const files = readCliManifest().files ?? [];
-		// vite.tanstack.mjs must be listed explicitly (the allowlist enumerates .mjs
-		// presets by name, not a glob); the type declarations ship via the *.d.mts
-		// glob (which does NOT match the .mjs entries); knip.base.jsonc explicitly.
-		expect(files, "missing vite.tanstack.mjs").toContain("vite.tanstack.mjs");
-		expect(files, "missing *.d.mts glob (type declarations)").toContain(
-			"*.d.mts",
-		);
-		expect(files, "missing knip.base.jsonc").toContain("knip.base.jsonc");
-	});
+  it("ships the new config-less assets: the tanstack preset, the .d.mts declarations, and the knip default", () => {
+    const files = readCliManifest().files ?? [];
+    // vite.tanstack.mjs must be listed explicitly (the allowlist enumerates .mjs
+    // presets by name, not a glob); the type declarations ship via the *.d.mts
+    // glob (which does NOT match the .mjs entries); knip.base.jsonc explicitly.
+    expect(files, "missing vite.tanstack.mjs").toContain("vite.tanstack.mjs");
+    expect(files, "missing *.d.mts glob (type declarations)").toContain(
+      "*.d.mts"
+    );
+    expect(files, "missing knip.base.jsonc").toContain("knip.base.jsonc");
+  });
 });
 
 // --- tsconfig.base.json gains the two universal-safe options ----------------
 // D1: allowImportingTsExtensions only ALLOWS the style (base already has noEmit)
 // and noUncheckedSideEffectImports is pure strictness — both are universal-safe.
 describe("dobby preset — tsconfig.base.json (D1 additions)", () => {
-	it("allows importing .ts extensions", () => {
-		expect(safeRead("tsconfig.base.json")).toMatch(
-			/"allowImportingTsExtensions"\s*:\s*true/,
-		);
-	});
+  it("allows importing .ts extensions", () => {
+    expect(safeRead("tsconfig.base.json")).toMatch(
+      /"allowImportingTsExtensions"\s*:\s*true/
+    );
+  });
 
-	it("checks unresolved side-effect imports", () => {
-		expect(safeRead("tsconfig.base.json")).toMatch(
-			/"noUncheckedSideEffectImports"\s*:\s*true/,
-		);
-	});
+  it("checks unresolved side-effect imports", () => {
+    expect(safeRead("tsconfig.base.json")).toMatch(
+      /"noUncheckedSideEffectImports"\s*:\s*true/
+    );
+  });
 });
 
 // --- tsconfig.vite.json — the vite-app tsconfig variant (D2) -----------------
 describe("dobby preset — tsconfig.vite.json", () => {
-	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("tsconfig.vite.json"))).toBe(true);
-	});
+  it("exists as an exported preset file", () => {
+    expect(existsSync(cliFile("tsconfig.vite.json"))).toBe(true);
+  });
 
-	it("extends the strict base and adds the vite/client types", () => {
-		const raw = safeRead("tsconfig.vite.json");
-		expect(raw).toMatch(/"extends"\s*:\s*"\.\/tsconfig\.base\.json"/);
-		expect(raw).toMatch(/"vite\/client"/);
-	});
+  it("extends the strict base and adds the vite/client types", () => {
+    const raw = safeRead("tsconfig.vite.json");
+    expect(raw).toMatch(/"extends"\s*:\s*"\.\/tsconfig\.base\.json"/);
+    expect(raw).toMatch(/"vite\/client"/);
+  });
 });
 
 // --- vite.base.mjs — the universal vite-app config (D3) -----------------------
@@ -1487,72 +1576,72 @@ describe("dobby preset — tsconfig.vite.json", () => {
 // hostnames) are preset; plugins are consumer-owned + version-coupled, so the
 // config body carries NONE.
 describe("dobby preset — vite.base.mjs", () => {
-	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("vite.base.mjs"))).toBe(true);
-	});
+  it("exists as an exported preset file", () => {
+    expect(existsSync(cliFile("vite.base.mjs"))).toBe(true);
+  });
 
-	it("enables vite@8 native tsconfig path resolution (never the plugin)", () => {
-		expect(safeRead("vite.base.mjs")).toMatch(/tsconfigPaths/);
-	});
+  it("enables vite@8 native tsconfig path resolution (never the plugin)", () => {
+    expect(safeRead("vite.base.mjs")).toMatch(/tsconfigPaths/);
+  });
 
-	it("accepts portless's custom hostnames (server.allowedHosts)", () => {
-		expect(safeRead("vite.base.mjs")).toMatch(/allowedHosts/);
-	});
+  it("accepts portless's custom hostnames (server.allowedHosts)", () => {
+    expect(safeRead("vite.base.mjs")).toMatch(/allowedHosts/);
+  });
 
-	it("declares NO plugins in the config body (consumer-owned + version-coupled)", () => {
-		// The header comment shows `plugins:` in the merge snippet — strip comments
-		// so this reads the config object, not the docs.
-		expect(codeOnly(safeRead("vite.base.mjs"))).not.toMatch(/plugins:/);
-	});
+  it("declares NO plugins in the config body (consumer-owned + version-coupled)", () => {
+    // The header comment shows `plugins:` in the merge snippet — strip comments
+    // so this reads the config object, not the docs.
+    expect(codeOnly(safeRead("vite.base.mjs"))).not.toMatch(/plugins:/);
+  });
 });
 
 // --- vitest.react.mjs — the react-app vitest variant (D4) ---------------------
 // Layered on the base via mergeConfig; lives in its OWN file precisely because it
 // imports vite / @vitejs packages (the base must stay importable without vite).
 describe("dobby preset — vitest.react.mjs", () => {
-	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("vitest.react.mjs"))).toBe(true);
-	});
+  it("exists as an exported preset file", () => {
+    expect(existsSync(cliFile("vitest.react.mjs"))).toBe(true);
+  });
 
-	it("layers on the vitest base (imports ./vitest.base)", () => {
-		expect(safeRead("vitest.react.mjs")).toMatch(/from\s+"\.\/vitest\.base/);
-	});
+  it("layers on the vitest base (imports ./vitest.base)", () => {
+    expect(safeRead("vitest.react.mjs")).toMatch(/from\s+"\.\/vitest\.base/);
+  });
 
-	it("adds the react test plugin and import-time env loading", () => {
-		const raw = safeRead("vitest.react.mjs");
-		expect(raw).toMatch(/react\(\)/);
-		expect(raw).toMatch(/loadEnv/);
-	});
+  it("adds the react test plugin and import-time env loading", () => {
+    const raw = safeRead("vitest.react.mjs");
+    expect(raw).toMatch(/react\(\)/);
+    expect(raw).toMatch(/loadEnv/);
+  });
 });
 
 // --- drizzle.base.mjs — the house drizzle-kit config (D5) ---------------------
 // Field-proven whole; every clause is a spec literal.
 describe("dobby preset — drizzle.base.mjs", () => {
-	it("exists as an exported preset file", () => {
-		expect(existsSync(cliFile("drizzle.base.mjs"))).toBe(true);
-	});
+  it("exists as an exported preset file", () => {
+    expect(existsSync(cliFile("drizzle.base.mjs"))).toBe(true);
+  });
 
-	it("resolves the UNPOOLED URL from both house env-var names", () => {
-		const raw = safeRead("drizzle.base.mjs");
-		expect(raw).toMatch(/DATABASE_URL_UNPOOLED/);
-		expect(raw).toMatch(/POSTGRES_URL_NON_POOLING/);
-	});
+  it("resolves the UNPOOLED URL from both house env-var names", () => {
+    const raw = safeRead("drizzle.base.mjs");
+    expect(raw).toMatch(/DATABASE_URL_UNPOOLED/);
+    expect(raw).toMatch(/POSTGRES_URL_NON_POOLING/);
+  });
 
-	it("targets postgresql with migrations out at ./drizzle", () => {
-		const raw = safeRead("drizzle.base.mjs");
-		expect(raw).toMatch(/"postgresql"/);
-		expect(raw).toMatch(/"\.\/drizzle"/);
-	});
+  it("targets postgresql with migrations out at ./drizzle", () => {
+    const raw = safeRead("drizzle.base.mjs");
+    expect(raw).toMatch(/"postgresql"/);
+    expect(raw).toMatch(/"\.\/drizzle"/);
+  });
 
-	it("globs co-located schema across modules (schema.ts + schema.gen.ts)", () => {
-		const raw = safeRead("drizzle.base.mjs");
-		expect(raw).toMatch(/"\.\/src\/\*\*\/schema\.ts"/);
-		expect(raw).toMatch(/"\.\/src\/\*\*\/schema\.gen\.ts"/);
-	});
+  it("globs co-located schema across modules (schema.ts + schema.gen.ts)", () => {
+    const raw = safeRead("drizzle.base.mjs");
+    expect(raw).toMatch(/"\.\/src\/\*\*\/schema\.ts"/);
+    expect(raw).toMatch(/"\.\/src\/\*\*\/schema\.gen\.ts"/);
+  });
 
-	it("skips the missing-URL hard-fail under CI (config loads to read schema)", () => {
-		expect(safeRead("drizzle.base.mjs")).toMatch(/process\.env\.CI/);
-	});
+  it("skips the missing-URL hard-fail under CI (config loads to read schema)", () => {
+    expect(safeRead("drizzle.base.mjs")).toMatch(/process\.env\.CI/);
+  });
 });
 
 // The consumer-resolved packages the SHIPPED presets import — the single source
@@ -1570,14 +1659,14 @@ describe("dobby preset — drizzle.base.mjs", () => {
 //   @tanstack/devtools-vite  — vite.tanstack.mjs
 //   nitro                    — vite.tanstack.mjs (`nitro/vite`)
 const PRESET_IMPORTED_PACKAGES = [
-	"vite",
-	"vitest",
-	"drizzle-kit",
-	"@vitejs/plugin-react",
-	"@tailwindcss/vite",
-	"@tanstack/react-start",
-	"@tanstack/devtools-vite",
-	"nitro",
+  "vite",
+  "vitest",
+  "drizzle-kit",
+  "@vitejs/plugin-react",
+  "@tailwindcss/vite",
+  "@tanstack/react-start",
+  "@tanstack/devtools-vite",
+  "nitro",
 ] as const;
 
 // --- No consumer-resolved package leaks into cli dependencies ----------------
@@ -1585,26 +1674,26 @@ const PRESET_IMPORTED_PACKAGES = [
 // drizzle-kit / @vitejs are ALWAYS resolved from the consumer's tree at
 // config-load time, never bundled inside dobby.
 describe("dobby dependencies — no consumer-resolved stack packages", () => {
-	for (const name of PRESET_IMPORTED_PACKAGES) {
-		it(`never declares ${name} as a dobby dependency`, () => {
-			const deps = readCliManifest().dependencies ?? {};
-			expect(deps[name]).toBeUndefined();
-		});
-	}
+  for (const name of PRESET_IMPORTED_PACKAGES) {
+    it(`never declares ${name} as a dobby dependency`, () => {
+      const deps = readCliManifest().dependencies ?? {};
+      expect(deps[name]).toBeUndefined();
+    });
+  }
 
-	it("declares no @vitejs/* package at all", () => {
-		const deps = readCliManifest().dependencies ?? {};
-		expect(Object.keys(deps).some((key) => key.startsWith("@vitejs/"))).toBe(
-			false,
-		);
-	});
+  it("declares no @vitejs/* package at all", () => {
+    const deps = readCliManifest().dependencies ?? {};
+    expect(Object.keys(deps).some((key) => key.startsWith("@vitejs/"))).toBe(
+      false
+    );
+  });
 
-	it("declares no @tanstack/* package at all (the tanstack preset resolves them from the consumer)", () => {
-		const deps = readCliManifest().dependencies ?? {};
-		expect(Object.keys(deps).some((key) => key.startsWith("@tanstack/"))).toBe(
-			false,
-		);
-	});
+  it("declares no @tanstack/* package at all (the tanstack preset resolves them from the consumer)", () => {
+    const deps = readCliManifest().dependencies ?? {};
+    expect(Object.keys(deps).some((key) => key.startsWith("@tanstack/"))).toBe(
+      false
+    );
+  });
 });
 
 // --- Every preset-imported package is an OPTIONAL peerDependency --------------
@@ -1617,39 +1706,39 @@ describe("dobby dependencies — no consumer-resolved stack packages", () => {
 // location; `optional: true` keeps hoisted/bun consumers and non-users of a
 // given preset free of install pressure and warnings (ADR-0015 world).
 describe("dobby peerDependencies — preset-imported packages, all optional", () => {
-	for (const name of PRESET_IMPORTED_PACKAGES) {
-		it(`declares ${name} as a peerDependency with a permissive "*" range`, () => {
-			const peers = readCliManifest().peerDependencies ?? {};
-			expect(peers[name]).toBe("*");
-		});
+  for (const name of PRESET_IMPORTED_PACKAGES) {
+    it(`declares ${name} as a peerDependency with a permissive "*" range`, () => {
+      const peers = readCliManifest().peerDependencies ?? {};
+      expect(peers[name]).toBe("*");
+    });
 
-		it(`marks ${name} optional in peerDependenciesMeta`, () => {
-			const meta = readCliManifest().peerDependenciesMeta ?? {};
-			expect(meta[name]).toEqual({ optional: true });
-		});
-	}
+    it(`marks ${name} optional in peerDependenciesMeta`, () => {
+      const meta = readCliManifest().peerDependenciesMeta ?? {};
+      expect(meta[name]).toEqual({ optional: true });
+    });
+  }
 
-	// The dual-Vite invariant holds across the two declaration sites: nothing may
-	// be both a bundled dependency AND a peer (peers resolve from the consumer).
-	it("declares no package as both a bundled dependency and a peerDependency (peers ≠ deps)", () => {
-		const manifest = readCliManifest();
-		const deps = manifest.dependencies ?? {};
-		const peers = manifest.peerDependencies ?? {};
-		for (const name of Object.keys(peers)) {
-			expect(deps[name]).toBeUndefined();
-		}
-	});
+  // The dual-Vite invariant holds across the two declaration sites: nothing may
+  // be both a bundled dependency AND a peer (peers resolve from the consumer).
+  it("declares no package as both a bundled dependency and a peerDependency (peers ≠ deps)", () => {
+    const manifest = readCliManifest();
+    const deps = manifest.dependencies ?? {};
+    const peers = manifest.peerDependencies ?? {};
+    for (const name of Object.keys(peers)) {
+      expect(deps[name]).toBeUndefined();
+    }
+  });
 
-	// peerDependenciesMeta must not drift from peerDependencies: every optional
-	// marker names a package that is actually a declared peer.
-	it("every peerDependenciesMeta entry names a declared peerDependency", () => {
-		const manifest = readCliManifest();
-		const peers = manifest.peerDependencies ?? {};
-		const meta = manifest.peerDependenciesMeta ?? {};
-		for (const name of Object.keys(meta)) {
-			expect(peers[name]).toBeDefined();
-		}
-	});
+  // peerDependenciesMeta must not drift from peerDependencies: every optional
+  // marker names a package that is actually a declared peer.
+  it("every peerDependenciesMeta entry names a declared peerDependency", () => {
+    const manifest = readCliManifest();
+    const peers = manifest.peerDependencies ?? {};
+    const meta = manifest.peerDependenciesMeta ?? {};
+    for (const name of Object.keys(meta)) {
+      expect(peers[name]).toBeDefined();
+    }
+  });
 });
 
 // --- Dogfood: the repo runs its OWN suite through the config-less default (ADR-0015)
@@ -1661,13 +1750,13 @@ describe("dobby peerDependencies — preset-imported packages, all optional", ()
 // default preset it falls back to still ships. The actual `--config` wiring is
 // asserted through the run() seam in the config-less-defaults section below.
 describe("dobby dogfood — config-less default vitest (root vitest.config.ts deleted)", () => {
-	it("no longer ships a root vitest.config.ts (the config-less default replaces it)", () => {
-		expect(existsSync(cliFile("../vitest.config.ts"))).toBe(false);
-	});
+  it("no longer ships a root vitest.config.ts (the config-less default replaces it)", () => {
+    expect(existsSync(cliFile("../vitest.config.ts"))).toBe(false);
+  });
 
-	it("still ships the vitest BASE preset the default falls back to", () => {
-		expect(existsSync(cliFile("vitest.base.mjs"))).toBe(true);
-	});
+  it("still ships the vitest BASE preset the default falls back to", () => {
+    expect(existsSync(cliFile("vitest.base.mjs"))).toBe(true);
+  });
 });
 
 // ===========================================================================
@@ -1705,7 +1794,7 @@ describe("dobby dogfood — config-less default vitest (root vitest.config.ts de
 // tsc type error on LINE 2 (the export decl is line 1), so `typebad.ts:2` is a
 // tsc-only reference. Complements the reused LINTBAD (`==` on line 2 -> biome).
 const TYPEBAD2 =
-	'export function bad(): number {\n  const x: number = "nope";\n  return x;\n}\n';
+  'export function bad(): number {\n  const x: number = "nope";\n  return x;\n}\n';
 
 // Build a THROWAWAY git repo shaped for the full gate: the same isolated biome
 // linter (only noDoubleEquals can fire) and strict tsconfig as the task-3 helper,
@@ -1715,84 +1804,84 @@ const TYPEBAD2 =
 // `checks[]` extras. A bare `git init` is enough (the workroot resolves with no
 // commit). Returns the repo root (realpath-normalized).
 function makeGateRepo(opts: {
-	src: Record<string, string>;
-	deps?: Record<string, string>;
-	devDeps?: Record<string, string>;
-	checks?: Array<{ name: string; run: string }>;
+  src: Record<string, string>;
+  deps?: Record<string, string>;
+  devDeps?: Record<string, string>;
+  checks?: Array<{ name: string; run: string }>;
 }): string {
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-gate-")));
-	execFileSync("git", ["init", "-q"], {
-		cwd: dir,
-		stdio: "ignore",
-		env: gitEnv,
-	});
-	writeFileSync(
-		join(dir, "biome.jsonc"),
-		JSON.stringify(
-			{
-				formatter: { enabled: false },
-				assist: { enabled: false },
-				linter: {
-					enabled: true,
-					rules: {
-						recommended: false,
-						suspicious: { noDoubleEquals: "error" },
-					},
-				},
-			},
-			null,
-			2,
-		),
-	);
-	writeFileSync(
-		join(dir, "tsconfig.json"),
-		JSON.stringify(
-			{
-				compilerOptions: { strict: true, noEmit: true, skipLibCheck: true },
-				include: ["src"],
-			},
-			null,
-			2,
-		),
-	);
-	writeFileSync(
-		join(dir, "package.json"),
-		JSON.stringify(
-			{
-				name: "gate-fixture",
-				private: true,
-				// Entry = every src file -> nothing is "unused" -> knip stays clean.
-				knip: { entry: ["src/**/*.ts"], project: ["src/**/*.ts"] },
-				...(opts.deps ? { dependencies: opts.deps } : {}),
-				...(opts.devDeps ? { devDependencies: opts.devDeps } : {}),
-			},
-			null,
-			2,
-		),
-	);
-	if (opts.checks) {
-		writeFileSync(
-			join(dir, "dobby.config.json"),
-			JSON.stringify({ files: [], checks: opts.checks }, null, 2),
-		);
-	}
-	for (const [rel, content] of Object.entries(opts.src)) {
-		const full = join(dir, rel);
-		mkdirSync(dirname(full), { recursive: true });
-		writeFileSync(full, content);
-	}
-	return dir;
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-gate-")));
+  execFileSync("git", ["init", "-q"], {
+    cwd: dir,
+    env: gitEnv,
+    stdio: "ignore",
+  });
+  writeFileSync(
+    join(dir, "biome.jsonc"),
+    JSON.stringify(
+      {
+        assist: { enabled: false },
+        formatter: { enabled: false },
+        linter: {
+          enabled: true,
+          rules: {
+            recommended: false,
+            suspicious: { noDoubleEquals: "error" },
+          },
+        },
+      },
+      null,
+      2
+    )
+  );
+  writeFileSync(
+    join(dir, "tsconfig.json"),
+    JSON.stringify(
+      {
+        compilerOptions: { noEmit: true, skipLibCheck: true, strict: true },
+        include: ["src"],
+      },
+      null,
+      2
+    )
+  );
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify(
+      {
+        // Entry = every src file -> nothing is "unused" -> knip stays clean.
+        knip: { entry: ["src/**/*.ts"], project: ["src/**/*.ts"] },
+        name: "gate-fixture",
+        private: true,
+        ...(opts.deps ? { dependencies: opts.deps } : {}),
+        ...(opts.devDeps ? { devDependencies: opts.devDeps } : {}),
+      },
+      null,
+      2
+    )
+  );
+  if (opts.checks) {
+    writeFileSync(
+      join(dir, "dobby.config.json"),
+      JSON.stringify({ checks: opts.checks, files: [] }, null, 2)
+    );
+  }
+  for (const [rel, content] of Object.entries(opts.src)) {
+    const full = join(dir, rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  }
+  return dir;
 }
 
 // The combined output of a run — a skip note MAY land on stdout or stderr, so
 // note detection searches both.
 const combined = (r: { stdout: string; stderr: string }) =>
-	`${r.stdout}\n${r.stderr}`;
+  `${r.stdout}\n${r.stderr}`;
 
 // Whether some single line of `text` matches every matcher — the shape of a
 // "single note line" that names one thing and asserts a fact about it.
 function hasNoteLine(text: string, matchers: RegExp[]): boolean {
-	return text.split("\n").some((line) => matchers.every((m) => m.test(line)));
+  return text.split("\n").some((line) => matchers.every((m) => m.test(line)));
 }
 
 // A capability-gated step's skip is a SINGLE note line naming the step and
@@ -1801,7 +1890,7 @@ function hasNoteLine(text: string, matchers: RegExp[]): boolean {
 // gating `vitest` capability). Anchored on the spec's own word "skip".
 const buildSkipNote = (text: string) => hasNoteLine(text, [/build/i, /skip/i]);
 const testSkipNote = (text: string) =>
-	hasNoteLine(text, [/vitest|\btest\b/i, /skip/i]);
+  hasNoteLine(text, [/vitest|\btest\b/i, /skip/i]);
 
 // --- Slice 1 (tracer bullet): --lint subsets the pipeline to biome only -------
 // The headline of this task — "when ANY flag present run ONLY the flagged steps".
@@ -1809,57 +1898,57 @@ const testSkipNote = (text: string) =>
 // the biome finding and NOT the tsc finding (tsc is not in the plan). knip is not
 // selected here, so it never runs — the assertions are contamination-free.
 describe("run() — check command (selective flags subset the pipeline)", () => {
-	let dirty: string;
+  let dirty: string;
 
-	beforeAll(() => {
-		dirty = makeGateRepo({
-			src: {
-				"src/clean.ts": CLEAN,
-				"src/lintbad.ts": LINTBAD,
-				"src/typebad.ts": TYPEBAD2,
-			},
-		});
-	});
+  beforeAll(() => {
+    dirty = makeGateRepo({
+      src: {
+        "src/clean.ts": CLEAN,
+        "src/lintbad.ts": LINTBAD,
+        "src/typebad.ts": TYPEBAD2,
+      },
+    });
+  });
 
-	afterAll(() => {
-		rmSync(dirty, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    rmSync(dirty, { force: true, recursive: true });
+  });
 
-	it("under --lint runs biome ONLY: reports the lint finding (lintbad.ts:2), exits 1, and never surfaces the project's type error", async () => {
-		// The positive facet (biome finding present) is RED until --lint is wired;
-		// the negative facet (typebad absent) is the "only" discriminator — together
-		// they assert the ONE behavior "--lint runs biome and nothing else".
-		const result = await run(["check", "--lint"], dirty);
-		expect(result.exitCode).toBe(1);
-		expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
-		expect(combined(result)).not.toMatch(/typebad/);
-	}, 20000);
+  it("under --lint runs biome ONLY: reports the lint finding (lintbad.ts:2), exits 1, and never surfaces the project's type error", async () => {
+    // The positive facet (biome finding present) is RED until --lint is wired;
+    // the negative facet (typebad absent) is the "only" discriminator — together
+    // they assert the ONE behavior "--lint runs biome and nothing else".
+    const result = await run(["check", "--lint"], dirty);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
+    expect(combined(result)).not.toMatch(/typebad/);
+  }, 20_000);
 
-	it("under --types runs tsc ONLY: reports the type finding (typebad.ts:2), exits 1, and never surfaces the project's lint error", async () => {
-		const result = await run(["check", "--types"], dirty);
-		expect(result.exitCode).toBe(1);
-		expect(result.stdout).toMatch(/typebad\.ts:2\b/);
-		expect(combined(result)).not.toMatch(/lintbad/);
-	}, 20000);
+  it("under --types runs tsc ONLY: reports the type finding (typebad.ts:2), exits 1, and never surfaces the project's lint error", async () => {
+    const result = await run(["check", "--types"], dirty);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/typebad\.ts:2\b/);
+    expect(combined(result)).not.toMatch(/lintbad/);
+  }, 20_000);
 
-	it("combines flags additively and reports EVERY selected tool (does not stop at the first failing one)", async () => {
-		// --lint --types: both tools run and BOTH findings surface. If the gate
-		// stopped at the first failing tool, only one would appear.
-		const result = await run(["check", "--lint", "--types"], dirty);
-		expect(result.exitCode).toBe(1);
-		expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
-		expect(result.stdout).toMatch(/typebad\.ts:2\b/);
-	}, 30000);
+  it("combines flags additively and reports EVERY selected tool (does not stop at the first failing one)", async () => {
+    // --lint --types: both tools run and BOTH findings surface. If the gate
+    // stopped at the first failing tool, only one would appear.
+    const result = await run(["check", "--lint", "--types"], dirty);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
+    expect(result.stdout).toMatch(/typebad\.ts:2\b/);
+  }, 30_000);
 
-	it("under --unused runs knip only: exits 0 with neither the biome nor the tsc finding", async () => {
-		// knip is clean by construction, so the ONLY way lintbad:2 / typebad:2 could
-		// appear is if biome/tsc wrongly ran. Their absence + exit 0 proves --unused
-		// subsets to knip alone.
-		const result = await run(["check", "--unused"], dirty);
-		expect(result.exitCode).toBe(0);
-		expect(combined(result)).not.toMatch(/lintbad\.ts:2\b/);
-		expect(combined(result)).not.toMatch(/typebad\.ts:2\b/);
-	}, 30000);
+  it("under --unused runs knip only: exits 0 with neither the biome nor the tsc finding", async () => {
+    // knip is clean by construction, so the ONLY way lintbad:2 / typebad:2 could
+    // appear is if biome/tsc wrongly ran. Their absence + exit 0 proves --unused
+    // subsets to knip alone.
+    const result = await run(["check", "--unused"], dirty);
+    expect(result.exitCode).toBe(0);
+    expect(combined(result)).not.toMatch(/lintbad\.ts:2\b/);
+    expect(combined(result)).not.toMatch(/typebad\.ts:2\b/);
+  }, 30_000);
 });
 
 // --- Slice 2: capability-gated build/test steps skip with a note --------------
@@ -1871,43 +1960,43 @@ describe("run() — check command (selective flags subset the pipeline)", () => 
 // uncaught). We NEVER run vite build / vitest here (the task forbids it): only
 // the skip path is exercised.
 describe("run() — check command (capability-gated build/test skip with a note)", () => {
-	let dirty: string;
+  let dirty: string;
 
-	beforeAll(() => {
-		// Lint + type errors present, but NO vite/vitest capability.
-		dirty = makeGateRepo({
-			src: { "src/lintbad.ts": LINTBAD, "src/typebad.ts": TYPEBAD2 },
-		});
-	});
+  beforeAll(() => {
+    // Lint + type errors present, but NO vite/vitest capability.
+    dirty = makeGateRepo({
+      src: { "src/lintbad.ts": LINTBAD, "src/typebad.ts": TYPEBAD2 },
+    });
+  });
 
-	afterAll(() => {
-		rmSync(dirty, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    rmSync(dirty, { force: true, recursive: true });
+  });
 
-	it("under --build on a project without the vite capability: exits 0 (skip is not a failure) and runs no other tool", async () => {
-		const result = await run(["check", "--build"], dirty);
-		expect(result.exitCode).toBe(0);
-		// biome/tsc are not in the --build plan, so the repo's errors are untouched.
-		expect(combined(result)).not.toMatch(/lintbad/);
-		expect(combined(result)).not.toMatch(/typebad/);
-	}, 20000);
+  it("under --build on a project without the vite capability: exits 0 (skip is not a failure) and runs no other tool", async () => {
+    const result = await run(["check", "--build"], dirty);
+    expect(result.exitCode).toBe(0);
+    // biome/tsc are not in the --build plan, so the repo's errors are untouched.
+    expect(combined(result)).not.toMatch(/lintbad/);
+    expect(combined(result)).not.toMatch(/typebad/);
+  }, 20_000);
 
-	it("under --build emits a single skip note naming the build step", async () => {
-		const result = await run(["check", "--build"], dirty);
-		expect(buildSkipNote(combined(result))).toBe(true);
-	}, 20000);
+  it("under --build emits a single skip note naming the build step", async () => {
+    const result = await run(["check", "--build"], dirty);
+    expect(buildSkipNote(combined(result))).toBe(true);
+  }, 20_000);
 
-	it("under --test on a project without the vitest capability: exits 0 and runs no other tool", async () => {
-		const result = await run(["check", "--test"], dirty);
-		expect(result.exitCode).toBe(0);
-		expect(combined(result)).not.toMatch(/lintbad/);
-		expect(combined(result)).not.toMatch(/typebad/);
-	}, 20000);
+  it("under --test on a project without the vitest capability: exits 0 and runs no other tool", async () => {
+    const result = await run(["check", "--test"], dirty);
+    expect(result.exitCode).toBe(0);
+    expect(combined(result)).not.toMatch(/lintbad/);
+    expect(combined(result)).not.toMatch(/typebad/);
+  }, 20_000);
 
-	it("under --test emits a single skip note naming the test step", async () => {
-		const result = await run(["check", "--test"], dirty);
-		expect(testSkipNote(combined(result))).toBe(true);
-	}, 20000);
+  it("under --test emits a single skip note naming the test step", async () => {
+    const result = await run(["check", "--test"], dirty);
+    expect(testSkipNote(combined(result))).toBe(true);
+  }, 20_000);
 });
 
 // --- Slice 3: the full gate (no flags) composes every step --------------------
@@ -1917,38 +2006,38 @@ describe("run() — check command (capability-gated build/test skip with a note)
 // skipped with a note. Observing all four (both findings + both skip notes)
 // proves the full pipeline composed.
 describe("run() — check command (full gate, no flags)", () => {
-	let dirty: string;
+  let dirty: string;
 
-	beforeAll(() => {
-		dirty = makeGateRepo({
-			src: {
-				"src/clean.ts": CLEAN,
-				"src/lintbad.ts": LINTBAD,
-				"src/typebad.ts": TYPEBAD2,
-			},
-		});
-	});
+  beforeAll(() => {
+    dirty = makeGateRepo({
+      src: {
+        "src/clean.ts": CLEAN,
+        "src/lintbad.ts": LINTBAD,
+        "src/typebad.ts": TYPEBAD2,
+      },
+    });
+  });
 
-	afterAll(() => {
-		rmSync(dirty, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    rmSync(dirty, { force: true, recursive: true });
+  });
 
-	it("reports BOTH the biome and the tsc findings and exits 1", async () => {
-		const result = await run(["check"], dirty);
-		expect(result.exitCode).toBe(1);
-		expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
-		expect(result.stdout).toMatch(/typebad\.ts:2\b/);
-	}, 30000);
+  it("reports BOTH the biome and the tsc findings and exits 1", async () => {
+    const result = await run(["check"], dirty);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
+    expect(result.stdout).toMatch(/typebad\.ts:2\b/);
+  }, 30_000);
 
-	it("emits a skip note for the build step (project has no vite capability)", async () => {
-		const result = await run(["check"], dirty);
-		expect(buildSkipNote(combined(result))).toBe(true);
-	}, 30000);
+  it("emits a skip note for the build step (project has no vite capability)", async () => {
+    const result = await run(["check"], dirty);
+    expect(buildSkipNote(combined(result))).toBe(true);
+  }, 30_000);
 
-	it("emits a skip note for the test step (project has no vitest capability)", async () => {
-		const result = await run(["check"], dirty);
-		expect(testSkipNote(combined(result))).toBe(true);
-	}, 30000);
+  it("emits a skip note for the test step (project has no vitest capability)", async () => {
+    const result = await run(["check"], dirty);
+    expect(testSkipNote(combined(result))).toBe(true);
+  }, 30_000);
 });
 
 // --- Slice 4: config checks[] extras run last (no flags) / excluded otherwise --
@@ -1959,38 +2048,38 @@ describe("run() — check command (full gate, no flags)", () => {
 // so the with-flag case's absence is meaningful (not vacuously true). Both repos
 // are clean, so no tool failure can interfere with the extra.
 describe("run() — check command (config checks[] extras)", () => {
-	const MARKER = "dobby-extra-marker";
-	const extra = [{ name: "marker", run: `touch ${MARKER}` }];
-	let repoNoFlags: string;
-	let repoWithFlag: string;
+  const MARKER = "dobby-extra-marker";
+  const extra = [{ name: "marker", run: `touch ${MARKER}` }];
+  let repoNoFlags: string;
+  let repoWithFlag: string;
 
-	beforeAll(() => {
-		repoNoFlags = makeGateRepo({
-			src: { "src/clean.ts": CLEAN },
-			checks: extra,
-		});
-		repoWithFlag = makeGateRepo({
-			src: { "src/clean.ts": CLEAN },
-			checks: extra,
-		});
-	});
+  beforeAll(() => {
+    repoNoFlags = makeGateRepo({
+      checks: extra,
+      src: { "src/clean.ts": CLEAN },
+    });
+    repoWithFlag = makeGateRepo({
+      checks: extra,
+      src: { "src/clean.ts": CLEAN },
+    });
+  });
 
-	afterAll(() => {
-		rmSync(repoNoFlags, { recursive: true, force: true });
-		rmSync(repoWithFlag, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    rmSync(repoNoFlags, { force: true, recursive: true });
+    rmSync(repoWithFlag, { force: true, recursive: true });
+  });
 
-	it("runs the config checks[] extras on the full gate (no flags): the extra's marker appears", async () => {
-		await run(["check"], repoNoFlags);
-		expect(existsSync(join(repoNoFlags, MARKER))).toBe(true);
-	}, 30000);
+  it("runs the config checks[] extras on the full gate (no flags): the extra's marker appears", async () => {
+    await run(["check"], repoNoFlags);
+    expect(existsSync(join(repoNoFlags, MARKER))).toBe(true);
+  }, 30_000);
 
-	it("excludes the config checks[] extras when a selective flag is present: the same extra never runs", async () => {
-		const result = await run(["check", "--lint"], repoWithFlag);
-		// --lint on a clean project passes; extras are excluded because a flag is set.
-		expect(result.exitCode).toBe(0);
-		expect(existsSync(join(repoWithFlag, MARKER))).toBe(false);
-	}, 30000);
+  it("excludes the config checks[] extras when a selective flag is present: the same extra never runs", async () => {
+    const result = await run(["check", "--lint"], repoWithFlag);
+    // --lint on a clean project passes; extras are excluded because a flag is set.
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(join(repoWithFlag, MARKER))).toBe(false);
+  }, 30_000);
 });
 
 // --- A2: the vitest hermeticity / missing-keys advisory -----------------------
@@ -2012,192 +2101,192 @@ describe("run() — check command (config checks[] extras)", () => {
 // preset. Independent expected values: the stub's exit code and stdout are written
 // by hand here, and every asserted KEY name is a literal WE put in an env file.
 function makeVitestStubRepo(
-	opts: {
-		reactDefault?: boolean;
-		exitCode?: number;
-		stdout?: (dir: string) => string;
-	} = {},
+  opts: {
+    reactDefault?: boolean;
+    exitCode?: number;
+    stdout?: (dir: string) => string;
+  } = {}
 ): string {
-	const reactDefault = opts.reactDefault ?? true;
-	const devDeps: Record<string, string> = { vitest: "^2.0.0" };
-	if (reactDefault) {
-		devDeps.vite = "^5.0.0";
-		devDeps["@vitejs/plugin-react"] = "^4.0.0";
-	}
-	const dir = makeGateRepo({
-		src: { "src/clean.ts": CLEAN },
-		deps: reactDefault ? { react: "^19.0.0" } : undefined,
-		devDeps,
-	});
-	// A consumer-local vitest whose bin resolves (so runTest spawns it) but never
-	// runs a real suite — it just emits reporter JSON and exits. resolveConsumerBin
-	// reads this package's `bin` field exactly as it reads a real vitest's.
-	const vitestDir = join(dir, "node_modules", "vitest");
-	mkdirSync(vitestDir, { recursive: true });
-	writeFileSync(
-		join(vitestDir, "package.json"),
-		JSON.stringify(
-			{ name: "vitest", version: "0.0.0-stub", bin: { vitest: "./stub.mjs" } },
-			null,
-			2,
-		),
-	);
-	const exitCode = opts.exitCode ?? 0;
-	const stdout = opts.stdout ? opts.stdout(dir) : '{"testResults":[]}';
-	// Ignores every arg (`run --reporter=json --config <preset>`); the spawn's ONLY
-	// job is to make the step "run" so the advisory / A1-parser logic is reached.
-	writeFileSync(
-		join(vitestDir, "stub.mjs"),
-		`process.stdout.write(${JSON.stringify(stdout)});\nprocess.exit(${exitCode});\n`,
-	);
-	return dir;
+  const reactDefault = opts.reactDefault ?? true;
+  const devDeps: Record<string, string> = { vitest: "^2.0.0" };
+  if (reactDefault) {
+    devDeps.vite = "^5.0.0";
+    devDeps["@vitejs/plugin-react"] = "^4.0.0";
+  }
+  const dir = makeGateRepo({
+    deps: reactDefault ? { react: "^19.0.0" } : undefined,
+    devDeps,
+    src: { "src/clean.ts": CLEAN },
+  });
+  // A consumer-local vitest whose bin resolves (so runTest spawns it) but never
+  // runs a real suite — it just emits reporter JSON and exits. resolveConsumerBin
+  // reads this package's `bin` field exactly as it reads a real vitest's.
+  const vitestDir = join(dir, "node_modules", "vitest");
+  mkdirSync(vitestDir, { recursive: true });
+  writeFileSync(
+    join(vitestDir, "package.json"),
+    JSON.stringify(
+      { bin: { vitest: "./stub.mjs" }, name: "vitest", version: "0.0.0-stub" },
+      null,
+      2
+    )
+  );
+  const exitCode = opts.exitCode ?? 0;
+  const stdout = opts.stdout ? opts.stdout(dir) : '{"testResults":[]}';
+  // Ignores every arg (`run --reporter=json --config <preset>`); the spawn's ONLY
+  // job is to make the step "run" so the advisory / A1-parser logic is reached.
+  writeFileSync(
+    join(vitestDir, "stub.mjs"),
+    `process.stdout.write(${JSON.stringify(stdout)});\nprocess.exit(${exitCode});\n`
+  );
+  return dir;
 }
 
 describe("run() — check test step (A2 hermeticity / missing-keys advisory)", () => {
-	it("warns (inherits note) when the react-default step spawns with .env.local and no .env.test", async () => {
-		const repo = makeVitestStubRepo();
-		writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
-		try {
-			const result = await run(["check", "--test"], repo);
-			expect(
-				hasNoteLine(combined(result), [
-					/vitest inherits \.env\.local/,
-					/\.env\.test/,
-				]),
-			).toBe(true);
-		} finally {
-			rmSync(repo, { recursive: true, force: true });
-		}
-	}, 20000);
+  it("warns (inherits note) when the react-default step spawns with .env.local and no .env.test", async () => {
+    const repo = makeVitestStubRepo();
+    writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
+    try {
+      const result = await run(["check", "--test"], repo);
+      expect(
+        hasNoteLine(combined(result), [
+          /vitest inherits \.env\.local/,
+          /\.env\.test/,
+        ])
+      ).toBe(true);
+    } finally {
+      rmSync(repo, { force: true, recursive: true });
+    }
+  }, 20_000);
 
-	it("warns (missing-keys note) when .env.test is an INCOMPLETE subset of .env.local's keys (F1)", async () => {
-		const repo = makeVitestStubRepo();
-		// .env.local declares DATABASE_URL + AUTH_SECRET (one line uses `export`); the
-		// committed .env.test covers ONLY DATABASE_URL → AUTH_SECRET is still sourced
-		// from .env.local (which CI lacks).
-		writeFileSync(
-			join(repo, ".env.local"),
-			"export DATABASE_URL=postgres://local\nAUTH_SECRET=abc\n",
-		);
-		writeFileSync(join(repo, ".env.test"), "DATABASE_URL=postgres://test\n");
-		try {
-			const result = await run(["check", "--test"], repo);
-			// The missing KEY (AUTH_SECRET) is named; the shared key is not "missing".
-			expect(
-				hasNoteLine(combined(result), [
-					/\.env\.test is missing/,
-					/AUTH_SECRET/,
-					/CI runs without them/,
-				]),
-			).toBe(true);
-			// KEY names only — no VALUE is ever read/compared/logged (both files carry
-			// `postgres://…` values; none may leak into the advisory).
-			expect(combined(result)).not.toMatch(/postgres/);
-		} finally {
-			rmSync(repo, { recursive: true, force: true });
-		}
-	}, 20000);
+  it("warns (missing-keys note) when .env.test is an INCOMPLETE subset of .env.local's keys (F1)", async () => {
+    const repo = makeVitestStubRepo();
+    // .env.local declares DATABASE_URL + AUTH_SECRET (one line uses `export`); the
+    // committed .env.test covers ONLY DATABASE_URL → AUTH_SECRET is still sourced
+    // from .env.local (which CI lacks).
+    writeFileSync(
+      join(repo, ".env.local"),
+      "export DATABASE_URL=postgres://local\nAUTH_SECRET=abc\n"
+    );
+    writeFileSync(join(repo, ".env.test"), "DATABASE_URL=postgres://test\n");
+    try {
+      const result = await run(["check", "--test"], repo);
+      // The missing KEY (AUTH_SECRET) is named; the shared key is not "missing".
+      expect(
+        hasNoteLine(combined(result), [
+          /\.env\.test is missing/,
+          /AUTH_SECRET/,
+          /CI runs without them/,
+        ])
+      ).toBe(true);
+      // KEY names only — no VALUE is ever read/compared/logged (both files carry
+      // `postgres://…` values; none may leak into the advisory).
+      expect(combined(result)).not.toMatch(/postgres/);
+    } finally {
+      rmSync(repo, { force: true, recursive: true });
+    }
+  }, 20_000);
 
-	it("is silent when .env.test is a COMPLETE superset of .env.local's keys (hermetic)", async () => {
-		const repo = makeVitestStubRepo();
-		writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
-		// Superset: every .env.local key is covered, plus an extra.
-		writeFileSync(
-			join(repo, ".env.test"),
-			"DATABASE_URL=postgres://test\nEXTRA=1\n",
-		);
-		try {
-			const result = await run(["check", "--test"], repo);
-			expect(combined(result)).not.toMatch(/vitest inherits/);
-			expect(combined(result)).not.toMatch(/\.env\.test is missing/);
-		} finally {
-			rmSync(repo, { recursive: true, force: true });
-		}
-	}, 20000);
+  it("is silent when .env.test is a COMPLETE superset of .env.local's keys (hermetic)", async () => {
+    const repo = makeVitestStubRepo();
+    writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
+    // Superset: every .env.local key is covered, plus an extra.
+    writeFileSync(
+      join(repo, ".env.test"),
+      "DATABASE_URL=postgres://test\nEXTRA=1\n"
+    );
+    try {
+      const result = await run(["check", "--test"], repo);
+      expect(combined(result)).not.toMatch(/vitest inherits/);
+      expect(combined(result)).not.toMatch(/\.env\.test is missing/);
+    } finally {
+      rmSync(repo, { force: true, recursive: true });
+    }
+  }, 20_000);
 
-	it("is silent when there is no .env.local", async () => {
-		const repo = makeVitestStubRepo();
-		try {
-			const result = await run(["check", "--test"], repo);
-			expect(combined(result)).not.toMatch(/vitest inherits/);
-			expect(combined(result)).not.toMatch(/\.env\.test is missing/);
-		} finally {
-			rmSync(repo, { recursive: true, force: true });
-		}
-	}, 20000);
+  it("is silent when there is no .env.local", async () => {
+    const repo = makeVitestStubRepo();
+    try {
+      const result = await run(["check", "--test"], repo);
+      expect(combined(result)).not.toMatch(/vitest inherits/);
+      expect(combined(result)).not.toMatch(/\.env\.test is missing/);
+    } finally {
+      rmSync(repo, { force: true, recursive: true });
+    }
+  }, 20_000);
 
-	it("does NOT advise when the step degrades (consumer vitest bin missing — never spawned) (F2)", async () => {
-		// react-default deps make the config selection `default(react)` (F3 would pass),
-		// but WITHOUT the node_modules stub the bin is null → runTest degrades without
-		// spawning → the advisory must stay silent. This isolates the F2 spawn gate.
-		const repo = makeGateRepo({
-			src: { "src/clean.ts": CLEAN },
-			deps: { react: "^19.0.0" },
-			devDeps: {
-				vitest: "^2.0.0",
-				vite: "^5.0.0",
-				"@vitejs/plugin-react": "^4.0.0",
-			},
-		});
-		writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
-		try {
-			const result = await run(["check", "--test"], repo);
-			expect(combined(result)).not.toMatch(/vitest inherits/);
-			expect(combined(result)).not.toMatch(/\.env\.test is missing/);
-		} finally {
-			rmSync(repo, { recursive: true, force: true });
-		}
-	}, 20000);
+  it("does NOT advise when the step degrades (consumer vitest bin missing — never spawned) (F2)", async () => {
+    // react-default deps make the config selection `default(react)` (F3 would pass),
+    // but WITHOUT the node_modules stub the bin is null → runTest degrades without
+    // spawning → the advisory must stay silent. This isolates the F2 spawn gate.
+    const repo = makeGateRepo({
+      deps: { react: "^19.0.0" },
+      devDeps: {
+        "@vitejs/plugin-react": "^4.0.0",
+        vite: "^5.0.0",
+        vitest: "^2.0.0",
+      },
+      src: { "src/clean.ts": CLEAN },
+    });
+    writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
+    try {
+      const result = await run(["check", "--test"], repo);
+      expect(combined(result)).not.toMatch(/vitest inherits/);
+      expect(combined(result)).not.toMatch(/\.env\.test is missing/);
+    } finally {
+      rmSync(repo, { force: true, recursive: true });
+    }
+  }, 20_000);
 
-	it("is silent under the BASE preset even when the step spawns with .env.local and no .env.test (F3)", async () => {
-		// vitest present + stub → the step SPAWNS, but no react/@vitejs/plugin-react →
-		// the SELECTED config is the BASE preset (`default`), which does NOT call
-		// loadEnv, so F3 keeps the advisory silent regardless of the env files.
-		const repo = makeVitestStubRepo({ reactDefault: false });
-		writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
-		try {
-			const result = await run(["check", "--test"], repo);
-			expect(combined(result)).not.toMatch(/vitest inherits/);
-			expect(combined(result)).not.toMatch(/\.env\.test is missing/);
-			// The step DID run under the base default (proves it wasn't silent via a skip).
-			expect(combined(result)).toContain("vitest=default");
-			expect(combined(result)).not.toContain("vitest=default(react)");
-		} finally {
-			rmSync(repo, { recursive: true, force: true });
-		}
-	}, 20000);
+  it("is silent under the BASE preset even when the step spawns with .env.local and no .env.test (F3)", async () => {
+    // vitest present + stub → the step SPAWNS, but no react/@vitejs/plugin-react →
+    // the SELECTED config is the BASE preset (`default`), which does NOT call
+    // loadEnv, so F3 keeps the advisory silent regardless of the env files.
+    const repo = makeVitestStubRepo({ reactDefault: false });
+    writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
+    try {
+      const result = await run(["check", "--test"], repo);
+      expect(combined(result)).not.toMatch(/vitest inherits/);
+      expect(combined(result)).not.toMatch(/\.env\.test is missing/);
+      // The step DID run under the base default (proves it wasn't silent via a skip).
+      expect(combined(result)).toContain("vitest=default");
+      expect(combined(result)).not.toContain("vitest=default(react)");
+    } finally {
+      rmSync(repo, { force: true, recursive: true });
+    }
+  }, 20_000);
 
-	it("summarizes a failed suite parsed from the stubbed reporter JSON (A1 parser seam)", async () => {
-		// The stub exits 1 with a file-level load failure referencing an EXISTING repo
-		// file, so parseVitestFailures + vitestSummary run end-to-end (the A1 parser was
-		// previously unreachable in CI without a real vitest — the stub bin is its seam).
-		const repo = makeVitestStubRepo({
-			exitCode: 1,
-			stdout: (dir) => {
-				const suite = join(dir, "src", "clean.ts");
-				return JSON.stringify({
-					testResults: [
-						{
-							name: suite,
-							status: "failed",
-							message: `AssertionError: boom\n    at load (${suite}:1:1)`,
-						},
-					],
-				});
-			},
-		});
-		try {
-			const result = await run(["check", "--test"], repo);
-			expect(result.exitCode).toBe(1);
-			expect(combined(result)).toMatch(/test: 1 suite\(s\) failed/);
-			expect(combined(result)).toMatch(/src\/clean\.ts/);
-			expect(combined(result)).toMatch(/boom/);
-			// The parsed summary is used, NOT a raw JSON tail dump.
-			expect(combined(result)).not.toMatch(/testResults/);
-		} finally {
-			rmSync(repo, { recursive: true, force: true });
-		}
-	}, 20000);
+  it("summarizes a failed suite parsed from the stubbed reporter JSON (A1 parser seam)", async () => {
+    // The stub exits 1 with a file-level load failure referencing an EXISTING repo
+    // file, so parseVitestFailures + vitestSummary run end-to-end (the A1 parser was
+    // previously unreachable in CI without a real vitest — the stub bin is its seam).
+    const repo = makeVitestStubRepo({
+      exitCode: 1,
+      stdout: (dir) => {
+        const suite = join(dir, "src", "clean.ts");
+        return JSON.stringify({
+          testResults: [
+            {
+              message: `AssertionError: boom\n    at load (${suite}:1:1)`,
+              name: suite,
+              status: "failed",
+            },
+          ],
+        });
+      },
+    });
+    try {
+      const result = await run(["check", "--test"], repo);
+      expect(result.exitCode).toBe(1);
+      expect(combined(result)).toMatch(/test: 1 suite\(s\) failed/);
+      expect(combined(result)).toMatch(/src\/clean\.ts/);
+      expect(combined(result)).toMatch(/boom/);
+      // The parsed summary is used, NOT a raw JSON tail dump.
+      expect(combined(result)).not.toMatch(/testResults/);
+    } finally {
+      rmSync(repo, { force: true, recursive: true });
+    }
+  }, 20_000);
 });
 
 // --- Slice 5 (review-added): knip's finding-PRESENT path fails the gate --------
@@ -2221,54 +2310,54 @@ describe("run() — check test step (A2 hermeticity / missing-keys advisory)", (
 // export declaration sits on line 1, so an `orphan.ts` reference here can only be
 // knip's unused-file finding (biome/tsc are not in the --unused plan anyway).
 function makeKnipDirtyRepo(): string {
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-knip-")));
-	execFileSync("git", ["init", "-q"], {
-		cwd: dir,
-		stdio: "ignore",
-		env: gitEnv,
-	});
-	writeFileSync(
-		join(dir, "package.json"),
-		JSON.stringify(
-			{
-				name: "knip-dirty-fixture",
-				private: true,
-				// Single entry + project spanning all of src => src/orphan.ts (imported by
-				// nothing, and not itself an entry) is a deterministically-unused FILE.
-				knip: { entry: ["src/index.ts"], project: ["src/**/*.ts"] },
-			},
-			null,
-			2,
-		),
-	);
-	mkdirSync(join(dir, "src"), { recursive: true });
-	writeFileSync(
-		join(dir, "src", "index.ts"),
-		"export const used = 1;\nconsole.log(used);\n",
-	);
-	writeFileSync(join(dir, "src", "orphan.ts"), "export const orphan = 3;\n");
-	return dir;
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-knip-")));
+  execFileSync("git", ["init", "-q"], {
+    cwd: dir,
+    env: gitEnv,
+    stdio: "ignore",
+  });
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify(
+      {
+        // Single entry + project spanning all of src => src/orphan.ts (imported by
+        // nothing, and not itself an entry) is a deterministically-unused FILE.
+        knip: { entry: ["src/index.ts"], project: ["src/**/*.ts"] },
+        name: "knip-dirty-fixture",
+        private: true,
+      },
+      null,
+      2
+    )
+  );
+  mkdirSync(join(dir, "src"), { recursive: true });
+  writeFileSync(
+    join(dir, "src", "index.ts"),
+    "export const used = 1;\nconsole.log(used);\n"
+  );
+  writeFileSync(join(dir, "src", "orphan.ts"), "export const orphan = 3;\n");
+  return dir;
 }
 
 describe("run() — check command (knip finding-present path fails the gate)", () => {
-	let dirty: string;
+  let dirty: string;
 
-	beforeAll(() => {
-		dirty = makeKnipDirtyRepo();
-	});
+  beforeAll(() => {
+    dirty = makeKnipDirtyRepo();
+  });
 
-	afterAll(() => {
-		rmSync(dirty, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    rmSync(dirty, { force: true, recursive: true });
+  });
 
-	it("under --unused reports the unused file finding (orphan.ts) via knip and exits 1", async () => {
-		const result = await run(["check", "--unused"], dirty);
-		// The reducer mapped a real knip issue to a finding, so the gate FAILS (exit 1)
-		// and knip is the reporting tool naming orphan.ts.
-		expect(result.exitCode).toBe(1);
-		expect(result.stdout).toMatch(/knip/i);
-		expect(result.stdout).toMatch(/orphan\.ts/);
-	}, 30000);
+  it("under --unused reports the unused file finding (orphan.ts) via knip and exits 1", async () => {
+    const result = await run(["check", "--unused"], dirty);
+    // The reducer mapped a real knip issue to a finding, so the gate FAILS (exit 1)
+    // and knip is the reporting tool naming orphan.ts.
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/knip/i);
+    expect(result.stdout).toMatch(/orphan\.ts/);
+  }, 30_000);
 });
 
 // --- Slice 6 (field-friction fix): a findingless nonzero step surfaces the tool's
@@ -2289,70 +2378,70 @@ describe("run() — check command (knip finding-present path fails the gate)", (
 // stderr marker are BOTH written into the stub by hand here, never derived by the
 // code under test.
 function makeBuildCrashRepo(): string {
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-buildcrash-")));
-	execFileSync("git", ["init", "-q"], {
-		cwd: dir,
-		stdio: "ignore",
-		env: gitEnv,
-	});
-	// The `vite` dependency gives the repo the vite capability, so checkPipeline
-	// keeps the build step (skipNote null) instead of skipping it.
-	writeFileSync(
-		join(dir, "package.json"),
-		JSON.stringify(
-			{
-				name: "buildcrash-fixture",
-				private: true,
-				dependencies: { vite: "^5.0.0" },
-			},
-			null,
-			2,
-		),
-	);
-	// A fake consumer-local vite whose bin CRASHES: writes a marker to stderr and
-	// exits 127 (the "command found but broken" shape), exercising the findingless-
-	// failure path without ever running a real vite build.
-	const viteDir = join(dir, "node_modules", "vite");
-	mkdirSync(viteDir, { recursive: true });
-	writeFileSync(
-		join(viteDir, "package.json"),
-		JSON.stringify(
-			{ name: "vite", version: "0.0.0-fake", bin: { vite: "./bin.mjs" } },
-			null,
-			2,
-		),
-	);
-	writeFileSync(
-		join(viteDir, "bin.mjs"),
-		'process.stderr.write("VITE_CRASH_MARKER: simulated config error\\n");\nprocess.exit(127);\n',
-	);
-	return dir;
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-buildcrash-")));
+  execFileSync("git", ["init", "-q"], {
+    cwd: dir,
+    env: gitEnv,
+    stdio: "ignore",
+  });
+  // The `vite` dependency gives the repo the vite capability, so checkPipeline
+  // keeps the build step (skipNote null) instead of skipping it.
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify(
+      {
+        dependencies: { vite: "^5.0.0" },
+        name: "buildcrash-fixture",
+        private: true,
+      },
+      null,
+      2
+    )
+  );
+  // A fake consumer-local vite whose bin CRASHES: writes a marker to stderr and
+  // exits 127 (the "command found but broken" shape), exercising the findingless-
+  // failure path without ever running a real vite build.
+  const viteDir = join(dir, "node_modules", "vite");
+  mkdirSync(viteDir, { recursive: true });
+  writeFileSync(
+    join(viteDir, "package.json"),
+    JSON.stringify(
+      { bin: { vite: "./bin.mjs" }, name: "vite", version: "0.0.0-fake" },
+      null,
+      2
+    )
+  );
+  writeFileSync(
+    join(viteDir, "bin.mjs"),
+    'process.stderr.write("VITE_CRASH_MARKER: simulated config error\\n");\nprocess.exit(127);\n'
+  );
+  return dir;
 }
 
 describe("run() — check command (findingless nonzero step surfaces the raw tail)", () => {
-	let repo: string;
+  let repo: string;
 
-	beforeAll(() => {
-		repo = makeBuildCrashRepo();
-	});
+  beforeAll(() => {
+    repo = makeBuildCrashRepo();
+  });
 
-	afterAll(() => {
-		rmSync(repo, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    rmSync(repo, { force: true, recursive: true });
+  });
 
-	it("under --build, a crashed vite bin (exit 127, no findings) propagates the exit code and surfaces its stderr tail with a clear label", async () => {
-		const result = await run(["check", "--build"], repo);
-		// The real (fake) exit code propagates — proving it is NOT a hardcoded 1 and
-		// that this is genuinely the findingless-failure path, not a skip.
-		expect(result.exitCode).toBe(127);
-		// The note names the step + code, and the raw tail is clearly labeled…
-		expect(result.stdout).toMatch(/build: failed \(exit 127\)/);
-		expect(result.stdout).toMatch(/raw output \(tail\)/i);
-		// …and carries the child's actual stderr (the marker WE wrote into the stub).
-		expect(result.stdout).toContain(
-			"VITE_CRASH_MARKER: simulated config error",
-		);
-	}, 20000);
+  it("under --build, a crashed vite bin (exit 127, no findings) propagates the exit code and surfaces its stderr tail with a clear label", async () => {
+    const result = await run(["check", "--build"], repo);
+    // The real (fake) exit code propagates — proving it is NOT a hardcoded 1 and
+    // that this is genuinely the findingless-failure path, not a skip.
+    expect(result.exitCode).toBe(127);
+    // The note names the step + code, and the raw tail is clearly labeled…
+    expect(result.stdout).toMatch(/build: failed \(exit 127\)/);
+    expect(result.stdout).toMatch(/raw output \(tail\)/i);
+    // …and carries the child's actual stderr (the marker WE wrote into the stub).
+    expect(result.stdout).toContain(
+      "VITE_CRASH_MARKER: simulated config error"
+    );
+  }, 20_000);
 });
 
 // ===========================================================================
@@ -2395,21 +2484,21 @@ describe("run() — check command (findingless nonzero step surfaces the raw tai
 // A formatter-only biome config: single quotes -> double quotes, semicolons
 // added. A formatting-only file is SAFELY auto-fixed with no remaining finding.
 const BIOME_FORMAT_CONFIG = {
-	formatter: { enabled: true, indentStyle: "space", indentWidth: 2 },
-	assist: { enabled: false },
-	javascript: { formatter: { quoteStyle: "double", semicolons: "always" } },
-	linter: { enabled: false },
+  assist: { enabled: false },
+  formatter: { enabled: true, indentStyle: "space", indentWidth: 2 },
+  javascript: { formatter: { quoteStyle: "double", semicolons: "always" } },
+  linter: { enabled: false },
 };
 
 // A linter-only biome config: noDoubleEquals=error. `==` has an UNSAFE fix only,
 // so `biome check --write` (SAFE fixes) can never remove it — the finding stays.
 const BIOME_LINT_CONFIG = {
-	formatter: { enabled: false },
-	assist: { enabled: false },
-	linter: {
-		enabled: true,
-		rules: { recommended: false, suspicious: { noDoubleEquals: "error" } },
-	},
+  assist: { enabled: false },
+  formatter: { enabled: false },
+  linter: {
+    enabled: true,
+    rules: { recommended: false, suspicious: { noDoubleEquals: "error" } },
+  },
 };
 
 // A file with a purely-formatting problem (single quote + missing semicolon).
@@ -2428,208 +2517,210 @@ const hookDirs: string[] = [];
 // repo as the workroot. Returns the realpath-normalized root (matching git's
 // resolved top-level).
 function makeHookRepo(opts: {
-	biome: unknown;
-	files: Record<string, string>;
-	config?: unknown;
+  biome: unknown;
+  files: Record<string, string>;
+  config?: unknown;
 }): string {
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-hook-")));
-	hookDirs.push(dir);
-	execFileSync("git", ["init", "-q"], {
-		cwd: dir,
-		stdio: "ignore",
-		env: gitEnv,
-	});
-	writeFileSync(join(dir, "biome.jsonc"), JSON.stringify(opts.biome, null, 2));
-	if (opts.config !== undefined) {
-		writeFileSync(
-			join(dir, "dobby.config.json"),
-			JSON.stringify(opts.config, null, 2),
-		);
-	}
-	for (const [rel, content] of Object.entries(opts.files)) {
-		const full = join(dir, rel);
-		mkdirSync(dirname(full), { recursive: true });
-		writeFileSync(full, content);
-	}
-	return dir;
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-hook-")));
+  hookDirs.push(dir);
+  execFileSync("git", ["init", "-q"], {
+    cwd: dir,
+    env: gitEnv,
+    stdio: "ignore",
+  });
+  writeFileSync(join(dir, "biome.jsonc"), JSON.stringify(opts.biome, null, 2));
+  if (opts.config !== undefined) {
+    writeFileSync(
+      join(dir, "dobby.config.json"),
+      JSON.stringify(opts.config, null, 2)
+    );
+  }
+  for (const [rel, content] of Object.entries(opts.files)) {
+    const full = join(dir, rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  }
+  return dir;
 }
 
 // The PostToolUse hook payload as a stdin string: `{ tool_name, tool_input:
 // { file_path }, ... }`. `filePath === undefined` omits file_path entirely (the
 // "no file_path" guard).
 function hookStdin(filePath: string | undefined): string {
-	const toolInput = filePath === undefined ? {} : { file_path: filePath };
-	return JSON.stringify({
-		session_id: "hook-test",
-		tool_name: "Edit",
-		tool_input: toolInput,
-	});
+  const toolInput = filePath === undefined ? {} : { file_path: filePath };
+  return JSON.stringify({
+    session_id: "hook-test",
+    tool_input: toolInput,
+    tool_name: "Edit",
+  });
 }
 
 describe("run() — check --hook (edit-time safe auto-fix)", () => {
-	afterAll(() => {
-		for (const dir of hookDirs) rmSync(dir, { recursive: true, force: true });
-		hookDirs.length = 0;
-	});
+  afterAll(() => {
+    for (const dir of hookDirs) {
+      rmSync(dir, { force: true, recursive: true });
+    }
+    hookDirs.length = 0;
+  });
 
-	// --- Tracer bullet: auto-fixable issue fixed on disk, exit 0, silent ---------
-	// The headline behavior — formatting is fixed silently so it never bothers the
-	// model. Proves the whole path: seam accepts stdin, parses the payload, resolves
-	// the workroot, sees the config marker, accepts the .ts extension, runs biome
-	// --write, mutates the file, and exits 0 with nothing surfaced.
-	it("applies biome's safe fix to the edited file on disk and exits 0 without surfacing anything to the model", async () => {
-		const repo = makeHookRepo({
-			biome: BIOME_FORMAT_CONFIG,
-			config: { files: [] },
-			files: { "greeting.ts": FIXABLE_SOURCE },
-		});
-		const file = join(repo, "greeting.ts");
-		const result = await run(["check", "--hook"], repo, hookStdin(file));
-		expect(result.exitCode).toBe(0);
-		// File mutated on disk to the known-good fixed form (double quotes + semicolon).
-		const after = readFileSync(file, "utf8");
-		expect(after).toContain('"hello"');
-		expect(after).not.toContain("'hello'");
-		// Silent on the model-facing channel: no findings surfaced on the fixed path.
-		expect(result.stderr).toBe("");
-	}, 20000);
+  // --- Tracer bullet: auto-fixable issue fixed on disk, exit 0, silent ---------
+  // The headline behavior — formatting is fixed silently so it never bothers the
+  // model. Proves the whole path: seam accepts stdin, parses the payload, resolves
+  // the workroot, sees the config marker, accepts the .ts extension, runs biome
+  // --write, mutates the file, and exits 0 with nothing surfaced.
+  it("applies biome's safe fix to the edited file on disk and exits 0 without surfacing anything to the model", async () => {
+    const repo = makeHookRepo({
+      biome: BIOME_FORMAT_CONFIG,
+      config: { files: [] },
+      files: { "greeting.ts": FIXABLE_SOURCE },
+    });
+    const file = join(repo, "greeting.ts");
+    const result = await run(["check", "--hook"], repo, hookStdin(file));
+    expect(result.exitCode).toBe(0);
+    // File mutated on disk to the known-good fixed form (double quotes + semicolon).
+    const after = readFileSync(file, "utf8");
+    expect(after).toContain('"hello"');
+    expect(after).not.toContain("'hello'");
+    // Silent on the model-facing channel: no findings surfaced on the fixed path.
+    expect(result.stderr).toBe("");
+  }, 20_000);
 
-	// --- Unfixable finding: exit 2 (the code Claude Code surfaces to the model) --
-	it("exits 2 when an unfixable finding remains after the safe fix", async () => {
-		const repo = makeHookRepo({
-			biome: BIOME_LINT_CONFIG,
-			config: { files: [] },
-			files: { "eq.ts": LINTBAD },
-		});
-		const result = await run(
-			["check", "--hook"],
-			repo,
-			hookStdin(join(repo, "eq.ts")),
-		);
-		expect(result.exitCode).toBe(2);
-	}, 20000);
+  // --- Unfixable finding: exit 2 (the code Claude Code surfaces to the model) --
+  it("exits 2 when an unfixable finding remains after the safe fix", async () => {
+    const repo = makeHookRepo({
+      biome: BIOME_LINT_CONFIG,
+      config: { files: [] },
+      files: { "eq.ts": LINTBAD },
+    });
+    const result = await run(
+      ["check", "--hook"],
+      repo,
+      hookStdin(join(repo, "eq.ts"))
+    );
+    expect(result.exitCode).toBe(2);
+  }, 20_000);
 
-	it("surfaces the unfixable finding on stderr (the channel Claude Code shows the model on exit 2)", async () => {
-		// The whole point of exit 2 is that Claude Code feeds STDERR back to the
-		// model — findings routed to stdout would leave the model blind, so stderr is
-		// the required channel, not an implementation detail.
-		const repo = makeHookRepo({
-			biome: BIOME_LINT_CONFIG,
-			config: { files: [] },
-			files: { "eq.ts": LINTBAD },
-		});
-		const result = await run(
-			["check", "--hook"],
-			repo,
-			hookStdin(join(repo, "eq.ts")),
-		);
-		expect(result.stderr).toMatch(/eq\.ts/);
-	}, 20000);
+  it("surfaces the unfixable finding on stderr (the channel Claude Code shows the model on exit 2)", async () => {
+    // The whole point of exit 2 is that Claude Code feeds STDERR back to the
+    // model — findings routed to stdout would leave the model blind, so stderr is
+    // the required channel, not an implementation detail.
+    const repo = makeHookRepo({
+      biome: BIOME_LINT_CONFIG,
+      config: { files: [] },
+      files: { "eq.ts": LINTBAD },
+    });
+    const result = await run(
+      ["check", "--hook"],
+      repo,
+      hookStdin(join(repo, "eq.ts"))
+    );
+    expect(result.stderr).toMatch(/eq\.ts/);
+  }, 20_000);
 
-	// --- Guard: no dobby.config.json marker -> silent exit 0, file untouched -----
-	// The config file is the "dobby project" gate. Without it the hook must not run
-	// biome at all — the fixable file stays byte-for-byte unchanged (proving the
-	// guard fired BEFORE biome, not that biome had nothing to fix).
-	it("exits 0 silently and never touches the file when the repo has no dobby.config.json", async () => {
-		const repo = makeHookRepo({
-			biome: BIOME_FORMAT_CONFIG,
-			// No config marker -> the "dobby project" gate fails.
-			files: { "greeting.ts": FIXABLE_SOURCE },
-		});
-		const file = join(repo, "greeting.ts");
-		const result = await run(["check", "--hook"], repo, hookStdin(file));
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toBe("");
-		expect(result.stderr).toBe("");
-		expect(readFileSync(file, "utf8")).toBe(FIXABLE_SOURCE);
-	}, 20000);
+  // --- Guard: no dobby.config.json marker -> silent exit 0, file untouched -----
+  // The config file is the "dobby project" gate. Without it the hook must not run
+  // biome at all — the fixable file stays byte-for-byte unchanged (proving the
+  // guard fired BEFORE biome, not that biome had nothing to fix).
+  it("exits 0 silently and never touches the file when the repo has no dobby.config.json", async () => {
+    const repo = makeHookRepo({
+      biome: BIOME_FORMAT_CONFIG,
+      // No config marker -> the "dobby project" gate fails.
+      files: { "greeting.ts": FIXABLE_SOURCE },
+    });
+    const file = join(repo, "greeting.ts");
+    const result = await run(["check", "--hook"], repo, hookStdin(file));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+    expect(readFileSync(file, "utf8")).toBe(FIXABLE_SOURCE);
+  }, 20_000);
 
-	// --- Guard: unparsable stdin payload -> silent exit 0 ------------------------
-	it("exits 0 silently on an unparsable (garbage) stdin payload", async () => {
-		const repo = makeHookRepo({
-			biome: BIOME_FORMAT_CONFIG,
-			config: { files: [] },
-			files: { "greeting.ts": FIXABLE_SOURCE },
-		});
-		const result = await run(["check", "--hook"], repo, "this is not json {{{");
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toBe("");
-		expect(result.stderr).toBe("");
-	});
+  // --- Guard: unparsable stdin payload -> silent exit 0 ------------------------
+  it("exits 0 silently on an unparsable (garbage) stdin payload", async () => {
+    const repo = makeHookRepo({
+      biome: BIOME_FORMAT_CONFIG,
+      config: { files: [] },
+      files: { "greeting.ts": FIXABLE_SOURCE },
+    });
+    const result = await run(["check", "--hook"], repo, "this is not json {{{");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  });
 
-	// --- Guard: valid JSON but no file_path -> silent exit 0 ---------------------
-	it("exits 0 silently when the payload carries no file_path", async () => {
-		const repo = makeHookRepo({
-			biome: BIOME_FORMAT_CONFIG,
-			config: { files: [] },
-			files: { "greeting.ts": FIXABLE_SOURCE },
-		});
-		const result = await run(["check", "--hook"], repo, hookStdin(undefined));
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toBe("");
-		expect(result.stderr).toBe("");
-	});
+  // --- Guard: valid JSON but no file_path -> silent exit 0 ---------------------
+  it("exits 0 silently when the payload carries no file_path", async () => {
+    const repo = makeHookRepo({
+      biome: BIOME_FORMAT_CONFIG,
+      config: { files: [] },
+      files: { "greeting.ts": FIXABLE_SOURCE },
+    });
+    const result = await run(["check", "--hook"], repo, hookStdin(undefined));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  });
 
-	// --- Guard: file_path points at a nonexistent file -> silent exit 0 ---------
-	it("exits 0 silently when the edited file does not exist", async () => {
-		const repo = makeHookRepo({
-			biome: BIOME_FORMAT_CONFIG,
-			config: { files: [] },
-			files: { "greeting.ts": FIXABLE_SOURCE },
-		});
-		const result = await run(
-			["check", "--hook"],
-			repo,
-			hookStdin(join(repo, "ghost.ts")),
-		);
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toBe("");
-		expect(result.stderr).toBe("");
-	});
+  // --- Guard: file_path points at a nonexistent file -> silent exit 0 ---------
+  it("exits 0 silently when the edited file does not exist", async () => {
+    const repo = makeHookRepo({
+      biome: BIOME_FORMAT_CONFIG,
+      config: { files: [] },
+      files: { "greeting.ts": FIXABLE_SOURCE },
+    });
+    const result = await run(
+      ["check", "--hook"],
+      repo,
+      hookStdin(join(repo, "ghost.ts"))
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  });
 
-	// --- Guard: extension outside ts,tsx,js,jsx,json,jsonc,css -> silent exit 0 --
-	// `.mjs` is NOT in the spec's supported list, yet biome WOULD format it (single
-	// quote -> double, confirmed out-of-band). An unchanged file + exit 0 proves
-	// the extension guard fired BEFORE biome, not that biome had nothing to do.
-	it("exits 0 silently and never touches a file whose extension is outside the allowed list (.mjs)", async () => {
-		const repo = makeHookRepo({
-			biome: BIOME_FORMAT_CONFIG,
-			config: { files: [] },
-			files: { "thing.mjs": FIXABLE_SOURCE },
-		});
-		const file = join(repo, "thing.mjs");
-		const result = await run(["check", "--hook"], repo, hookStdin(file));
-		expect(result.exitCode).toBe(0);
-		expect(readFileSync(file, "utf8")).toBe(FIXABLE_SOURCE);
-	}, 20000);
+  // --- Guard: extension outside ts,tsx,js,jsx,json,jsonc,css -> silent exit 0 --
+  // `.mjs` is NOT in the spec's supported list, yet biome WOULD format it (single
+  // quote -> double, confirmed out-of-band). An unchanged file + exit 0 proves
+  // the extension guard fired BEFORE biome, not that biome had nothing to do.
+  it("exits 0 silently and never touches a file whose extension is outside the allowed list (.mjs)", async () => {
+    const repo = makeHookRepo({
+      biome: BIOME_FORMAT_CONFIG,
+      config: { files: [] },
+      files: { "thing.mjs": FIXABLE_SOURCE },
+    });
+    const file = join(repo, "thing.mjs");
+    const result = await run(["check", "--hook"], repo, hookStdin(file));
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(FIXABLE_SOURCE);
+  }, 20_000);
 
-	// --- Guard (Decisions note): file_path outside the workroot -> exit 0 --------
-	// The edited file lives OUTSIDE the project's workroot. With the repo's own
-	// noDoubleEquals config, an UNGUARDED hook would lint the out-of-tree `==` and
-	// exit 2 (confirmed out-of-band: biome lints an absolute out-of-tree path using
-	// the project cwd's config). The guard must instead exit 0 — never block on a
-	// file the project does not own. [Derived from the Decisions note "the hook
-	// payload file_path may live outside the workroot — guard exits 0", NOT the
-	// explicit guard list; flagged for the implementor/reviewer.]
-	it("exits 0 when the edited file lives outside the project workroot", async () => {
-		const repo = makeHookRepo({
-			biome: BIOME_LINT_CONFIG,
-			config: { files: [] },
-			files: {},
-		});
-		// A sibling temp dir, NOT under the repo — the edited file's real home.
-		const outside = realpathSync(
-			mkdtempSync(join(tmpdir(), "dobby-hook-out-")),
-		);
-		hookDirs.push(outside);
-		writeFileSync(join(outside, "eq.ts"), LINTBAD);
-		const result = await run(
-			["check", "--hook"],
-			repo,
-			hookStdin(join(outside, "eq.ts")),
-		);
-		expect(result.exitCode).toBe(0);
-	}, 20000);
+  // --- Guard (Decisions note): file_path outside the workroot -> exit 0 --------
+  // The edited file lives OUTSIDE the project's workroot. With the repo's own
+  // noDoubleEquals config, an UNGUARDED hook would lint the out-of-tree `==` and
+  // exit 2 (confirmed out-of-band: biome lints an absolute out-of-tree path using
+  // the project cwd's config). The guard must instead exit 0 — never block on a
+  // file the project does not own. [Derived from the Decisions note "the hook
+  // payload file_path may live outside the workroot — guard exits 0", NOT the
+  // explicit guard list; flagged for the implementor/reviewer.]
+  it("exits 0 when the edited file lives outside the project workroot", async () => {
+    const repo = makeHookRepo({
+      biome: BIOME_LINT_CONFIG,
+      config: { files: [] },
+      files: {},
+    });
+    // A sibling temp dir, NOT under the repo — the edited file's real home.
+    const outside = realpathSync(
+      mkdtempSync(join(tmpdir(), "dobby-hook-out-"))
+    );
+    hookDirs.push(outside);
+    writeFileSync(join(outside, "eq.ts"), LINTBAD);
+    const result = await run(
+      ["check", "--hook"],
+      repo,
+      hookStdin(join(outside, "eq.ts"))
+    );
+    expect(result.exitCode).toBe(0);
+  }, 20_000);
 });
 
 // ===========================================================================
@@ -2649,65 +2740,65 @@ describe("run() — check --hook (edit-time safe auto-fix)", () => {
 const pluginHooksDir = resolve(cliDir, "..", "plugin", "hooks");
 
 interface HooksFile {
-	hooks?: {
-		PostToolUse?: Array<{
-			matcher?: string;
-			hooks?: Array<{ type?: string; command?: string }>;
-		}>;
-	};
+  hooks?: {
+    PostToolUse?: Array<{
+      matcher?: string;
+      hooks?: Array<{ type?: string; command?: string }>;
+    }>;
+  };
 }
 
 // Read + parse plugin/hooks/hooks.json. Throws (a RED test failure) if the file
 // is missing or unparseable — transitively enforcing "hooks.json stays parseable
 // JSON" without a separate green-before-impl assertion.
 function readHooks(): { raw: string; parsed: HooksFile } {
-	const raw = readFileSync(resolve(pluginHooksDir, "hooks.json"), "utf8");
-	return { raw, parsed: JSON.parse(raw) as HooksFile };
+  const raw = readFileSync(resolve(pluginHooksDir, "hooks.json"), "utf8");
+  return { parsed: JSON.parse(raw) as HooksFile, raw };
 }
 
 // Every command string under a PostToolUse matcher that targets Edit or Write.
 // An empty result (matcher removed, or JSON reshaped) fails the command
 // assertions below — so the Edit|Write matcher is enforced transitively.
 function editHookCommands(parsed: HooksFile): string[] {
-	const out: string[] = [];
-	for (const group of parsed.hooks?.PostToolUse ?? []) {
-		if (!/Edit|Write/.test(group.matcher ?? "")) {
-			continue;
-		}
-		for (const hook of group.hooks ?? []) {
-			if (typeof hook.command === "string") {
-				out.push(hook.command);
-			}
-		}
-	}
-	return out;
+  const out: string[] = [];
+  for (const group of parsed.hooks?.PostToolUse ?? []) {
+    if (!/Edit|Write/.test(group.matcher ?? "")) {
+      continue;
+    }
+    for (const hook of group.hooks ?? []) {
+      if (typeof hook.command === "string") {
+        out.push(hook.command);
+      }
+    }
+  }
+  return out;
 }
 
 describe("plugin hooks.json — rewired to dobby check --hook", () => {
-	it("invokes the LOCAL dobby bin with `check --hook`, never bunx", () => {
-		const commands = editHookCommands(readHooks().parsed).join("\n");
-		expect(commands).toContain("node_modules/.bin/dobby");
-		expect(commands).toContain("check --hook");
-		// bunx would fetch the foreign npm `dobby` in a non-dobby repo — forbidden.
-		expect(commands).not.toContain("bunx");
-	});
+  it("invokes the LOCAL dobby bin with `check --hook`, never bunx", () => {
+    const commands = editHookCommands(readHooks().parsed).join("\n");
+    expect(commands).toContain("node_modules/.bin/dobby");
+    expect(commands).toContain("check --hook");
+    // bunx would fetch the foreign npm `dobby` in a non-dobby repo — forbidden.
+    expect(commands).not.toContain("bunx");
+  });
 
-	it("guards on the dobby.config.json project marker before running", () => {
-		const commands = editHookCommands(readHooks().parsed).join("\n");
-		expect(commands).toContain("dobby.config.json");
-	});
+  it("guards on the dobby.config.json project marker before running", () => {
+    const commands = editHookCommands(readHooks().parsed).join("\n");
+    expect(commands).toContain("dobby.config.json");
+  });
 
-	it("no longer references the deleted vp-check-changes hook", () => {
-		const raw = readHooks().raw;
-		expect(raw).not.toContain("vp-check-changes");
-		expect(raw).not.toContain("vp check");
-	});
+  it("no longer references the deleted vp-check-changes hook", () => {
+    const { raw } = readHooks();
+    expect(raw).not.toContain("vp-check-changes");
+    expect(raw).not.toContain("vp check");
+  });
 
-	it("deletes the vp-check-changes.sh script", () => {
-		expect(existsSync(resolve(pluginHooksDir, "vp-check-changes.sh"))).toBe(
-			false,
-		);
-	});
+  it("deletes the vp-check-changes.sh script", () => {
+    expect(existsSync(resolve(pluginHooksDir, "vp-check-changes.sh"))).toBe(
+      false
+    );
+  });
 });
 
 // ===========================================================================
@@ -2765,7 +2856,7 @@ const SKIP_INSTALL = "DOBBY_SKIP_INSTALL";
 
 // Run `git` in a specific dir with the isolated gitEnv (reused from the env slices).
 function gitIn(dir: string, ...args: string[]): void {
-	execFileSync("git", args, { cwd: dir, stdio: "ignore", env: gitEnv });
+  execFileSync("git", args, { cwd: dir, env: gitEnv, stdio: "ignore" });
 }
 
 // Build a THROWAWAY main checkout + a LINKED git worktree. The worktree is checked
@@ -2777,44 +2868,44 @@ function gitIn(dir: string, ...args: string[]): void {
 // (its own workroot). Returns { main, worktree }, both realpath-normalized to match
 // git's resolved top-level. Registers both dirs in `track` for afterAll cleanup.
 function makeWorktree(
-	track: string[],
-	opts: {
-		worktreeinclude?: string[];
-		mainFiles?: Record<string, string>;
-		config?: unknown;
-	} = {},
+  track: string[],
+  opts: {
+    worktreeinclude?: string[];
+    mainFiles?: Record<string, string>;
+    config?: unknown;
+  } = {}
 ): { main: string; worktree: string } {
-	const main = realpathSync(mkdtempSync(join(tmpdir(), "dobby-setup-main-")));
-	track.push(main);
-	gitIn(main, "init", "-q");
-	gitIn(main, "checkout", "-q", "-b", "main");
-	writeFileSync(join(main, "README"), "scratch\n");
-	gitIn(main, "add", "-A");
-	gitIn(main, "commit", "-q", "-m", "init");
+  const main = realpathSync(mkdtempSync(join(tmpdir(), "dobby-setup-main-")));
+  track.push(main);
+  gitIn(main, "init", "-q");
+  gitIn(main, "checkout", "-q", "-b", "main");
+  writeFileSync(join(main, "README"), "scratch\n");
+  gitIn(main, "add", "-A");
+  gitIn(main, "commit", "-q", "-m", "init");
 
-	// A sibling path (same real parent, guaranteed non-existent) — git creates it.
-	gitIn(main, "worktree", "add", "-q", "-b", "feature", `${main}-wt`);
-	const worktree = realpathSync(`${main}-wt`);
-	track.push(worktree);
+  // A sibling path (same real parent, guaranteed non-existent) — git creates it.
+  gitIn(main, "worktree", "add", "-q", "-b", "feature", `${main}-wt`);
+  const worktree = realpathSync(`${main}-wt`);
+  track.push(worktree);
 
-	if (opts.worktreeinclude) {
-		writeFileSync(
-			join(main, ".worktreeinclude"),
-			`${opts.worktreeinclude.join("\n")}\n`,
-		);
-	}
-	for (const [rel, content] of Object.entries(opts.mainFiles ?? {})) {
-		const full = join(main, rel);
-		mkdirSync(dirname(full), { recursive: true });
-		writeFileSync(full, content);
-	}
-	if (opts.config !== undefined) {
-		writeFileSync(
-			join(worktree, "dobby.config.json"),
-			JSON.stringify(opts.config, null, 2),
-		);
-	}
-	return { main, worktree };
+  if (opts.worktreeinclude) {
+    writeFileSync(
+      join(main, ".worktreeinclude"),
+      `${opts.worktreeinclude.join("\n")}\n`
+    );
+  }
+  for (const [rel, content] of Object.entries(opts.mainFiles ?? {})) {
+    const full = join(main, rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  }
+  if (opts.config !== undefined) {
+    writeFileSync(
+      join(worktree, "dobby.config.json"),
+      JSON.stringify(opts.config, null, 2)
+    );
+  }
+  return { main, worktree };
 }
 
 // A plain (NON-worktree) throwaway git repo — the workroot IS the repo root.
@@ -2822,34 +2913,34 @@ function makeWorktree(
 // linked worktree the re-materialization step must not fire regardless. `config`
 // is written at the root. Returns the realpath-normalized root; registered in track.
 function makeSetupRepo(
-	track: string[],
-	opts: {
-		worktreeinclude?: string[];
-		files?: Record<string, string>;
-		config?: unknown;
-	} = {},
+  track: string[],
+  opts: {
+    worktreeinclude?: string[];
+    files?: Record<string, string>;
+    config?: unknown;
+  } = {}
 ): string {
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-setup-repo-")));
-	track.push(dir);
-	gitIn(dir, "init", "-q");
-	if (opts.worktreeinclude) {
-		writeFileSync(
-			join(dir, ".worktreeinclude"),
-			`${opts.worktreeinclude.join("\n")}\n`,
-		);
-	}
-	for (const [rel, content] of Object.entries(opts.files ?? {})) {
-		const full = join(dir, rel);
-		mkdirSync(dirname(full), { recursive: true });
-		writeFileSync(full, content);
-	}
-	if (opts.config !== undefined) {
-		writeFileSync(
-			join(dir, "dobby.config.json"),
-			JSON.stringify(opts.config, null, 2),
-		);
-	}
-	return dir;
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-setup-repo-")));
+  track.push(dir);
+  gitIn(dir, "init", "-q");
+  if (opts.worktreeinclude) {
+    writeFileSync(
+      join(dir, ".worktreeinclude"),
+      `${opts.worktreeinclude.join("\n")}\n`
+    );
+  }
+  for (const [rel, content] of Object.entries(opts.files ?? {})) {
+    const full = join(dir, rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  }
+  if (opts.config !== undefined) {
+    writeFileSync(
+      join(dir, "dobby.config.json"),
+      JSON.stringify(opts.config, null, 2)
+    );
+  }
+  return dir;
 }
 
 // --- The setup-REMOVAL contract (the behavioral setup-phase slices live in the
@@ -2860,43 +2951,45 @@ function makeSetupRepo(
 // advertised in the usage Commands list. Every expected substring is the spec's
 // literal wording.
 describe("run() — setup command is removed (folded into up)", () => {
-	const dirs: string[] = [];
+  const dirs: string[] = [];
 
-	afterAll(() => {
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	// A plain (non-git) temp dir. While `setup` is STILL wired (pre-removal) it
-	// fails the git precondition (requireWorkroot) with a git error BEFORE any bun
-	// install — so verifying this RED never runs a real install. Post-removal it is
-	// the unknown command. Either way, no install is attempted here.
-	function plainDir(): string {
-		const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-nosetup-")));
-		dirs.push(dir);
-		return dir;
-	}
+  // A plain (non-git) temp dir. While `setup` is STILL wired (pre-removal) it
+  // fails the git precondition (requireWorkroot) with a git error BEFORE any bun
+  // install — so verifying this RED never runs a real install. Post-removal it is
+  // the unknown command. Either way, no install is attempted here.
+  function plainDir(): string {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-nosetup-")));
+    dirs.push(dir);
+    return dir;
+  }
 
-	it("treats `setup` as an unknown command with the upgrade hint (exit 1, empty stdout)", async () => {
-		const result = await run(["setup"], plainDir());
-		expect(result.exitCode).toBe(1);
-		expect(result.stdout).toBe("");
-		// The discriminating red: pre-removal `setup` runs its own git-precondition
-		// path (a git error, not this literal); post-removal it is the unknown command.
-		expect(result.stderr).toContain("unknown command: setup");
-		expect(result.stderr).toContain(upgradeHint);
-	}, 20000);
+  it("treats `setup` as an unknown command with the upgrade hint (exit 1, empty stdout)", async () => {
+    const result = await run(["setup"], plainDir());
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    // The discriminating red: pre-removal `setup` runs its own git-precondition
+    // path (a git error, not this literal); post-removal it is the unknown command.
+    expect(result.stderr).toContain("unknown command: setup");
+    expect(result.stderr).toContain(upgradeHint);
+  }, 20_000);
 
-	it("no longer advertises `setup` in the usage Commands list", async () => {
-		// Line-anchored to the Commands column (the same shape the bare-usage `env`
-		// check and the commit-removal check use), so the Options block never counts.
-		const result = await run([], plainDir());
-		expect(result.exitCode).toBe(0);
-		const advertisesSetup = result.stdout
-			.split("\n")
-			.some((line) => /^\s+setup\b/.test(line));
-		expect(advertisesSetup).toBe(false);
-	}, 20000);
+  it("no longer advertises `setup` in the usage Commands list", async () => {
+    // Line-anchored to the Commands column (the same shape the bare-usage `env`
+    // check and the commit-removal check use), so the Options block never counts.
+    const result = await run([], plainDir());
+    expect(result.exitCode).toBe(0);
+    const advertisesSetup = result.stdout
+      .split("\n")
+      .some((line) => /^\s+setup\b/.test(line));
+    expect(advertisesSetup).toBe(false);
+  }, 20_000);
 });
 
 // ===========================================================================
@@ -2942,19 +3035,19 @@ describe("run() — setup command is removed (folded into up)", () => {
 // and dry-run plans it WITHOUT spawning (exit 0 despite the tool being absent). No
 // supabase form exists anywhere.
 describe("run() — db:* dispatch (drizzle is the one db tool, resolving the short names)", () => {
-	it("resolves db:push to `drizzle-kit push` in a drizzle-only project (dry-run, exit 0, no spawn)", async () => {
-		const result = await run(
-			["db:push", "--dry-run"],
-			fixture("db-drizzle-only"),
-		);
-		// exit 0 proves dry-run PLANNED without spawning: a real spawn of the ABSENT
-		// drizzle-kit would exit nonzero (Slice 2 asserts exactly that).
-		expect(result.exitCode).toBe(0);
-		expect(result.stderr).not.toContain("unknown command");
-		expect(result.stdout).toContain("drizzle-kit push");
-		// The supabase tool is gone entirely: `db:push` is drizzle's, never supabase's.
-		expect(result.stdout).not.toContain("supabase db push");
-	});
+  it("resolves db:push to `drizzle-kit push` in a drizzle-only project (dry-run, exit 0, no spawn)", async () => {
+    const result = await run(
+      ["db:push", "--dry-run"],
+      fixture("db-drizzle-only")
+    );
+    // exit 0 proves dry-run PLANNED without spawning: a real spawn of the ABSENT
+    // drizzle-kit would exit nonzero (Slice 2 asserts exactly that).
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toContain("unknown command");
+    expect(result.stdout).toContain("drizzle-kit push");
+    // The supabase tool is gone entirely: `db:push` is drizzle's, never supabase's.
+    expect(result.stdout).not.toContain("supabase db push");
+  });
 });
 
 // --- Slice 1b: a supabase-only project has NO db capability now ------------------
@@ -2962,27 +3055,27 @@ describe("run() — db:* dispatch (drizzle is the one db tool, resolving the sho
 // resolves NO db tasks: every `db:*` name is an error (exit 1), NOT a supabase
 // command. This is the crisp removal proof for the deleted supabase task set.
 describe("run() — db:* dispatch (a supabase dependency no longer yields any db task)", () => {
-	it("errors (exit 1) on db:push in a supabase-only project — no db capability, and NEVER `supabase db push`", async () => {
-		const result = await run(
-			["db:push", "--dry-run"],
-			fixture("db-supabase-removed"),
-		);
-		expect(result.exitCode).toBe(1);
-		// The deleted task set: the old supabase mapping must not resurface.
-		expect(combined(result)).not.toContain("supabase db push");
-		expect(combined(result)).not.toContain("supabase db");
-	});
+  it("errors (exit 1) on db:push in a supabase-only project — no db capability, and NEVER `supabase db push`", async () => {
+    const result = await run(
+      ["db:push", "--dry-run"],
+      fixture("db-supabase-removed")
+    );
+    expect(result.exitCode).toBe(1);
+    // The deleted task set: the old supabase mapping must not resurface.
+    expect(combined(result)).not.toContain("supabase db push");
+    expect(combined(result)).not.toContain("supabase db");
+  });
 
-	it("errors (exit 1) on db:start in a supabase-only project — the supabase task set is gone", async () => {
-		// db:start was a supabase-only task; with supabase-local removed it is simply an
-		// unknown db task in a project that has no db capability.
-		const result = await run(
-			["db:start", "--dry-run"],
-			fixture("db-supabase-removed"),
-		);
-		expect(result.exitCode).toBe(1);
-		expect(combined(result)).not.toContain("supabase start");
-	});
+  it("errors (exit 1) on db:start in a supabase-only project — the supabase task set is gone", async () => {
+    // db:start was a supabase-only task; with supabase-local removed it is simply an
+    // unknown db task in a project that has no db capability.
+    const result = await run(
+      ["db:start", "--dry-run"],
+      fixture("db-supabase-removed")
+    );
+    expect(result.exitCode).toBe(1);
+    expect(combined(result)).not.toContain("supabase start");
+  });
 });
 
 // --- Slice 2: a real db:* run without the tool installed FAILS at spawn ----------
@@ -2992,11 +3085,11 @@ describe("run() — db:* dispatch (a supabase dependency no longer yields any db
 // fails). db:push IS a known drizzle task here, so the failure is a spawn/resolution
 // failure, NEVER the unknown-command path (the anti-tautology guard).
 describe("run() — db:* dispatch (real run without --dry-run fails at spawn)", () => {
-	it("exits nonzero when db:push runs (no --dry-run) in a project whose db tool is not installed", async () => {
-		const result = await run(["db:push"], fixture("db-drizzle-only"));
-		expect(result.exitCode).not.toBe(0);
-		expect(result.stderr).not.toContain("unknown command");
-	}, 20000);
+  it("exits nonzero when db:push runs (no --dry-run) in a project whose db tool is not installed", async () => {
+    const result = await run(["db:push"], fixture("db-drizzle-only"));
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).not.toContain("unknown command");
+  }, 20_000);
 });
 
 // --- Slice 2b: the full drizzle task map (the ONLY db task set now) --------------
@@ -3004,37 +3097,37 @@ describe("run() — db:* dispatch (real run without --dry-run fails at spawn)", 
 // is the complete drizzle-only surface — the SHORT names always map to drizzle-kit,
 // with no supabase forms and no `db:types` codegen (that was supabase).
 describe("run() — db:* dispatch (drizzle task map)", () => {
-	const cases: Array<[string, string]> = [
-		["db:generate", "drizzle-kit generate"],
-		["db:migrate", "drizzle-kit migrate"],
-		["db:push", "drizzle-kit push"],
-		["db:check", "drizzle-kit check"],
-		["db:studio", "drizzle-kit studio"],
-	];
-	for (const [name, resolved] of cases) {
-		it(`resolves ${name} to \`${resolved}\``, async () => {
-			const result = await run([name, "--dry-run"], fixture("db-drizzle-only"));
-			expect(result.exitCode).toBe(0);
-			expect(result.stdout).toContain(resolved);
-		});
-	}
+  const cases: [string, string][] = [
+    ["db:generate", "drizzle-kit generate"],
+    ["db:migrate", "drizzle-kit migrate"],
+    ["db:push", "drizzle-kit push"],
+    ["db:check", "drizzle-kit check"],
+    ["db:studio", "drizzle-kit studio"],
+  ];
+  for (const [name, resolved] of cases) {
+    it(`resolves ${name} to \`${resolved}\``, async () => {
+      const result = await run([name, "--dry-run"], fixture("db-drizzle-only"));
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(resolved);
+    });
+  }
 });
 
 // --- Slice 3: an unknown db:* task errors with the available names listed --------
 describe("run() — db:* dispatch (an unknown db:* task errors, exit 1, listing what IS available)", () => {
-	it("errors (exit 1) on an unknown db:* task and lists the available drizzle task names", async () => {
-		const result = await run(
-			["db:frobnicate", "--dry-run"],
-			fixture("db-drizzle-only"),
-		);
-		expect(result.exitCode).toBe(1);
-		// "unknown -> exit 1 with the available names listed": the drizzle set. The
-		// input was db:frobnicate, so a `db:push` in the output can only be the
-		// available-names list (independent of the rejected input).
-		const out = combined(result);
-		expect(out).toContain("db:push");
-		expect(out).toContain("db:studio");
-	});
+  it("errors (exit 1) on an unknown db:* task and lists the available drizzle task names", async () => {
+    const result = await run(
+      ["db:frobnicate", "--dry-run"],
+      fixture("db-drizzle-only")
+    );
+    expect(result.exitCode).toBe(1);
+    // "unknown -> exit 1 with the available names listed": the drizzle set. The
+    // input was db:frobnicate, so a `db:push` in the output can only be the
+    // available-names list (independent of the rejected input).
+    const out = combined(result);
+    expect(out).toContain("db:push");
+    expect(out).toContain("db:studio");
+  });
 });
 
 // --- Slice 8: `update` is a UNIVERSAL command in the usage text ------------------
@@ -3047,13 +3140,13 @@ describe("run() — db:* dispatch (an unknown db:* task errors, exit 1, listing 
 // listed regardless of capabilities), asserted here; the interactive `dobby update`
 // (taze --interactive, inherit stdio) is never auto-invoked in tests.
 describe("run() — usage text: update is universal", () => {
-	it("advertises the update command in the usage text (always, regardless of capabilities)", async () => {
-		const result = await run([], cwd);
-		const advertisesUpdate = result.stdout
-			.split("\n")
-			.some((line) => /^\s+update\b/.test(line));
-		expect(advertisesUpdate).toBe(true);
-	});
+  it("advertises the update command in the usage text (always, regardless of capabilities)", async () => {
+    const result = await run([], cwd);
+    const advertisesUpdate = result.stdout
+      .split("\n")
+      .some((line) => /^\s+update\b/.test(line));
+    expect(advertisesUpdate).toBe(true);
+  });
 });
 
 // ===========================================================================
@@ -3116,7 +3209,7 @@ describe("run() — usage text: update is universal", () => {
 // unrelated line (e.g. a printed `cwd:` path containing "dev-admin") satisfying
 // only some matchers.
 const portlessMainLine = (text: string) =>
-	hasNoteLine(text, [/portless run/, /vite/, /\bdev\b/]);
+  hasNoteLine(text, [/portless run/, /vite/, /\bdev\b/]);
 
 // --- Slice 1 (tracer bullet): dev --dry-run plans via the CAPTURE path ---------
 // The headline of this task — `dobby dev --dry-run` is wired, routes through the
@@ -3124,15 +3217,15 @@ const portlessMainLine = (text: string) =>
 // exits 0. The captured `portless run` in stdout is the proof: a streaming path
 // would have inherited stdio and returned empty stdout.
 describe("run() — dev command (--dry-run routes through the capture path)", () => {
-	it("prints a dev plan on stdout and exits 0 (not the unknown-command branch)", async () => {
-		const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
-		expect(result.exitCode).toBe(0);
-		// Anti-tautology guard: an unimplemented `dev` ALSO exits nonzero via the
-		// unknown-command branch — assert this is the genuine dev/dry-run path.
-		expect(result.stderr).not.toContain("unknown command");
-		// The plan came back as DATA through run() (capture path), not inherited stdio.
-		expect(result.stdout).toMatch(/portless run/);
-	});
+  it("prints a dev plan on stdout and exits 0 (not the unknown-command branch)", async () => {
+    const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
+    expect(result.exitCode).toBe(0);
+    // Anti-tautology guard: an unimplemented `dev` ALSO exits nonzero via the
+    // unknown-command branch — assert this is the genuine dev/dry-run path.
+    expect(result.stderr).not.toContain("unknown command");
+    // The plan came back as DATA through run() (capture path), not inherited stdio.
+    expect(result.stdout).toMatch(/portless run/);
+  });
 });
 
 // --- Slice 2: the surviving composition (vite main + react-email secondary) -----
@@ -3141,43 +3234,43 @@ describe("run() — dev command (--dry-run routes through the capture path)", ()
 // the canonical dir. There is NO prereq phase and NO convex secondary. dev-admin
 // declares drizzle + react-email + vite + vitest.
 describe("run() — dev command (surviving composition: vite main + react-email secondary)", () => {
-	it("wraps the vite dev in `portless run … dev` as the main process", async () => {
-		const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
-		expect(result.exitCode).toBe(0);
-		expect(portlessMainLine(result.stdout)).toBe(true);
-	});
+  it("wraps the vite dev in `portless run … dev` as the main process", async () => {
+    const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
+    expect(result.exitCode).toBe(0);
+    expect(portlessMainLine(result.stdout)).toBe(true);
+  });
 
-	it("includes the `.vite` cache-clear as part of the inferred vite dev, before the portless main", async () => {
-		const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
-		const out = result.stdout;
-		// The cache-clear removes node_modules/.vite (admin's preamble, now inferred).
-		expect(hasNoteLine(out, [/rm/, /node_modules\/\.vite/])).toBe(true);
-		// Ordering: the cache-clear precedes the portless-wrapped dev (spec: cache
-		// clear "then" portless run).
-		expect(out.indexOf("node_modules/.vite")).toBeLessThan(
-			out.indexOf("portless run"),
-		);
-	});
+  it("includes the `.vite` cache-clear as part of the inferred vite dev, before the portless main", async () => {
+    const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
+    const out = result.stdout;
+    // The cache-clear removes node_modules/.vite (admin's preamble, now inferred).
+    expect(hasNoteLine(out, [/rm/, /node_modules\/\.vite/])).toBe(true);
+    // Ordering: the cache-clear precedes the portless-wrapped dev (spec: cache
+    // clear "then" portless run).
+    expect(out.indexOf("node_modules/.vite")).toBeLessThan(
+      out.indexOf("portless run")
+    );
+  });
 
-	it("plans `email dev --dir src/emails` as a concurrent secondary for a react-email project", async () => {
-		// The canonical emails dir `src/emails` is a spec Decision; one line names the
-		// email dev command AND that dir. react-email is now the ONLY dev secondary.
-		const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
-		expect(hasNoteLine(result.stdout, [/email dev/, /--dir src\/emails/])).toBe(
-			true,
-		);
-	});
+  it("plans `email dev --dir src/emails` as a concurrent secondary for a react-email project", async () => {
+    // The canonical emails dir `src/emails` is a spec Decision; one line names the
+    // email dev command AND that dir. react-email is now the ONLY dev secondary.
+    const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
+    expect(hasNoteLine(result.stdout, [/email dev/, /--dir src\/emails/])).toBe(
+      true
+    );
+  });
 
-	it("does NOT wrap the react-email secondary in portless (portless wraps only the main)", async () => {
-		// Discriminator for "portless wraps ONLY the main process": the email secondary
-		// line must not carry portless.
-		const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
-		const emailLine = result.stdout
-			.split("\n")
-			.find((line) => line.includes("email dev"));
-		expect(emailLine, "expected an `email dev` line in the plan").toBeDefined();
-		expect(emailLine).not.toContain("portless");
-	});
+  it("does NOT wrap the react-email secondary in portless (portless wraps only the main)", async () => {
+    // Discriminator for "portless wraps ONLY the main process": the email secondary
+    // line must not carry portless.
+    const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
+    const emailLine = result.stdout
+      .split("\n")
+      .find((line) => line.includes("email dev"));
+    expect(emailLine, "expected an `email dev` line in the plan").toBeDefined();
+    expect(emailLine).not.toContain("portless");
+  });
 });
 
 // --- Slice 3: removal proof — supabase prereq & convex secondary are GONE --------
@@ -3187,24 +3280,24 @@ describe("run() — dev command (surviving composition: vite main + react-email 
 // were deleted, not merely gated on absence. The portless main is the positive
 // anchor proving a real plan was produced, so the two negatives are not vacuous.
 describe("run() — dev command (removed: no supabase prereq, no convex secondary)", () => {
-	it("produces a real vite dev plan (portless main present) as the positive anchor", async () => {
-		const result = await run(["dev", "--dry-run"], fixture("dev-removed"));
-		expect(result.exitCode).toBe(0);
-		expect(result.stderr).not.toContain("unknown command");
-		expect(portlessMainLine(result.stdout)).toBe(true);
-	});
+  it("produces a real vite dev plan (portless main present) as the positive anchor", async () => {
+    const result = await run(["dev", "--dry-run"], fixture("dev-removed"));
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toContain("unknown command");
+    expect(portlessMainLine(result.stdout)).toBe(true);
+  });
 
-	it("plans NO `supabase start` prerequisite even though a supabase dependency is declared", async () => {
-		const result = await run(["dev", "--dry-run"], fixture("dev-removed"));
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).not.toContain("supabase start");
-	});
+  it("plans NO `supabase start` prerequisite even though a supabase dependency is declared", async () => {
+    const result = await run(["dev", "--dry-run"], fixture("dev-removed"));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain("supabase start");
+  });
 
-	it("plans NO `convex dev` secondary even though a convex dependency is declared", async () => {
-		const result = await run(["dev", "--dry-run"], fixture("dev-removed"));
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).not.toContain("convex dev");
-	});
+  it("plans NO `convex dev` secondary even though a convex dependency is declared", async () => {
+    const result = await run(["dev", "--dry-run"], fixture("dev-removed"));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain("convex dev");
+  });
 });
 
 // --- Slice 4: no app capability (no vite) => exit 1 'nothing to run' ------------
@@ -3214,22 +3307,22 @@ describe("run() — dev command (removed: no supabase prereq, no convex secondar
 // secondary is not an app. Safe to run WITHOUT --dry-run: no vite means the gate
 // returns before any spawn, and the fixture's email bin is not installed anyway.
 describe("run() — dev command (no app capability: nothing to run)", () => {
-	it("exits 1 with 'nothing to run' for a project without the vite (app) capability", async () => {
-		const result = await run(["dev"], fixture("dev-no-app"));
-		expect(result.exitCode).toBe(1);
-		// Anti-tautology guard: NOT the unknown-command branch (which also exits 1).
-		expect(result.stderr).not.toContain("unknown command");
-		expect(combined(result)).toMatch(/nothing to run/i);
-	});
+  it("exits 1 with 'nothing to run' for a project without the vite (app) capability", async () => {
+    const result = await run(["dev"], fixture("dev-no-app"));
+    expect(result.exitCode).toBe(1);
+    // Anti-tautology guard: NOT the unknown-command branch (which also exits 1).
+    expect(result.stderr).not.toContain("unknown command");
+    expect(combined(result)).toMatch(/nothing to run/i);
+  });
 
-	it("exits 1 with 'nothing to run' under --dry-run too when there is no app to run", async () => {
-		// A dry run of nothing is still nothing — the no-app gate holds regardless of
-		// --dry-run. [Inferred from combining "No app => exit 1 'nothing to run'" with
-		// "--dry-run prints the plan"; flagged for the implementor/reviewer.]
-		const result = await run(["dev", "--dry-run"], fixture("dev-no-app"));
-		expect(result.exitCode).toBe(1);
-		expect(combined(result)).toMatch(/nothing to run/i);
-	});
+  it("exits 1 with 'nothing to run' under --dry-run too when there is no app to run", async () => {
+    // A dry run of nothing is still nothing — the no-app gate holds regardless of
+    // --dry-run. [Inferred from combining "No app => exit 1 'nothing to run'" with
+    // "--dry-run prints the plan"; flagged for the implementor/reviewer.]
+    const result = await run(["dev", "--dry-run"], fixture("dev-no-app"));
+    expect(result.exitCode).toBe(1);
+    expect(combined(result)).toMatch(/nothing to run/i);
+  });
 });
 
 // ===========================================================================
@@ -3249,103 +3342,112 @@ describe("run() — dev command (no app capability: nothing to run)", () => {
 const NGROK = "DOBBY_NGROK";
 
 describe("run() — dev command (ngrok share tunnel: on by default, --no-share opts out)", () => {
-	let originalNgrok: string | undefined;
+  let originalNgrok: string | undefined;
 
-	beforeAll(() => {
-		originalNgrok = process.env[NGROK];
-	});
+  beforeAll(() => {
+    originalNgrok = process.env[NGROK];
+  });
 
-	afterAll(() => {
-		if (originalNgrok === undefined) delete process.env[NGROK];
-		else process.env[NGROK] = originalNgrok;
-	});
+  afterAll(() => {
+    if (originalNgrok === undefined) {
+      delete process.env[NGROK];
+    } else {
+      process.env[NGROK] = originalNgrok;
+    }
+  });
 
-	beforeEach(() => {
-		delete process.env[NGROK];
-	});
+  beforeEach(() => {
+    delete process.env[NGROK];
+  });
 
-	it("wraps the portless main in `--ngrok` by default when ngrok is present", async () => {
-		process.env[NGROK] = "1";
-		const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
-		expect(result.exitCode).toBe(0);
-		// One line carries the portless wrapper, the `--ngrok` tunnel flag, AND the vite
-		// dev — proving `--ngrok` sits inside the portless-wrapped main, not elsewhere.
-		expect(
-			hasNoteLine(result.stdout, [/portless run/, /--ngrok/, /\bdev\b/]),
-		).toBe(true);
-		// No degrade note when ngrok is present.
-		expect(result.stdout).not.toMatch(/ngrok not installed/);
-	});
+  it("wraps the portless main in `--ngrok` by default when ngrok is present", async () => {
+    process.env[NGROK] = "1";
+    const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
+    expect(result.exitCode).toBe(0);
+    // One line carries the portless wrapper, the `--ngrok` tunnel flag, AND the vite
+    // dev — proving `--ngrok` sits inside the portless-wrapped main, not elsewhere.
+    expect(
+      hasNoteLine(result.stdout, [/portless run/, /--ngrok/, /\bdev\b/])
+    ).toBe(true);
+    // No degrade note when ngrok is present.
+    expect(result.stdout).not.toMatch(/ngrok not installed/);
+  });
 
-	it("omits `--ngrok` under --no-share (and emits no degrade note — opt-out wins over the probe)", async () => {
-		// Force ngrok PRESENT to prove `--no-share` — not ngrok absence — is what drops it.
-		process.env[NGROK] = "1";
-		const result = await run(
-			["dev", "--dry-run", "--no-share"],
-			fixture("dev-admin"),
-		);
-		expect(result.exitCode).toBe(0);
-		// The portless main is still planned (a real plan), just without the tunnel flag.
-		expect(portlessMainLine(result.stdout)).toBe(true);
-		const portlessLine = result.stdout
-			.split("\n")
-			.find((l) => l.includes("portless run"));
-		expect(portlessLine).not.toContain("--ngrok");
-		expect(result.stdout).not.toMatch(/ngrok not installed/);
-	});
+  it("omits `--ngrok` under --no-share (and emits no degrade note — opt-out wins over the probe)", async () => {
+    // Force ngrok PRESENT to prove `--no-share` — not ngrok absence — is what drops it.
+    process.env[NGROK] = "1";
+    const result = await run(
+      ["dev", "--dry-run", "--no-share"],
+      fixture("dev-admin")
+    );
+    expect(result.exitCode).toBe(0);
+    // The portless main is still planned (a real plan), just without the tunnel flag.
+    expect(portlessMainLine(result.stdout)).toBe(true);
+    const portlessLine = result.stdout
+      .split("\n")
+      .find((l) => l.includes("portless run"));
+    expect(portlessLine).not.toContain("--ngrok");
+    expect(result.stdout).not.toMatch(/ngrok not installed/);
+  });
 
-	it("DEGRADES when ngrok is missing: drops `--ngrok` and emits the one degrade note (names the two fixes)", async () => {
-		process.env[NGROK] = "0";
-		const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
-		expect(result.exitCode).toBe(0);
-		// Positive anchor: a real portless main IS produced (so the negative below is not
-		// vacuous), just without `--ngrok`.
-		expect(portlessMainLine(result.stdout)).toBe(true);
-		const portlessLine = result.stdout
-			.split("\n")
-			.find((l) => l.includes("portless run"));
-		expect(portlessLine).not.toContain("--ngrok");
-		// The single degrade note names the binary install + the authtoken step.
-		expect(result.stdout).toMatch(/share: off/);
-		expect(result.stdout).toContain("ngrok.com/download");
-		expect(result.stdout).toContain("add-authtoken");
-	});
+  it("DEGRADES when ngrok is missing: drops `--ngrok` and emits the one degrade note (names the two fixes)", async () => {
+    process.env[NGROK] = "0";
+    const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
+    expect(result.exitCode).toBe(0);
+    // Positive anchor: a real portless main IS produced (so the negative below is not
+    // vacuous), just without `--ngrok`.
+    expect(portlessMainLine(result.stdout)).toBe(true);
+    const portlessLine = result.stdout
+      .split("\n")
+      .find((l) => l.includes("portless run"));
+    expect(portlessLine).not.toContain("--ngrok");
+    // The single degrade note names the binary install + the authtoken step.
+    expect(result.stdout).toMatch(/share: off/);
+    expect(result.stdout).toContain("ngrok.com/download");
+    expect(result.stdout).toContain("add-authtoken");
+  });
 });
 
 // The one integration-ish case: the REAL `ngrok version` probe (NOT the DOBBY_NGROK
 // seam). A stub `ngrok` whose `version` exits 0 is prepended to PATH (keeping git/curl
 // on the real PATH), so the genuine probe must find it and apply `--ngrok` by default.
 describe("run() — dev command (ngrok preflight via the real PATH probe)", () => {
-	let stubDir: string;
-	let originalPath: string | undefined;
-	let originalNgrok: string | undefined;
+  let stubDir: string;
+  let originalPath: string | undefined;
+  let originalNgrok: string | undefined;
 
-	beforeAll(() => {
-		originalPath = process.env.PATH;
-		originalNgrok = process.env[NGROK];
-		stubDir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-ngrok-stub-")));
-		const binPath = join(stubDir, "ngrok");
-		writeFileSync(binPath, "#!/bin/sh\nexit 0\n");
-		chmodSync(binPath, 0o755);
-	});
+  beforeAll(() => {
+    originalPath = process.env.PATH;
+    originalNgrok = process.env[NGROK];
+    stubDir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-ngrok-stub-")));
+    const binPath = join(stubDir, "ngrok");
+    writeFileSync(binPath, "#!/bin/sh\nexit 0\n");
+    chmodSync(binPath, 0o755);
+  });
 
-	afterAll(() => {
-		if (originalPath === undefined) delete process.env.PATH;
-		else process.env.PATH = originalPath;
-		if (originalNgrok === undefined) delete process.env[NGROK];
-		else process.env[NGROK] = originalNgrok;
-		rmSync(stubDir, { recursive: true, force: true });
-	});
+  afterAll(() => {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+    if (originalNgrok === undefined) {
+      delete process.env[NGROK];
+    } else {
+      process.env[NGROK] = originalNgrok;
+    }
+    rmSync(stubDir, { force: true, recursive: true });
+  });
 
-	it("applies `--ngrok` by default when a real `ngrok` is on PATH (probe, not the DOBBY_NGROK seam)", async () => {
-		// No DOBBY_NGROK override — exercise the genuine probe. Prepend the stub dir.
-		delete process.env[NGROK];
-		process.env.PATH = `${stubDir}:${originalPath ?? ""}`;
-		const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
-		expect(result.exitCode).toBe(0);
-		expect(hasNoteLine(result.stdout, [/portless run/, /--ngrok/])).toBe(true);
-		expect(result.stdout).not.toMatch(/ngrok not installed/);
-	}, 20000);
+  it("applies `--ngrok` by default when a real `ngrok` is on PATH (probe, not the DOBBY_NGROK seam)", async () => {
+    // No DOBBY_NGROK override — exercise the genuine probe. Prepend the stub dir.
+    delete process.env[NGROK];
+    process.env.PATH = `${stubDir}:${originalPath ?? ""}`;
+    const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
+    expect(result.exitCode).toBe(0);
+    expect(hasNoteLine(result.stdout, [/portless run/, /--ngrok/])).toBe(true);
+    expect(result.stdout).not.toMatch(/ngrok not installed/);
+  }, 20_000);
 });
 
 // ===========================================================================
@@ -3406,55 +3508,55 @@ describe("run() — dev command (ngrok preflight via the real PATH probe)", () =
 // Returns the realpath-normalized root (matching git's resolved top-level); its
 // basename is the `slug`. Registers the dir in `track` for afterAll cleanup.
 function makeLifecycleRepo(
-	track: string[],
-	opts: {
-		pkg?: unknown;
-		config?: unknown;
-		envLocal?: string;
-		devPid?: string;
-	} = {},
+  track: string[],
+  opts: {
+    pkg?: unknown;
+    config?: unknown;
+    envLocal?: string;
+    devPid?: string;
+  } = {}
 ): string {
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-life-")));
-	track.push(dir);
-	gitIn(dir, "init", "-q");
-	if (opts.pkg !== undefined) {
-		writeFileSync(join(dir, "package.json"), JSON.stringify(opts.pkg, null, 2));
-	}
-	if (opts.config !== undefined) {
-		writeFileSync(
-			join(dir, "dobby.config.json"),
-			JSON.stringify(opts.config, null, 2),
-		);
-	}
-	if (opts.envLocal !== undefined) {
-		writeFileSync(join(dir, ".env.local"), opts.envLocal);
-	}
-	if (opts.devPid !== undefined) {
-		mkdirSync(join(dir, ".dobby"), { recursive: true });
-		writeFileSync(join(dir, ".dobby", "dev.pid"), opts.devPid);
-	}
-	return dir;
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-life-")));
+  track.push(dir);
+  gitIn(dir, "init", "-q");
+  if (opts.pkg !== undefined) {
+    writeFileSync(join(dir, "package.json"), JSON.stringify(opts.pkg, null, 2));
+  }
+  if (opts.config !== undefined) {
+    writeFileSync(
+      join(dir, "dobby.config.json"),
+      JSON.stringify(opts.config, null, 2)
+    );
+  }
+  if (opts.envLocal !== undefined) {
+    writeFileSync(join(dir, ".env.local"), opts.envLocal);
+  }
+  if (opts.devPid !== undefined) {
+    mkdirSync(join(dir, ".dobby"), { recursive: true });
+    writeFileSync(join(dir, ".dobby", "dev.pid"), opts.devPid);
+  }
+  return dir;
 }
 
 // A vite-only package.json (the app capability that gets past up's no-app gate).
 const VITE_PKG = {
-	name: "life-app",
-	private: true,
-	devDependencies: { vite: "^5.0.0" },
+  devDependencies: { vite: "^5.0.0" },
+  name: "life-app",
+  private: true,
 };
 // vite + neon (@neondatabase/serverless -> the neon signal), so up reaches the
 // neon isolation step (which is gated behind the app/vite check).
 const VITE_NEON_PKG = {
-	name: "life-neon",
-	private: true,
-	dependencies: { "@neondatabase/serverless": "^0.9.0" },
-	devDependencies: { vite: "^5.0.0" },
+  dependencies: { "@neondatabase/serverless": "^0.9.0" },
+  devDependencies: { vite: "^5.0.0" },
+  name: "life-neon",
+  private: true,
 };
 // A well-formed .env.local carrying BOTH neon creds (+ the DATABASE_URL lines the
 // branch step rewrites). `proj-123` is the project id WE inject.
 const NEON_ENV_LOCAL =
-	"NEON_API_KEY=napi_testkey\nNEON_PROJECT_ID=proj-123\n" +
-	"DATABASE_URL=postgres://old@host/db\nDATABASE_URL_UNPOOLED=postgres://old@host/db_unpooled\n";
+  "NEON_API_KEY=napi_testkey\nNEON_PROJECT_ID=proj-123\n" +
+  "DATABASE_URL=postgres://old@host/db\nDATABASE_URL_UNPOOLED=postgres://old@host/db_unpooled\n";
 
 // --- Slice U1 (tracer bullet): `up` is wired and no-app-gates GRACEFULLY --------
 // up's step 0: a project with NO vite (app) capability prints 'no app to run' and
@@ -3462,92 +3564,100 @@ const NEON_ENV_LOCAL =
 // also proves the command is genuinely wired (NOT the unknown-command branch). Safe
 // to run WITHOUT --dry-run: step 0 returns before any probe / spawn / cmux / neon.
 describe("run() — up command (no app capability: graceful no-op)", () => {
-	const dirs: string[] = [];
-	let originalCmux: string | undefined;
-	let originalSkip: string | undefined;
+  const dirs: string[] = [];
+  let originalCmux: string | undefined;
+  let originalSkip: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-		originalSkip = process.env[SKIP_INSTALL];
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    originalSkip = process.env[SKIP_INSTALL];
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		if (originalSkip === undefined) delete process.env[SKIP_INSTALL];
-		else process.env[SKIP_INSTALL] = originalSkip;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    if (originalSkip === undefined) {
+      delete process.env[SKIP_INSTALL];
+    } else {
+      process.env[SKIP_INSTALL] = originalSkip;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-		delete process.env[SKIP_INSTALL];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+    delete process.env[SKIP_INSTALL];
+  });
 
-	it("exits 0 with 'no app to run' for a project without the vite capability (not the unknown-command path)", async () => {
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: {
-				name: "life-noapp",
-				private: true,
-				dependencies: { "drizzle-orm": "^0.30.0" },
-			},
-		});
-		// up now runs the SETUP PHASE first (bun install) before the no-app gate; the
-		// documented test seam skips ONLY the install so no real bun install runs,
-		// while the rest of the setup phase and the no-app gate still execute.
-		process.env[SKIP_INSTALL] = "1";
-		const result = await run(["up"], repo);
-		expect(result.exitCode).toBe(0);
-		// Anti-tautology guard: an unimplemented `up` ALSO exits nonzero via the
-		// unknown-command branch — assert this is the genuine up/no-app path.
-		expect(result.stderr).not.toContain("unknown command");
-		expect(combined(result)).toMatch(/no app to run/i);
-	}, 20000);
+  it("exits 0 with 'no app to run' for a project without the vite capability (not the unknown-command path)", async () => {
+    const repo = makeLifecycleRepo(dirs, {
+      pkg: {
+        dependencies: { "drizzle-orm": "^0.30.0" },
+        name: "life-noapp",
+        private: true,
+      },
+    });
+    // up now runs the SETUP PHASE first (bun install) before the no-app gate; the
+    // documented test seam skips ONLY the install so no real bun install runs,
+    // while the rest of the setup phase and the no-app gate still execute.
+    process.env[SKIP_INSTALL] = "1";
+    const result = await run(["up"], repo);
+    expect(result.exitCode).toBe(0);
+    // Anti-tautology guard: an unimplemented `up` ALSO exits nonzero via the
+    // unknown-command branch — assert this is the genuine up/no-app path.
+    expect(result.stderr).not.toContain("unknown command");
+    expect(combined(result)).toMatch(/no app to run/i);
+  }, 20_000);
 
-	it("under --dry-run prints the FULL plan: the setup phase (bun install) plus the run phase skipped (no app to run)", async () => {
-		// The spec's --dry-run contract: "prints the FULL ordered plan (setup phase +
-		// run phase, including what would be skipped and why)". Even when the run phase
-		// is skipped (no vite), the setup phase (bun install) is still shown, and the
-		// skip reason ('no app to run') is named.
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: {
-				name: "life-noapp2",
-				private: true,
-				dependencies: { "drizzle-orm": "^0.30.0" },
-			},
-		});
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		// Setup phase is planned (the merge folded it into up)...
-		expect(result.stdout).toMatch(/bun install/);
-		// ...and the run phase is skipped, with the reason named.
-		expect(combined(result)).toMatch(/no app to run/i);
-	}, 20000);
+  it("under --dry-run prints the FULL plan: the setup phase (bun install) plus the run phase skipped (no app to run)", async () => {
+    // The spec's --dry-run contract: "prints the FULL ordered plan (setup phase +
+    // run phase, including what would be skipped and why)". Even when the run phase
+    // is skipped (no vite), the setup phase (bun install) is still shown, and the
+    // skip reason ('no app to run') is named.
+    const repo = makeLifecycleRepo(dirs, {
+      pkg: {
+        dependencies: { "drizzle-orm": "^0.30.0" },
+        name: "life-noapp2",
+        private: true,
+      },
+    });
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    // Setup phase is planned (the merge folded it into up)...
+    expect(result.stdout).toMatch(/bun install/);
+    // ...and the run phase is skipped, with the reason named.
+    expect(combined(result)).toMatch(/no app to run/i);
+  }, 20_000);
 
-	it("still renames the cmux workspace for a no-app project (rename is INDEPENDENT of the app gate)", async () => {
-		// The workspace rename happens WHENEVER cmux is present — a no-app project
-		// (setup phase then 'no app to run') still gets its workspace renamed. Set cmux
-		// for THIS test only (beforeEach cleared it; afterAll restores the original).
-		process.env[CMUX] = "cmux-ws-noapp";
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: {
-				name: "life-noapp3",
-				private: true,
-				dependencies: { "drizzle-orm": "^0.30.0" },
-			},
-		});
-		const slug = basename(repo);
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		// The rename line is present (plain slug title) even though the run phase is
-		// skipped...
-		expect(result.stdout).toContain(
-			`cmux rename-workspace --workspace cmux-ws-noapp "${slug}"`,
-		);
-		// ...proving the rename is NOT gated on the app: 'no app to run' still fires.
-		expect(combined(result)).toMatch(/no app to run/i);
-	}, 20000);
+  it("still renames the cmux workspace for a no-app project (rename is INDEPENDENT of the app gate)", async () => {
+    // The workspace rename happens WHENEVER cmux is present — a no-app project
+    // (setup phase then 'no app to run') still gets its workspace renamed. Set cmux
+    // for THIS test only (beforeEach cleared it; afterAll restores the original).
+    process.env[CMUX] = "cmux-ws-noapp";
+    const repo = makeLifecycleRepo(dirs, {
+      pkg: {
+        dependencies: { "drizzle-orm": "^0.30.0" },
+        name: "life-noapp3",
+        private: true,
+      },
+    });
+    const slug = basename(repo);
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    // The rename line is present (plain slug title) even though the run phase is
+    // skipped...
+    expect(result.stdout).toContain(
+      `cmux rename-workspace --workspace cmux-ws-noapp "${slug}"`
+    );
+    // ...proving the rename is NOT gated on the app: 'no app to run' still fires.
+    expect(combined(result)).toMatch(/no app to run/i);
+  }, 20_000);
 });
 
 // --- Slice U2: `up` fails hard outside a git repo ------------------------------
@@ -3555,21 +3665,23 @@ describe("run() — up command (no app capability: graceful no-op)", () => {
 // / .dobby to) must fail hard with a git message BEFORE anything — even though it
 // also has no vite: the git precondition wins over the no-app gate.
 describe("run() — up command (fail hard outside a git repo)", () => {
-	const dirs: string[] = [];
+  const dirs: string[] = [];
 
-	afterAll(() => {
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	it("exits nonzero with a git-repo error when run outside a git repository", async () => {
-		const plain = realpathSync(mkdtempSync(join(tmpdir(), "dobby-up-nogit-")));
-		dirs.push(plain);
-		const result = await run(["up", "--dry-run"], plain);
-		expect(result.exitCode).not.toBe(0);
-		expect(result.stderr).not.toContain("unknown command");
-		expect(result.stderr).toMatch(/git/i);
-	}, 20000);
+  it("exits nonzero with a git-repo error when run outside a git repository", async () => {
+    const plain = realpathSync(mkdtempSync(join(tmpdir(), "dobby-up-nogit-")));
+    dirs.push(plain);
+    const result = await run(["up", "--dry-run"], plain);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).not.toContain("unknown command");
+    expect(result.stderr).toMatch(/git/i);
+  }, 20_000);
 });
 
 // --- Slice U3 (headline): cmux present -> the positional pane layout plan --------
@@ -3579,97 +3691,102 @@ describe("run() — up command (fail hard outside a git repo)", () => {
 // the branch. Fixture is vite-ONLY (no neon) so step 2 is skipped and the plan
 // reaches step 3's pane creation.
 describe("run() — up command (cmux present: positional pane layout plan)", () => {
-	const dirs: string[] = [];
-	let repo: string;
-	let slug: string;
-	let originalCmux: string | undefined;
+  const dirs: string[] = [];
+  let repo: string;
+  let slug: string;
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-		repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
-		slug = basename(repo);
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+    slug = basename(repo);
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		process.env[CMUX] = "cmux-ws-up";
-	});
+  beforeEach(() => {
+    process.env[CMUX] = "cmux-ws-up";
+  });
 
-	it("prints a plan that creates a cmux pane and exits 0 (not the unknown-command branch)", async () => {
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		// Anti-tautology guard: an unimplemented `up` ALSO exits nonzero via the
-		// unknown-command branch — assert this is the genuine up/cmux/dry-run path, and
-		// that the plan came back as DATA through the capture seam.
-		expect(result.stderr).not.toContain("unknown command");
-		expect(result.stdout).toContain("cmux new-pane");
-	}, 20000);
+  it("prints a plan that creates a cmux pane and exits 0 (not the unknown-command branch)", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    // Anti-tautology guard: an unimplemented `up` ALSO exits nonzero via the
+    // unknown-command branch — assert this is the genuine up/cmux/dry-run path, and
+    // that the plan came back as DATA through the capture seam.
+    expect(result.stderr).not.toContain("unknown command");
+    expect(result.stdout).toContain("cmux new-pane");
+  }, 20_000);
 
-	it("creates the browser pane to the RIGHT of Claude (--type browser --direction right)", async () => {
-		const result = await run(["up", "--dry-run"], repo);
-		expect(
-			hasNoteLine(result.stdout, [
-				/new-pane/,
-				/--type browser/,
-				/--direction right/,
-			]),
-		).toBe(true);
-	}, 20000);
+  it("creates the browser pane to the RIGHT of Claude (--type browser --direction right)", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    expect(
+      hasNoteLine(result.stdout, [
+        /new-pane/,
+        /--type browser/,
+        /--direction right/,
+      ])
+    ).toBe(true);
+  }, 20_000);
 
-	it("puts the run terminal BELOW the browser via a surface-targeted `new-split down` (never focus-dependent)", async () => {
-		const result = await run(["up", "--dry-run"], repo);
-		const out = result.stdout;
-		// The split is targeted by --surface (the browser ref), not by focus — the
-		// load-bearing layout decision.
-		expect(hasNoteLine(out, [/new-split down/, /--surface/])).toBe(true);
-		// Ordering: the browser pane is created BEFORE the split that targets it.
-		expect(out.indexOf("new-pane")).toBeLessThan(out.indexOf("new-split down"));
-	}, 20000);
+  it("puts the run terminal BELOW the browser via a surface-targeted `new-split down` (never focus-dependent)", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    const out = result.stdout;
+    // The split is targeted by --surface (the browser ref), not by focus — the
+    // load-bearing layout decision.
+    expect(hasNoteLine(out, [/new-split down/, /--surface/])).toBe(true);
+    // Ordering: the browser pane is created BEFORE the split that targets it.
+    expect(out.indexOf("new-pane")).toBeLessThan(out.indexOf("new-split down"));
+  }, 20_000);
 
-	it("names the panes `dobby-browser-<slug>` and `dobby-run-<slug>` (slug = workroot basename)", async () => {
-		const result = await run(["up", "--dry-run"], repo);
-		// Independent: the slug is the basename of the temp dir WE created (read via
-		// node:path, a different mechanism than the code's git top-level + basename).
-		expect(result.stdout).toContain(`dobby-browser-${slug}`);
-		expect(result.stdout).toContain(`dobby-run-${slug}`);
-	}, 20000);
+  it("names the panes `dobby-browser-<slug>` and `dobby-run-<slug>` (slug = workroot basename)", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    // Independent: the slug is the basename of the temp dir WE created (read via
+    // node:path, a different mechanism than the code's git top-level + basename).
+    expect(result.stdout).toContain(`dobby-browser-${slug}`);
+    expect(result.stdout).toContain(`dobby-run-${slug}`);
+  }, 20_000);
 
-	it("sends the workroot-pinned `dobby dev` to the run pane", async () => {
-		const result = await run(["up", "--dry-run"], repo);
-		const sendLine = result.stdout
-			.split("\n")
-			.find((l) => l.includes("cmux send"));
-		expect(sendLine, "expected a `cmux send` line in the plan").toBeDefined();
-		// Pinned to the workroot (cmux has no --cwd on panes, so the `cd <workroot> &&`
-		// prefix is the workroot-pinning invariant) and runs dobby dev.
-		expect(sendLine).toContain(`cd ${repo}`);
-		expect(sendLine).toContain("dobby dev");
-	}, 20000);
+  it("sends the workroot-pinned `dobby dev` to the run pane", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    const sendLine = result.stdout
+      .split("\n")
+      .find((l) => l.includes("cmux send"));
+    expect(sendLine, "expected a `cmux send` line in the plan").toBeDefined();
+    // Pinned to the workroot (cmux has no --cwd on panes, so the `cd <workroot> &&`
+    // prefix is the workroot-pinning invariant) and runs dobby dev.
+    expect(sendLine).toContain(`cd ${repo}`);
+    expect(sendLine).toContain("dobby dev");
+  }, 20_000);
 
-	it("renames the cmux WORKSPACE to the plain goal slug (workspace context passed explicitly)", async () => {
-		const result = await run(["up", "--dry-run"], repo);
-		// The workspace title IS the goal identity: the PLAIN slug (no dobby- prefix —
-		// that prefix is carried by the PANE names). The workspace context is passed
-		// explicitly (--workspace cmux-ws-up, matching the new-pane / list-panes style).
-		// Independent: slug = basename of the temp dir WE created; cmux id = the value
-		// beforeEach injected.
-		expect(result.stdout).toContain(
-			`cmux rename-workspace --workspace cmux-ws-up "${slug}"`,
-		);
-		// The rename is distinct from the PANE renames — its title is the bare slug, not
-		// the dobby-browser-/dobby-run- pane forms.
-		const renameLine = result.stdout
-			.split("\n")
-			.find((l) => l.includes("rename-workspace"));
-		expect(renameLine).not.toContain(`dobby-browser-${slug}`);
-		expect(renameLine).not.toContain(`dobby-run-${slug}`);
-	}, 20000);
+  it("renames the cmux WORKSPACE to the plain goal slug (workspace context passed explicitly)", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    // The workspace title IS the goal identity: the PLAIN slug (no dobby- prefix —
+    // that prefix is carried by the PANE names). The workspace context is passed
+    // explicitly (--workspace cmux-ws-up, matching the new-pane / list-panes style).
+    // Independent: slug = basename of the temp dir WE created; cmux id = the value
+    // beforeEach injected.
+    expect(result.stdout).toContain(
+      `cmux rename-workspace --workspace cmux-ws-up "${slug}"`
+    );
+    // The rename is distinct from the PANE renames — its title is the bare slug, not
+    // the dobby-browser-/dobby-run- pane forms.
+    const renameLine = result.stdout
+      .split("\n")
+      .find((l) => l.includes("rename-workspace"));
+    expect(renameLine).not.toContain(`dobby-browser-${slug}`);
+    expect(renameLine).not.toContain(`dobby-run-${slug}`);
+  }, 20_000);
 });
 
 // --- Slice U4: NO cmux -> detached run + pidfile/log plan (the discriminator) ----
@@ -3677,53 +3794,58 @@ describe("run() — up command (cmux present: positional pane layout plan)", () 
 // log under <workroot>/.dobby/. The absence of any `cmux new-pane` is the
 // discriminator proving the cmux branch was NOT taken.
 describe("run() — up command (no cmux: detached run + pidfile plan)", () => {
-	const dirs: string[] = [];
-	let repo: string;
-	let originalCmux: string | undefined;
+  const dirs: string[] = [];
+  let repo: string;
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-		repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("plans a detached `dobby dev` with pid + log under .dobby/ when CMUX_WORKSPACE_ID is unset", async () => {
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		const out = result.stdout;
-		expect(out).toContain("dobby dev");
-		expect(out).toContain(".dobby/dev.pid");
-		expect(out).toContain(".dobby/dev.log");
-	}, 20000);
+  it("plans a detached `dobby dev` with pid + log under .dobby/ when CMUX_WORKSPACE_ID is unset", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    const out = result.stdout;
+    expect(out).toContain("dobby dev");
+    expect(out).toContain(".dobby/dev.pid");
+    expect(out).toContain(".dobby/dev.log");
+  }, 20_000);
 
-	it("plans NO cmux pane creation without a cmux workspace (the start-path discriminator)", async () => {
-		const result = await run(["up", "--dry-run"], repo);
-		// Positive anchor so the negative is not vacuously true on an empty/unimplemented
-		// output: a real detached plan IS produced (exit 0, spawning dobby dev) and it
-		// carries NO cmux pane creation.
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toContain("dobby dev");
-		expect(result.stdout).not.toContain("cmux new-pane");
-	}, 20000);
+  it("plans NO cmux pane creation without a cmux workspace (the start-path discriminator)", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    // Positive anchor so the negative is not vacuously true on an empty/unimplemented
+    // output: a real detached plan IS produced (exit 0, spawning dobby dev) and it
+    // carries NO cmux pane creation.
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("dobby dev");
+    expect(result.stdout).not.toContain("cmux new-pane");
+  }, 20_000);
 
-	it("plans NO cmux workspace rename without a cmux workspace", async () => {
-		const result = await run(["up", "--dry-run"], repo);
-		// Positive anchor (a real detached plan IS produced) so the negative is not
-		// vacuously true: with cmux unset there is no workspace to rename.
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toContain("dobby dev");
-		expect(result.stdout).not.toContain("rename-workspace");
-	}, 20000);
+  it("plans NO cmux workspace rename without a cmux workspace", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    // Positive anchor (a real detached plan IS produced) so the negative is not
+    // vacuously true: with cmux unset there is no workspace to rename.
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("dobby dev");
+    expect(result.stdout).not.toContain("rename-workspace");
+  }, 20_000);
 });
 
 // --- Slice U-share: share is on by default for the started `dobby dev` -----------
@@ -3736,91 +3858,99 @@ describe("run() — up command (no cmux: detached run + pidfile plan)", () => {
 // appears in up's plan (the pane command stays plain `bunx dobby dev`) — the inner dev
 // owns the portless wrapper.
 describe("run() — up command (share tunnel: default vs --no-share vs degrade)", () => {
-	const dirs: string[] = [];
-	let repo: string;
-	let originalCmux: string | undefined;
-	let originalNgrok: string | undefined;
+  const dirs: string[] = [];
+  let repo: string;
+  let originalCmux: string | undefined;
+  let originalNgrok: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-		originalNgrok = process.env[NGROK];
-		repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    originalNgrok = process.env[NGROK];
+    repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		if (originalNgrok === undefined) delete process.env[NGROK];
-		else process.env[NGROK] = originalNgrok;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    if (originalNgrok === undefined) {
+      delete process.env[NGROK];
+    } else {
+      process.env[NGROK] = originalNgrok;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-		// Default the probe to PRESENT so the pane/detached-command assertions are not
-		// distracted by a degrade note; the degrade case sets DOBBY_NGROK=0 explicitly.
-		process.env[NGROK] = "1";
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+    // Default the probe to PRESENT so the pane/detached-command assertions are not
+    // distracted by a degrade note; the degrade case sets DOBBY_NGROK=0 explicitly.
+    process.env[NGROK] = "1";
+  });
 
-	it("cmux: the pane command is plain `bunx dobby dev` (shares by default, no --no-share)", async () => {
-		process.env[CMUX] = "cmux-ws-share";
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		const sendLine = result.stdout
-			.split("\n")
-			.find((l) => l.includes("cmux send"));
-		expect(sendLine, "expected a `cmux send` line").toBeDefined();
-		expect(sendLine).toContain("bunx dobby dev");
-		expect(sendLine).not.toContain("--no-share");
-		// `--ngrok` is never in up's plan — the inner dev owns the portless wrapper.
-		expect(result.stdout).not.toContain("--ngrok");
-	}, 20000);
+  it("cmux: the pane command is plain `bunx dobby dev` (shares by default, no --no-share)", async () => {
+    process.env[CMUX] = "cmux-ws-share";
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    const sendLine = result.stdout
+      .split("\n")
+      .find((l) => l.includes("cmux send"));
+    expect(sendLine, "expected a `cmux send` line").toBeDefined();
+    expect(sendLine).toContain("bunx dobby dev");
+    expect(sendLine).not.toContain("--no-share");
+    // `--ngrok` is never in up's plan — the inner dev owns the portless wrapper.
+    expect(result.stdout).not.toContain("--ngrok");
+  }, 20_000);
 
-	it("cmux + --no-share: the pane command carries `bunx dobby dev --no-share`", async () => {
-		process.env[CMUX] = "cmux-ws-share";
-		const result = await run(["up", "--dry-run", "--no-share"], repo);
-		expect(result.exitCode).toBe(0);
-		const sendLine = result.stdout
-			.split("\n")
-			.find((l) => l.includes("cmux send"));
-		expect(sendLine).toContain("bunx dobby dev --no-share");
-	}, 20000);
+  it("cmux + --no-share: the pane command carries `bunx dobby dev --no-share`", async () => {
+    process.env[CMUX] = "cmux-ws-share";
+    const result = await run(["up", "--dry-run", "--no-share"], repo);
+    expect(result.exitCode).toBe(0);
+    const sendLine = result.stdout
+      .split("\n")
+      .find((l) => l.includes("cmux send"));
+    expect(sendLine).toContain("bunx dobby dev --no-share");
+  }, 20_000);
 
-	it("no cmux + --no-share: the detached command carries `dobby dev --no-share`", async () => {
-		const result = await run(["up", "--dry-run", "--no-share"], repo);
-		expect(result.exitCode).toBe(0);
-		const detachedLine = result.stdout
-			.split("\n")
-			.find((l) => l.includes("spawn detached"));
-		expect(detachedLine, "expected a `spawn detached` line").toBeDefined();
-		expect(detachedLine).toContain("dobby dev --no-share");
-	}, 20000);
+  it("no cmux + --no-share: the detached command carries `dobby dev --no-share`", async () => {
+    const result = await run(["up", "--dry-run", "--no-share"], repo);
+    expect(result.exitCode).toBe(0);
+    const detachedLine = result.stdout
+      .split("\n")
+      .find((l) => l.includes("spawn detached"));
+    expect(detachedLine, "expected a `spawn detached` line").toBeDefined();
+    expect(detachedLine).toContain("dobby dev --no-share");
+  }, 20_000);
 
-	it("no cmux, default: the detached command is plain `dobby dev` (no --no-share)", async () => {
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		const detachedLine = result.stdout
-			.split("\n")
-			.find((l) => l.includes("spawn detached"));
-		expect(detachedLine).toContain("bunx dobby dev");
-		expect(detachedLine).not.toContain("--no-share");
-	}, 20000);
+  it("no cmux, default: the detached command is plain `dobby dev` (no --no-share)", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    const detachedLine = result.stdout
+      .split("\n")
+      .find((l) => l.includes("spawn detached"));
+    expect(detachedLine).toContain("bunx dobby dev");
+    expect(detachedLine).not.toContain("--no-share");
+  }, 20_000);
 
-	it("DEGRADES in the plan when ngrok is missing (share on by default): the degrade note appears", async () => {
-		process.env[NGROK] = "0";
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toMatch(/share: off/);
-		expect(result.stdout).toContain("ngrok.com/download");
-	}, 20000);
+  it("DEGRADES in the plan when ngrok is missing (share on by default): the degrade note appears", async () => {
+    process.env[NGROK] = "0";
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/share: off/);
+    expect(result.stdout).toContain("ngrok.com/download");
+  }, 20_000);
 
-	it("emits NO degrade note under --no-share, even when ngrok is missing (opt-out wins)", async () => {
-		process.env[NGROK] = "0";
-		const result = await run(["up", "--dry-run", "--no-share"], repo);
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).not.toMatch(/ngrok not installed/);
-	}, 20000);
+  it("emits NO degrade note under --no-share, even when ngrok is missing (opt-out wins)", async () => {
+    process.env[NGROK] = "0";
+    const result = await run(["up", "--dry-run", "--no-share"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toMatch(/ngrok not installed/);
+  }, 20_000);
 });
 
 // --- Slice U5: neon isolation (creds parsed from .env.local at the workroot) -----
@@ -3830,71 +3960,76 @@ describe("run() — up command (share tunnel: default vs --no-share vs degrade)"
 // --project-id <id>`, plus rewriting the DATABASE_URL lines. Fixture is vite+neon so
 // step 0 passes and up reaches the neon step. CMUX unset (neon is cmux-independent).
 describe("run() — up command (neon isolation: creds from .env.local)", () => {
-	const dirs: string[] = [];
-	let originalCmux: string | undefined;
+  const dirs: string[] = [];
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("exits 1 with a neon message when the neon capability is present but .env.local is absent (no silent main-DB fallback)", async () => {
-		const repo = makeLifecycleRepo(dirs, { pkg: VITE_NEON_PKG });
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(1);
-		expect(result.stderr).not.toContain("unknown command");
-		expect(combined(result)).toMatch(/neon/i);
-	}, 20000);
+  it("exits 1 with a neon message when the neon capability is present but .env.local is absent (no silent main-DB fallback)", async () => {
+    const repo = makeLifecycleRepo(dirs, { pkg: VITE_NEON_PKG });
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).not.toContain("unknown command");
+    expect(combined(result)).toMatch(/neon/i);
+  }, 20_000);
 
-	it("exits 1 when only ONE of the two neon creds is present (EITHER missing fails)", async () => {
-		// NEON_API_KEY present, NEON_PROJECT_ID missing -> still exit 1 (it checks BOTH,
-		// not merely that a .env.local exists).
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: VITE_NEON_PKG,
-			envLocal: "NEON_API_KEY=napi_testkey\n",
-		});
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(1);
-		expect(result.stderr).not.toContain("unknown command");
-	}, 20000);
+  it("exits 1 when only ONE of the two neon creds is present (EITHER missing fails)", async () => {
+    // NEON_API_KEY present, NEON_PROJECT_ID missing -> still exit 1 (it checks BOTH,
+    // not merely that a .env.local exists).
+    const repo = makeLifecycleRepo(dirs, {
+      envLocal: "NEON_API_KEY=napi_testkey\n",
+      pkg: VITE_NEON_PKG,
+    });
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).not.toContain("unknown command");
+  }, 20_000);
 
-	it("plans an idempotent neon branch create `dobby/<slug>` with the project id parsed from .env.local when both creds are present", async () => {
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: VITE_NEON_PKG,
-			envLocal: NEON_ENV_LOCAL,
-		});
-		const slug = basename(repo);
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		const out = result.stdout;
-		expect(out).toContain("neonctl branches create");
-		expect(out).toContain(`dobby/${slug}`);
-		expect(out).toContain("--project-id");
-		// Independent: the project id was read from OUR .env.local (proves the parse).
-		expect(out).toContain("proj-123");
-	}, 20000);
+  it("plans an idempotent neon branch create `dobby/<slug>` with the project id parsed from .env.local when both creds are present", async () => {
+    const repo = makeLifecycleRepo(dirs, {
+      envLocal: NEON_ENV_LOCAL,
+      pkg: VITE_NEON_PKG,
+    });
+    const slug = basename(repo);
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    const out = result.stdout;
+    expect(out).toContain("neonctl branches create");
+    expect(out).toContain(`dobby/${slug}`);
+    expect(out).toContain("--project-id");
+    // Independent: the project id was read from OUR .env.local (proves the parse).
+    expect(out).toContain("proj-123");
+  }, 20_000);
 
-	it("plans rewriting the .env.local DATABASE_URL lines from the branch connection strings", async () => {
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: VITE_NEON_PKG,
-			envLocal: NEON_ENV_LOCAL,
-		});
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		// The rewrite target: the DATABASE_URL* keys and/or the .env.local file (the
-		// exact plan wording of the rewrite is spec-thin — flagged for the reviewer).
-		expect(combined(result)).toMatch(/DATABASE_URL|\.env\.local/);
-	}, 20000);
+  it("plans rewriting the .env.local DATABASE_URL lines from the branch connection strings", async () => {
+    const repo = makeLifecycleRepo(dirs, {
+      envLocal: NEON_ENV_LOCAL,
+      pkg: VITE_NEON_PKG,
+    });
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    // The rewrite target: the DATABASE_URL* keys and/or the .env.local file (the
+    // exact plan wording of the rewrite is spec-thin — flagged for the reviewer).
+    expect(combined(result)).toMatch(/DATABASE_URL|\.env\.local/);
+  }, 20_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -3916,57 +4051,62 @@ describe("run() — up command (neon isolation: creds from .env.local)", () => {
 // (so the run phase has a real action) with no cmux → the run phase spawns a
 // detached `dobby dev`; the ORDER `bun install` < `dobby dev` is the invariant.
 describe("run() — up command (setup phase precedes the run phase in the dry-run plan)", () => {
-	const dirs: string[] = [];
-	let repo: string;
-	let originalCmux: string | undefined;
+  const dirs: string[] = [];
+  let repo: string;
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-		repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("names the `bun install` setup default in the plan (the folded setup phase), exit 0 (not the unknown-command path)", async () => {
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		expect(result.stderr).not.toContain("unknown command");
-		expect(result.stdout).toMatch(/bun install/);
-	}, 20000);
+  it("names the `bun install` setup default in the plan (the folded setup phase), exit 0 (not the unknown-command path)", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toContain("unknown command");
+    expect(result.stdout).toMatch(/bun install/);
+  }, 20_000);
 
-	it("orders the setup phase (`bun install`) BEFORE the run phase (`dobby dev`)", async () => {
-		const result = await run(["up", "--dry-run"], repo);
-		const out = result.stdout;
-		// Presence guards first, so the ordering assertion can never pass vacuously on
-		// a missing `bun install` (indexOf -1 < anything).
-		expect(out).toMatch(/bun install/);
-		expect(out).toContain("dobby dev");
-		expect(out.indexOf("bun install")).toBeLessThan(out.indexOf("dobby dev"));
-	}, 20000);
+  it("orders the setup phase (`bun install`) BEFORE the run phase (`dobby dev`)", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    const out = result.stdout;
+    // Presence guards first, so the ordering assertion can never pass vacuously on
+    // a missing `bun install` (indexOf -1 < anything).
+    expect(out).toMatch(/bun install/);
+    expect(out).toContain("dobby dev");
+    expect(out.indexOf("bun install")).toBeLessThan(out.indexOf("dobby dev"));
+  }, 20_000);
 
-	it("plans NO copy in a plain (non-worktree) repo even when a .worktreeinclude is present (the linked-worktree gate)", async () => {
-		// Discriminator for the linked-worktree gate: re-materialization fires ONLY in
-		// a LINKED worktree — a `.worktreeinclude` (and even a matching file) in a plain
-		// repo produces no copy. Positive anchor (bun install) keeps the negative
-		// non-vacuous: the setup phase DID run, it just planned no copy.
-		const plain = makeSetupRepo(dirs, {
-			worktreeinclude: [".env.local"],
-			files: { ".env.local": "SECRET=plain\n" },
-		});
-		const result = await run(["up", "--dry-run"], plain);
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toMatch(/bun install/);
-		expect(result.stdout).not.toMatch(/\.env\.local/);
-	}, 20000);
+  it("plans NO copy in a plain (non-worktree) repo even when a .worktreeinclude is present (the linked-worktree gate)", async () => {
+    // Discriminator for the linked-worktree gate: re-materialization fires ONLY in
+    // a LINKED worktree — a `.worktreeinclude` (and even a matching file) in a plain
+    // repo produces no copy. Positive anchor (bun install) keeps the negative
+    // non-vacuous: the setup phase DID run, it just planned no copy.
+    const plain = makeSetupRepo(dirs, {
+      files: { ".env.local": "SECRET=plain\n" },
+      worktreeinclude: [".env.local"],
+    });
+    const result = await run(["up", "--dry-run"], plain);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/bun install/);
+    expect(result.stdout).not.toMatch(/\.env\.local/);
+  }, 20_000);
 });
 
 // --- Slice U7: up's setup phase re-materializes .worktreeinclude matches ---------
@@ -3975,76 +4115,84 @@ describe("run() — up command (setup phase precedes the run phase in the dry-ru
 // clobbering). The makeWorktree fixture has no package.json → no vite → after the
 // copy, up hits the no-app gate (exit 0), so no run-phase spawn ever occurs.
 describe("run() — up command (setup phase: .worktreeinclude re-materialization)", () => {
-	const dirs: string[] = [];
-	let originalSkip: string | undefined;
-	let originalCmux: string | undefined;
+  const dirs: string[] = [];
+  let originalSkip: string | undefined;
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalSkip = process.env[SKIP_INSTALL];
-		originalCmux = process.env[CMUX];
-	});
+  beforeAll(() => {
+    originalSkip = process.env[SKIP_INSTALL];
+    originalCmux = process.env[CMUX];
+  });
 
-	afterAll(() => {
-		if (originalSkip === undefined) delete process.env[SKIP_INSTALL];
-		else process.env[SKIP_INSTALL] = originalSkip;
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalSkip === undefined) {
+      delete process.env[SKIP_INSTALL];
+    } else {
+      process.env[SKIP_INSTALL] = originalSkip;
+    }
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[SKIP_INSTALL];
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[SKIP_INSTALL];
+    delete process.env[CMUX];
+  });
 
-	it("dry-run lists the copy of a main-only .worktreeinclude match, and executes nothing", async () => {
-		const { worktree } = makeWorktree(dirs, {
-			worktreeinclude: [".env.local"],
-			mainFiles: { ".env.local": "SECRET=from-main\n" },
-		});
-		const result = await run(["up", "--dry-run"], worktree);
-		expect(result.exitCode).toBe(0);
-		// The plan names the copy it WOULD make.
-		expect(result.stdout).toMatch(/\.env\.local/);
-		// Dry run: nothing is executed -> the file was NOT actually copied.
-		expect(existsSync(join(worktree, ".env.local"))).toBe(false);
-	}, 20000);
+  it("dry-run lists the copy of a main-only .worktreeinclude match, and executes nothing", async () => {
+    const { worktree } = makeWorktree(dirs, {
+      mainFiles: { ".env.local": "SECRET=from-main\n" },
+      worktreeinclude: [".env.local"],
+    });
+    const result = await run(["up", "--dry-run"], worktree);
+    expect(result.exitCode).toBe(0);
+    // The plan names the copy it WOULD make.
+    expect(result.stdout).toMatch(/\.env\.local/);
+    // Dry run: nothing is executed -> the file was NOT actually copied.
+    expect(existsSync(join(worktree, ".env.local"))).toBe(false);
+  }, 20_000);
 
-	it("copies a main-only .worktreeinclude match into the worktree with main's exact content", async () => {
-		const { worktree } = makeWorktree(dirs, {
-			worktreeinclude: [".env.local"],
-			mainFiles: { ".env.local": "SECRET=from-main\n" },
-		});
-		process.env[SKIP_INSTALL] = "1"; // skip `bun install`; the copy step still runs.
-		const result = await run(["up"], worktree);
-		expect(result.exitCode).toBe(0);
-		const copied = join(worktree, ".env.local");
-		expect(existsSync(copied)).toBe(true);
-		// Independent expected value: the literal we wrote into MAIN (a copy is the
-		// only path by which it can appear at the worktree).
-		expect(readFileSync(copied, "utf8")).toBe("SECRET=from-main\n");
-	}, 20000);
+  it("copies a main-only .worktreeinclude match into the worktree with main's exact content", async () => {
+    const { worktree } = makeWorktree(dirs, {
+      mainFiles: { ".env.local": "SECRET=from-main\n" },
+      worktreeinclude: [".env.local"],
+    });
+    process.env[SKIP_INSTALL] = "1"; // skip `bun install`; the copy step still runs.
+    const result = await run(["up"], worktree);
+    expect(result.exitCode).toBe(0);
+    const copied = join(worktree, ".env.local");
+    expect(existsSync(copied)).toBe(true);
+    // Independent expected value: the literal we wrote into MAIN (a copy is the
+    // only path by which it can appear at the worktree).
+    expect(readFileSync(copied, "utf8")).toBe("SECRET=from-main\n");
+  }, 20_000);
 
-	it("second run is a no-op: never overwrites an already-present worktree file (idempotent end-to-end)", async () => {
-		const { worktree } = makeWorktree(dirs, {
-			worktreeinclude: [".env.local"],
-			mainFiles: { ".env.local": "SECRET=from-main\n" },
-		});
-		const target = join(worktree, ".env.local");
-		process.env[SKIP_INSTALL] = "1";
-		// First run copies main's file in.
-		const first = await run(["up"], worktree);
-		expect(first.exitCode).toBe(0);
-		expect(existsSync(target)).toBe(true);
-		expect(readFileSync(target, "utf8")).toBe("SECRET=from-main\n");
-		// A local edit the developer makes after re-materialization.
-		writeFileSync(target, "SECRET=edited-locally\n");
-		// The second run must NOT clobber it — copy only fills MISSING files.
-		const second = await run(["up"], worktree);
-		expect(second.exitCode).toBe(0);
-		expect(readFileSync(target, "utf8")).toBe("SECRET=edited-locally\n");
-	}, 20000);
+  it("second run is a no-op: never overwrites an already-present worktree file (idempotent end-to-end)", async () => {
+    const { worktree } = makeWorktree(dirs, {
+      mainFiles: { ".env.local": "SECRET=from-main\n" },
+      worktreeinclude: [".env.local"],
+    });
+    const target = join(worktree, ".env.local");
+    process.env[SKIP_INSTALL] = "1";
+    // First run copies main's file in.
+    const first = await run(["up"], worktree);
+    expect(first.exitCode).toBe(0);
+    expect(existsSync(target)).toBe(true);
+    expect(readFileSync(target, "utf8")).toBe("SECRET=from-main\n");
+    // A local edit the developer makes after re-materialization.
+    writeFileSync(target, "SECRET=edited-locally\n");
+    // The second run must NOT clobber it — copy only fills MISSING files.
+    const second = await run(["up"], worktree);
+    expect(second.exitCode).toBe(0);
+    expect(readFileSync(target, "utf8")).toBe("SECRET=edited-locally\n");
+  }, 20_000);
 });
 
 // --- Slice U8: up's setup phase runs config setup[] extras (append + fail-fast) ---
@@ -4054,103 +4202,111 @@ describe("run() — up command (setup phase: .worktreeinclude re-materialization
 // pair uses a NO-APP project (drizzle only): a passing setup phase reaches the
 // no-app gate ('no app to run', exit 0); a failing one short-circuits before it.
 describe("run() — up command (setup phase: config setup[] extras)", () => {
-	const dirs: string[] = [];
-	const MARKER = "dobby-up-setup-marker";
-	const ALPHA = "dobby-up-extra-alpha";
-	let originalSkip: string | undefined;
-	let originalCmux: string | undefined;
+  const dirs: string[] = [];
+  const MARKER = "dobby-up-setup-marker";
+  const ALPHA = "dobby-up-extra-alpha";
+  let originalSkip: string | undefined;
+  let originalCmux: string | undefined;
 
-	// A no-app (no vite) project, so a SUCCESSFUL setup phase reaches step 2's no-app
-	// gate rather than spawning a real dev server.
-	const NOAPP_PKG = {
-		name: "life-extras-noapp",
-		private: true,
-		dependencies: { "drizzle-orm": "^0.30.0" },
-	};
+  // A no-app (no vite) project, so a SUCCESSFUL setup phase reaches step 2's no-app
+  // gate rather than spawning a real dev server.
+  const NOAPP_PKG = {
+    dependencies: { "drizzle-orm": "^0.30.0" },
+    name: "life-extras-noapp",
+    private: true,
+  };
 
-	beforeAll(() => {
-		originalSkip = process.env[SKIP_INSTALL];
-		originalCmux = process.env[CMUX];
-	});
+  beforeAll(() => {
+    originalSkip = process.env[SKIP_INSTALL];
+    originalCmux = process.env[CMUX];
+  });
 
-	afterAll(() => {
-		if (originalSkip === undefined) delete process.env[SKIP_INSTALL];
-		else process.env[SKIP_INSTALL] = originalSkip;
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalSkip === undefined) {
+      delete process.env[SKIP_INSTALL];
+    } else {
+      process.env[SKIP_INSTALL] = originalSkip;
+    }
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[SKIP_INSTALL];
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[SKIP_INSTALL];
+    delete process.env[CMUX];
+  });
 
-	it("dry-run appends config setup[] extras AFTER the `bun install` default, still BEFORE the run phase", async () => {
-		// Decision: extras APPEND after the inferred default (never replace). A vite
-		// project so the run phase has a real action to order against; no cmux → the
-		// run phase is `dobby dev`. Order: bun install < extra < dobby dev.
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: VITE_PKG,
-			config: { files: [], setup: [`echo ${ALPHA}`] },
-		});
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		const out = result.stdout;
-		expect(out).toMatch(/bun install/);
-		expect(out).toContain(ALPHA);
-		expect(out).toContain("dobby dev");
-		expect(out.indexOf("bun install")).toBeLessThan(out.indexOf(ALPHA));
-		expect(out.indexOf(ALPHA)).toBeLessThan(out.indexOf("dobby dev"));
-	}, 20000);
+  it("dry-run appends config setup[] extras AFTER the `bun install` default, still BEFORE the run phase", async () => {
+    // Decision: extras APPEND after the inferred default (never replace). A vite
+    // project so the run phase has a real action to order against; no cmux → the
+    // run phase is `dobby dev`. Order: bun install < extra < dobby dev.
+    const repo = makeLifecycleRepo(dirs, {
+      config: { files: [], setup: [`echo ${ALPHA}`] },
+      pkg: VITE_PKG,
+    });
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    const out = result.stdout;
+    expect(out).toMatch(/bun install/);
+    expect(out).toContain(ALPHA);
+    expect(out).toContain("dobby dev");
+    expect(out.indexOf("bun install")).toBeLessThan(out.indexOf(ALPHA));
+    expect(out.indexOf(ALPHA)).toBeLessThan(out.indexOf("dobby dev"));
+  }, 20_000);
 
-	it("dry-run lists a setup extra but does not execute it (its marker never appears)", async () => {
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: VITE_PKG,
-			config: { files: [], setup: [`touch ${MARKER}`] },
-		});
-		const result = await run(["up", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toContain(MARKER);
-		expect(existsSync(join(repo, MARKER))).toBe(false);
-	}, 20000);
+  it("dry-run lists a setup extra but does not execute it (its marker never appears)", async () => {
+    const repo = makeLifecycleRepo(dirs, {
+      config: { files: [], setup: [`touch ${MARKER}`] },
+      pkg: VITE_PKG,
+    });
+    const result = await run(["up", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(MARKER);
+    expect(existsSync(join(repo, MARKER))).toBe(false);
+  }, 20_000);
 
-	it("real run executes a passing setup extra (its side-effect appears) then reaches the no-app gate, exit 0", async () => {
-		// Efficacy anchor: the extra genuinely runs on the real setup path (so the
-		// fail-fast test's ABSENT marker below is meaningful), and control then reaches
-		// step 2 (no vite → 'no app to run', exit 0) — proving the setup phase runs
-		// BEFORE the no-app gate.
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: NOAPP_PKG,
-			config: { files: [], setup: [`touch ${MARKER}`] },
-		});
-		process.env[SKIP_INSTALL] = "1";
-		const result = await run(["up"], repo);
-		expect(result.exitCode).toBe(0);
-		expect(existsSync(join(repo, MARKER))).toBe(true);
-		expect(combined(result)).toMatch(/no app to run/i);
-	}, 20000);
+  it("real run executes a passing setup extra (its side-effect appears) then reaches the no-app gate, exit 0", async () => {
+    // Efficacy anchor: the extra genuinely runs on the real setup path (so the
+    // fail-fast test's ABSENT marker below is meaningful), and control then reaches
+    // step 2 (no vite → 'no app to run', exit 0) — proving the setup phase runs
+    // BEFORE the no-app gate.
+    const repo = makeLifecycleRepo(dirs, {
+      config: { files: [], setup: [`touch ${MARKER}`] },
+      pkg: NOAPP_PKG,
+    });
+    process.env[SKIP_INSTALL] = "1";
+    const result = await run(["up"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(join(repo, MARKER))).toBe(true);
+    expect(combined(result)).toMatch(/no app to run/i);
+  }, 20_000);
 
-	it("real run fails fast on a nonzero setup extra (exit 1) and the RUN PHASE never starts", async () => {
-		// `false` exits nonzero; the `touch` extra ordered AFTER it must never run
-		// (fail-fast), AND the flow short-circuits BEFORE step 2 — so 'no app to run'
-		// is never printed. This pins "any setup-phase failure → exit 1, run phase
-		// never starts".
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: NOAPP_PKG,
-			config: { files: [], setup: ["false", `touch ${MARKER}`] },
-		});
-		process.env[SKIP_INSTALL] = "1";
-		const result = await run(["up"], repo);
-		expect(result.exitCode).toBe(1);
-		// Anti-tautology guard: the real fail-fast path, NOT the unknown-command branch.
-		expect(result.stderr).not.toContain("unknown command");
-		// Fail-fast: the extra AFTER the failing one never ran.
-		expect(existsSync(join(repo, MARKER))).toBe(false);
-		// The setup-phase failure short-circuits before the no-app gate (step 2).
-		expect(combined(result)).not.toMatch(/no app to run/i);
-	}, 20000);
+  it("real run fails fast on a nonzero setup extra (exit 1) and the RUN PHASE never starts", async () => {
+    // `false` exits nonzero; the `touch` extra ordered AFTER it must never run
+    // (fail-fast), AND the flow short-circuits BEFORE step 2 — so 'no app to run'
+    // is never printed. This pins "any setup-phase failure → exit 1, run phase
+    // never starts".
+    const repo = makeLifecycleRepo(dirs, {
+      config: { files: [], setup: ["false", `touch ${MARKER}`] },
+      pkg: NOAPP_PKG,
+    });
+    process.env[SKIP_INSTALL] = "1";
+    const result = await run(["up"], repo);
+    expect(result.exitCode).toBe(1);
+    // Anti-tautology guard: the real fail-fast path, NOT the unknown-command branch.
+    expect(result.stderr).not.toContain("unknown command");
+    // Fail-fast: the extra AFTER the failing one never ran.
+    expect(existsSync(join(repo, MARKER))).toBe(false);
+    // The setup-phase failure short-circuits before the no-app gate (step 2).
+    expect(combined(result)).not.toMatch(/no app to run/i);
+  }, 20_000);
 });
 
 // --- Slice D1 (tracer bullet): `down` is wired and no-ops on nothing to clean ----
@@ -4158,87 +4314,99 @@ describe("run() — up command (setup phase: config setup[] extras)", () => {
 // nothing to clean -> exit 0. Safe to run WITHOUT --dry-run (every cleanup step is
 // gated off). Also proves down is genuinely wired (NOT the unknown-command branch).
 describe("run() — down command (nothing to clean: no-op)", () => {
-	const dirs: string[] = [];
-	let originalCmux: string | undefined;
+  const dirs: string[] = [];
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("exits 0 on a repo with nothing to clean (no panes, no pidfile, no neon, no config) — not the unknown-command path", async () => {
-		const repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
-		const result = await run(["down"], repo);
-		expect(result.exitCode).toBe(0);
-		expect(result.stderr).not.toContain("unknown command");
-	}, 20000);
+  it("exits 0 on a repo with nothing to clean (no panes, no pidfile, no neon, no config) — not the unknown-command path", async () => {
+    const repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+    const result = await run(["down"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toContain("unknown command");
+  }, 20_000);
 });
 
 // --- Slice D2: `down` fails hard outside a git repo ----------------------------
 describe("run() — down command (fail hard outside a git repo)", () => {
-	const dirs: string[] = [];
+  const dirs: string[] = [];
 
-	afterAll(() => {
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	it("exits nonzero with a git-repo error when run outside a git repository", async () => {
-		const plain = realpathSync(
-			mkdtempSync(join(tmpdir(), "dobby-down-nogit-")),
-		);
-		dirs.push(plain);
-		const result = await run(["down", "--dry-run"], plain);
-		expect(result.exitCode).not.toBe(0);
-		expect(result.stderr).not.toContain("unknown command");
-		expect(result.stderr).toMatch(/git/i);
-	}, 20000);
+  it("exits nonzero with a git-repo error when run outside a git repository", async () => {
+    const plain = realpathSync(
+      mkdtempSync(join(tmpdir(), "dobby-down-nogit-"))
+    );
+    dirs.push(plain);
+    const result = await run(["down", "--dry-run"], plain);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).not.toContain("unknown command");
+    expect(result.stderr).toMatch(/git/i);
+  }, 20_000);
 });
 
 // --- Slice D3: down plans the neon branch delete (neon + creds) -----------------
 // The teardown counterpart to up's create: neon capability + .env.local creds =>
 // `neonctl branches delete dobby/<slug>` (a missing branch is idempotently ok).
 describe("run() — down command (neon branch delete plan)", () => {
-	const dirs: string[] = [];
-	let originalCmux: string | undefined;
+  const dirs: string[] = [];
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("plans `neonctl branches delete dobby/<slug>` when the neon capability + .env.local creds are present", async () => {
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: VITE_NEON_PKG,
-			envLocal: NEON_ENV_LOCAL,
-		});
-		const slug = basename(repo);
-		const result = await run(["down", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		const out = result.stdout;
-		expect(out).toContain("neonctl branches delete");
-		expect(out).toContain(`dobby/${slug}`);
-	}, 20000);
+  it("plans `neonctl branches delete dobby/<slug>` when the neon capability + .env.local creds are present", async () => {
+    const repo = makeLifecycleRepo(dirs, {
+      envLocal: NEON_ENV_LOCAL,
+      pkg: VITE_NEON_PKG,
+    });
+    const slug = basename(repo);
+    const result = await run(["down", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    const out = result.stdout;
+    expect(out).toContain("neonctl branches delete");
+    expect(out).toContain(`dobby/${slug}`);
+  }, 20_000);
 });
 
 // --- Slice D4: the `--db` flag is REMOVED; supabase is never stopped -------------
@@ -4248,52 +4416,57 @@ describe("run() — down command (neon branch delete plan)", () => {
 // carries neon creds so a plain `down` produces a real teardown plan (the neon-branch
 // delete is the positive anchor making the "no supabase stop" negatives meaningful).
 describe("run() — down command (the --db flag is removed; supabase is never stopped)", () => {
-	const dirs: string[] = [];
-	let repo: string;
-	let originalCmux: string | undefined;
+  const dirs: string[] = [];
+  let repo: string;
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-		repo = makeLifecycleRepo(dirs, {
-			pkg: {
-				name: "life-formersupa",
-				private: true,
-				dependencies: { "@neondatabase/serverless": "^0.9.0" },
-				devDependencies: { vite: "^5.0.0", supabase: "^1.150.0" },
-			},
-			envLocal: NEON_ENV_LOCAL,
-		});
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    repo = makeLifecycleRepo(dirs, {
+      envLocal: NEON_ENV_LOCAL,
+      pkg: {
+        dependencies: { "@neondatabase/serverless": "^0.9.0" },
+        devDependencies: { supabase: "^1.150.0", vite: "^5.0.0" },
+        name: "life-formersupa",
+        private: true,
+      },
+    });
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("rejects the removed `--db` flag (exit 1) — the flag no longer exists", async () => {
-		const result = await run(["down", "--db", "--dry-run"], repo);
-		expect(result.exitCode).toBe(1);
-		// Anti-tautology guard: `down` IS a known command — the failure is the removed
-		// FLAG, not an unimplemented command.
-		expect(result.stderr).not.toContain("unknown command");
-		expect(combined(result)).not.toContain("supabase stop");
-	}, 20000);
+  it("rejects the removed `--db` flag (exit 1) — the flag no longer exists", async () => {
+    const result = await run(["down", "--db", "--dry-run"], repo);
+    expect(result.exitCode).toBe(1);
+    // Anti-tautology guard: `down` IS a known command — the failure is the removed
+    // FLAG, not an unimplemented command.
+    expect(result.stderr).not.toContain("unknown command");
+    expect(combined(result)).not.toContain("supabase stop");
+  }, 20_000);
 
-	it("plans the neon-branch delete but NEVER a `supabase stop` on a plain `down`", async () => {
-		const result = await run(["down", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		// Positive anchor: down genuinely produced a teardown plan (neon branch delete),
-		// so the "no supabase stop" negative below is not vacuously true.
-		expect(result.stdout).toContain("neonctl branches delete");
-		// The removal: no supabase stop, even though a `supabase` dependency is declared.
-		expect(combined(result)).not.toContain("supabase stop");
-	}, 20000);
+  it("plans the neon-branch delete but NEVER a `supabase stop` on a plain `down`", async () => {
+    const result = await run(["down", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    // Positive anchor: down genuinely produced a teardown plan (neon branch delete),
+    // so the "no supabase stop" negative below is not vacuously true.
+    expect(result.stdout).toContain("neonctl branches delete");
+    // The removal: no supabase stop, even though a `supabase` dependency is declared.
+    expect(combined(result)).not.toContain("supabase stop");
+  }, 20_000);
 });
 
 // --- Slice D5: config teardown[] extras run on down ------------------------------
@@ -4302,45 +4475,50 @@ describe("run() — down command (the --db flag is removed; supabase is never st
 // run executes it (the efficacy anchor that makes the dry-run's absent marker
 // meaningful). CMUX unset + no neon/pidfile, so a real `down` runs ONLY the extra.
 describe("run() — down command (config teardown[] extras)", () => {
-	const dirs: string[] = [];
-	const MARKER = "dobby-teardown-marker";
-	let originalCmux: string | undefined;
+  const dirs: string[] = [];
+  const MARKER = "dobby-teardown-marker";
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("dry-run lists a teardown extra but does not execute it (its marker never appears)", async () => {
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: VITE_PKG,
-			config: { files: [], teardown: [`touch ${MARKER}`] },
-		});
-		const result = await run(["down", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toContain(MARKER);
-		expect(existsSync(join(repo, MARKER))).toBe(false);
-	}, 20000);
+  it("dry-run lists a teardown extra but does not execute it (its marker never appears)", async () => {
+    const repo = makeLifecycleRepo(dirs, {
+      config: { files: [], teardown: [`touch ${MARKER}`] },
+      pkg: VITE_PKG,
+    });
+    const result = await run(["down", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(MARKER);
+    expect(existsSync(join(repo, MARKER))).toBe(false);
+  }, 20_000);
 
-	it("real run executes the teardown extra (its file side-effect appears), exit 0", async () => {
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: VITE_PKG,
-			config: { files: [], teardown: [`touch ${MARKER}`] },
-		});
-		const result = await run(["down"], repo);
-		expect(result.exitCode).toBe(0);
-		expect(existsSync(join(repo, MARKER))).toBe(true);
-	}, 20000);
+  it("real run executes the teardown extra (its file side-effect appears), exit 0", async () => {
+    const repo = makeLifecycleRepo(dirs, {
+      config: { files: [], teardown: [`touch ${MARKER}`] },
+      pkg: VITE_PKG,
+    });
+    const result = await run(["down"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(join(repo, MARKER))).toBe(true);
+  }, 20_000);
 });
 
 // --- Slice D6: a stale pidfile is cleaned up silently ---------------------------
@@ -4349,36 +4527,41 @@ describe("run() — down command (config teardown[] extras)", () => {
 // darwin/linux, so the liveness check treats it as stale. The file existed before; a
 // clean down removes it. Safe: no live process, no cmux (unset), no neon.
 describe("run() — down command (stale pidfile cleaned up silently)", () => {
-	const dirs: string[] = [];
-	let originalCmux: string | undefined;
+  const dirs: string[] = [];
+  let originalCmux: string | undefined;
 
-	beforeAll(() => {
-		originalCmux = process.env[CMUX];
-	});
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+  });
 
-	afterAll(() => {
-		if (originalCmux === undefined) delete process.env[CMUX];
-		else process.env[CMUX] = originalCmux;
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    if (originalCmux === undefined) {
+      delete process.env[CMUX];
+    } else {
+      process.env[CMUX] = originalCmux;
+    }
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	beforeEach(() => {
-		delete process.env[CMUX];
-	});
+  beforeEach(() => {
+    delete process.env[CMUX];
+  });
 
-	it("removes a stale .dobby/dev.pid (a pid that is not alive) and exits 0", async () => {
-		const repo = makeLifecycleRepo(dirs, {
-			pkg: VITE_PKG,
-			devPid: "2147483647\n",
-		});
-		const pidfile = join(repo, ".dobby", "dev.pid");
-		expect(existsSync(pidfile)).toBe(true);
-		const result = await run(["down"], repo);
-		expect(result.exitCode).toBe(0);
-		expect(result.stderr).not.toContain("unknown command");
-		expect(existsSync(pidfile)).toBe(false);
-	}, 20000);
+  it("removes a stale .dobby/dev.pid (a pid that is not alive) and exits 0", async () => {
+    const repo = makeLifecycleRepo(dirs, {
+      devPid: "2147483647\n",
+      pkg: VITE_PKG,
+    });
+    const pidfile = join(repo, ".dobby", "dev.pid");
+    expect(existsSync(pidfile)).toBe(true);
+    const result = await run(["down"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toContain("unknown command");
+    expect(existsSync(pidfile)).toBe(false);
+  }, 20_000);
 });
 
 // ===========================================================================
@@ -4426,41 +4609,43 @@ describe("run() — down command (stale pidfile cleaned up silently)", () => {
 // through to the same exit-1 unknown-command path as any typo — carrying the
 // upgrade hint — and it is dropped from the usage Commands list.
 describe("run() — commit command is removed", () => {
-	const dirs: string[] = [];
+  const dirs: string[] = [];
 
-	afterAll(() => {
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	// A plain (non-git) temp dir — GUARANTEES no commit can occur while `commit` is
-	// still wired (it fails the git precondition before touching any index).
-	function plainDir(): string {
-		const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-nocommit-")));
-		dirs.push(dir);
-		return dir;
-	}
+  // A plain (non-git) temp dir — GUARANTEES no commit can occur while `commit` is
+  // still wired (it fails the git precondition before touching any index).
+  function plainDir(): string {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-nocommit-")));
+    dirs.push(dir);
+    return dir;
+  }
 
-	it("treats `commit` as an unknown command with the upgrade hint (exit 1, empty stdout)", async () => {
-		const result = await run(["commit", "a message"], plainDir());
-		expect(result.exitCode).toBe(1);
-		expect(result.stdout).toBe("");
-		// The discriminating red: pre-removal `commit` runs its own git-precondition
-		// path (a git error, not this literal); post-removal it is the unknown command.
-		expect(result.stderr).toContain("unknown command: commit");
-		expect(result.stderr).toContain(upgradeHint);
-	}, 20000);
+  it("treats `commit` as an unknown command with the upgrade hint (exit 1, empty stdout)", async () => {
+    const result = await run(["commit", "a message"], plainDir());
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    // The discriminating red: pre-removal `commit` runs its own git-precondition
+    // path (a git error, not this literal); post-removal it is the unknown command.
+    expect(result.stderr).toContain("unknown command: commit");
+    expect(result.stderr).toContain(upgradeHint);
+  }, 20_000);
 
-	it("no longer advertises `commit` in the usage Commands list", async () => {
-		const result = await run([], plainDir());
-		expect(result.exitCode).toBe(0);
-		// Line-anchored to the Commands column (same shape as the bare-usage `env`
-		// check), so the Options block never counts as a command entry.
-		const advertisesCommit = result.stdout
-			.split("\n")
-			.some((line) => /^\s+commit\b/.test(line));
-		expect(advertisesCommit).toBe(false);
-	});
+  it("no longer advertises `commit` in the usage Commands list", async () => {
+    const result = await run([], plainDir());
+    expect(result.exitCode).toBe(0);
+    // Line-anchored to the Commands column (same shape as the bare-usage `env`
+    // check), so the Options block never counts as a command entry.
+    const advertisesCommit = result.stdout
+      .split("\n")
+      .some((line) => /^\s+commit\b/.test(line));
+    expect(advertisesCommit).toBe(false);
+  });
 });
 
 // --- `dobby check --fix` — safe project-wide fix, then report -------------------
@@ -4469,13 +4654,13 @@ describe("run() — commit command is removed", () => {
 // noDoubleEquals linter (recommended off) so an `==` is an UNFIXABLE (unsafe-only)
 // finding that survives a safe fix.
 const BIOME_FIX_CONFIG = {
-	formatter: { enabled: true, indentStyle: "space", indentWidth: 2 },
-	assist: { enabled: false },
-	javascript: { formatter: { quoteStyle: "double", semicolons: "always" } },
-	linter: {
-		enabled: true,
-		rules: { recommended: false, suspicious: { noDoubleEquals: "error" } },
-	},
+  assist: { enabled: false },
+  formatter: { enabled: true, indentStyle: "space", indentWidth: 2 },
+  javascript: { formatter: { quoteStyle: "double", semicolons: "always" } },
+  linter: {
+    enabled: true,
+    rules: { recommended: false, suspicious: { noDoubleEquals: "error" } },
+  },
 };
 
 // A purely-format-broken source (single quote + no semicolon). Under
@@ -4494,7 +4679,7 @@ const FIX_OTHER = "export const other = 'y'\n";
 // but leaves the `==` — so after `--fix` the file carries `"x"` AND still `a == b`,
 // and the report names this file and fails.
 const FIX_MIXED =
-	"export function eq(a: number, b: number): boolean {\n  const label = 'x'\n  return a == b\n}\n";
+  "export function eq(a: number, b: number): boolean {\n  const label = 'x'\n  return a == b\n}\n";
 
 // Build a THROWAWAY git repo shaped for `check --fix`: BIOME_FIX_CONFIG (formatter
 // on, so a SAFE `--write` mutates files; noDoubleEquals on, so an `==` is an
@@ -4503,140 +4688,142 @@ const FIX_MIXED =
 // fixable-only assertions. A bare `git init` resolves the workroot. Returns the
 // realpath-normalized root; registered in `track` for cleanup.
 function makeFixRepo(track: string[], src: Record<string, string>): string {
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-fix-")));
-	track.push(dir);
-	execFileSync("git", ["init", "-q"], {
-		cwd: dir,
-		stdio: "ignore",
-		env: gitEnv,
-	});
-	writeFileSync(
-		join(dir, "biome.jsonc"),
-		JSON.stringify(BIOME_FIX_CONFIG, null, 2),
-	);
-	writeFileSync(
-		join(dir, "tsconfig.json"),
-		JSON.stringify(
-			{
-				compilerOptions: { strict: true, noEmit: true, skipLibCheck: true },
-				include: ["src"],
-			},
-			null,
-			2,
-		),
-	);
-	writeFileSync(
-		join(dir, "package.json"),
-		JSON.stringify(
-			{
-				name: "fix-fixture",
-				private: true,
-				knip: { entry: ["src/**/*.ts"], project: ["src/**/*.ts"] },
-			},
-			null,
-			2,
-		),
-	);
-	for (const [rel, content] of Object.entries(src)) {
-		const full = join(dir, rel);
-		mkdirSync(dirname(full), { recursive: true });
-		writeFileSync(full, content);
-	}
-	return dir;
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-fix-")));
+  track.push(dir);
+  execFileSync("git", ["init", "-q"], {
+    cwd: dir,
+    env: gitEnv,
+    stdio: "ignore",
+  });
+  writeFileSync(
+    join(dir, "biome.jsonc"),
+    JSON.stringify(BIOME_FIX_CONFIG, null, 2)
+  );
+  writeFileSync(
+    join(dir, "tsconfig.json"),
+    JSON.stringify(
+      {
+        compilerOptions: { noEmit: true, skipLibCheck: true, strict: true },
+        include: ["src"],
+      },
+      null,
+      2
+    )
+  );
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify(
+      {
+        knip: { entry: ["src/**/*.ts"], project: ["src/**/*.ts"] },
+        name: "fix-fixture",
+        private: true,
+      },
+      null,
+      2
+    )
+  );
+  for (const [rel, content] of Object.entries(src)) {
+    const full = join(dir, rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  }
+  return dir;
 }
 
 describe("run() — check --fix (safe project-wide fix, then report)", () => {
-	const dirs: string[] = [];
+  const dirs: string[] = [];
 
-	afterAll(() => {
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	// --- Slice 1 (tracer): a format-broken file is fixed on disk, exit 0 ----------
-	// The headline of the task — `--fix` applies biome's safe fixes then reports.
-	// Before --fix exists it is an unknown flag (parse error, exit 1, nothing
-	// written), so exit 0 AND the on-disk mutation both prove the real fix path ran.
-	it("applies biome's safe fix to a format-broken file on disk and exits 0 (--fix --lint)", async () => {
-		const repo = makeFixRepo(dirs, { "src/greeting.ts": FIX_FORMAT_ONLY });
-		const file = join(repo, "src", "greeting.ts");
-		const result = await run(["check", "--fix", "--lint"], repo);
-		expect(result.exitCode).toBe(0);
-		const after = readFileSync(file, "utf8");
-		expect(after).toContain('"hello"');
-		expect(after).not.toContain("'hello'");
-	}, 30000);
+  // --- Slice 1 (tracer): a format-broken file is fixed on disk, exit 0 ----------
+  // The headline of the task — `--fix` applies biome's safe fixes then reports.
+  // Before --fix exists it is an unknown flag (parse error, exit 1, nothing
+  // written), so exit 0 AND the on-disk mutation both prove the real fix path ran.
+  it("applies biome's safe fix to a format-broken file on disk and exits 0 (--fix --lint)", async () => {
+    const repo = makeFixRepo(dirs, { "src/greeting.ts": FIX_FORMAT_ONLY });
+    const file = join(repo, "src", "greeting.ts");
+    const result = await run(["check", "--fix", "--lint"], repo);
+    expect(result.exitCode).toBe(0);
+    const after = readFileSync(file, "utf8");
+    expect(after).toContain('"hello"');
+    expect(after).not.toContain("'hello'");
+  }, 30_000);
 
-	// --- Slice 2: --fix applies SAFE fixes but NEVER the unsafe `==` fix -----------
-	it("applies the safe format fix but leaves the unsafe `==` untouched under --fix", async () => {
-		const repo = makeFixRepo(dirs, { "src/mixed.ts": FIX_MIXED });
-		const file = join(repo, "src", "mixed.ts");
-		const result = await run(["check", "--fix", "--lint"], repo);
-		expect(result.exitCode).toBe(1);
-		const after = readFileSync(file, "utf8");
-		// The safe format fix landed (single quote → double) — proof biome --write ran.
-		expect(after).toContain('"x"');
-		expect(after).not.toContain("'x'");
-		// … yet the UNSAFE `==`→`===` fix was NEVER applied: the `==` survives on disk.
-		expect(after).toContain("a == b");
-	}, 30000);
+  // --- Slice 2: --fix applies SAFE fixes but NEVER the unsafe `==` fix -----------
+  it("applies the safe format fix but leaves the unsafe `==` untouched under --fix", async () => {
+    const repo = makeFixRepo(dirs, { "src/mixed.ts": FIX_MIXED });
+    const file = join(repo, "src", "mixed.ts");
+    const result = await run(["check", "--fix", "--lint"], repo);
+    expect(result.exitCode).toBe(1);
+    const after = readFileSync(file, "utf8");
+    // The safe format fix landed (single quote → double) — proof biome --write ran.
+    expect(after).toContain('"x"');
+    expect(after).not.toContain("'x'");
+    // … yet the UNSAFE `==`→`===` fix was NEVER applied: the `==` survives on disk.
+    expect(after).toContain("a == b");
+  }, 30_000);
 
-	// --- Slice 3: the remaining unfixable finding is reported ----------------------
-	it("reports the remaining unfixable finding (names the file) and exits 1 under --fix", async () => {
-		const repo = makeFixRepo(dirs, { "src/mixed.ts": FIX_MIXED });
-		const result = await run(["check", "--fix", "--lint"], repo);
-		expect(result.exitCode).toBe(1);
-		// After fixing what it safely can, --fix runs the selected pipeline and reports
-		// what remains — the `==` finding names the file (stdout is empty on the
-		// pre-removal parse-error path, so this is a genuine red).
-		expect(result.stdout).toMatch(/mixed\.ts/);
-	}, 30000);
+  // --- Slice 3: the remaining unfixable finding is reported ----------------------
+  it("reports the remaining unfixable finding (names the file) and exits 1 under --fix", async () => {
+    const repo = makeFixRepo(dirs, { "src/mixed.ts": FIX_MIXED });
+    const result = await run(["check", "--fix", "--lint"], repo);
+    expect(result.exitCode).toBe(1);
+    // After fixing what it safely can, --fix runs the selected pipeline and reports
+    // what remains — the `==` finding names the file (stdout is empty on the
+    // pre-removal parse-error path, so this is a genuine red).
+    expect(result.stdout).toMatch(/mixed\.ts/);
+  }, 30_000);
 
-	// --- Slice 4: project-wide reach + full-gate composition (no flags) ------------
-	// `--fix` with NO selective flag fixes EVERY file (project-wide) and then runs
-	// the FULL gate; both fixed files leave the gate clean (exit 0).
-	it("fixes every file project-wide and passes the full gate (no flags) with exit 0", async () => {
-		const repo = makeFixRepo(dirs, {
-			"src/greeting.ts": FIX_FORMAT_ONLY,
-			"src/other.ts": FIX_OTHER,
-		});
-		const result = await run(["check", "--fix"], repo);
-		expect(result.exitCode).toBe(0);
-		// BOTH files were rewritten (project-wide, not just one).
-		expect(readFileSync(join(repo, "src", "greeting.ts"), "utf8")).toContain(
-			'"hello"',
-		);
-		expect(readFileSync(join(repo, "src", "other.ts"), "utf8")).toContain(
-			'"y"',
-		);
-	}, 60000);
+  // --- Slice 4: project-wide reach + full-gate composition (no flags) ------------
+  // `--fix` with NO selective flag fixes EVERY file (project-wide) and then runs
+  // the FULL gate; both fixed files leave the gate clean (exit 0).
+  it("fixes every file project-wide and passes the full gate (no flags) with exit 0", async () => {
+    const repo = makeFixRepo(dirs, {
+      "src/greeting.ts": FIX_FORMAT_ONLY,
+      "src/other.ts": FIX_OTHER,
+    });
+    const result = await run(["check", "--fix"], repo);
+    expect(result.exitCode).toBe(0);
+    // BOTH files were rewritten (project-wide, not just one).
+    expect(readFileSync(join(repo, "src", "greeting.ts"), "utf8")).toContain(
+      '"hello"'
+    );
+    expect(readFileSync(join(repo, "src", "other.ts"), "utf8")).toContain(
+      '"y"'
+    );
+  }, 60_000);
 
-	// --- Slice 5: per-file mode fixes ONLY the named file --------------------------
-	it("fixes only the named file under per-file mode (check <file> --fix), leaving others untouched", async () => {
-		const repo = makeFixRepo(dirs, {
-			"src/target.ts": FIX_FORMAT_ONLY,
-			"src/other.ts": FIX_OTHER,
-		});
-		const result = await run(["check", "src/target.ts", "--fix"], repo);
-		expect(result.exitCode).toBe(0);
-		// The named file is fixed …
-		expect(readFileSync(join(repo, "src", "target.ts"), "utf8")).toContain(
-			'"hello"',
-		);
-		// … and the OTHER file is left exactly as written (per-file scope).
-		expect(readFileSync(join(repo, "src", "other.ts"), "utf8")).toBe(FIX_OTHER);
-	}, 30000);
+  // --- Slice 5: per-file mode fixes ONLY the named file --------------------------
+  it("fixes only the named file under per-file mode (check <file> --fix), leaving others untouched", async () => {
+    const repo = makeFixRepo(dirs, {
+      "src/other.ts": FIX_OTHER,
+      "src/target.ts": FIX_FORMAT_ONLY,
+    });
+    const result = await run(["check", "src/target.ts", "--fix"], repo);
+    expect(result.exitCode).toBe(0);
+    // The named file is fixed …
+    expect(readFileSync(join(repo, "src", "target.ts"), "utf8")).toContain(
+      '"hello"'
+    );
+    // … and the OTHER file is left exactly as written (per-file scope).
+    expect(readFileSync(join(repo, "src", "other.ts"), "utf8")).toBe(FIX_OTHER);
+  }, 30_000);
 
-	// --- Slice 6 (guard): a plain check (no --fix) never mutates -------------------
-	// Proves --fix is the mutation trigger: an ordinary `check` is read-only, so the
-	// format-broken file is byte-for-byte unchanged. (Green today; it anchors the
-	// meaning of every "mutated on disk" assertion above.)
-	it("never mutates files under a plain check (no --fix)", async () => {
-		const repo = makeFixRepo(dirs, { "src/greeting.ts": FIX_FORMAT_ONLY });
-		const file = join(repo, "src", "greeting.ts");
-		await run(["check", "--lint"], repo);
-		expect(readFileSync(file, "utf8")).toBe(FIX_FORMAT_ONLY);
-	}, 30000);
+  // --- Slice 6 (guard): a plain check (no --fix) never mutates -------------------
+  // Proves --fix is the mutation trigger: an ordinary `check` is read-only, so the
+  // format-broken file is byte-for-byte unchanged. (Green today; it anchors the
+  // meaning of every "mutated on disk" assertion above.)
+  it("never mutates files under a plain check (no --fix)", async () => {
+    const repo = makeFixRepo(dirs, { "src/greeting.ts": FIX_FORMAT_ONLY });
+    const file = join(repo, "src", "greeting.ts");
+    await run(["check", "--lint"], repo);
+    expect(readFileSync(file, "utf8")).toBe(FIX_FORMAT_ONLY);
+  }, 30_000);
 });
 // ===========================================================================
 // TASK 11 — cli/README.md + capability-aware usage.
@@ -4680,15 +4867,15 @@ describe("run() — check --fix (safe project-wide fix, then report)", () => {
 // to the Commands column, so the Options block (whose `--dry-run` blurb happens to
 // mention "dev / db:* / up / down" mid-line) is never mistaken for a command entry.
 function advertisesCommand(text: string, token: string): boolean {
-	const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	const re = new RegExp(`^\\s+${escaped}(?=\\s|$)`);
-	return text.split("\n").some((line) => re.test(line));
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^\\s+${escaped}(?=\\s|$)`);
+  return text.split("\n").some((line) => re.test(line));
 }
 
 // Whether the Commands list carries ANY db:* task entry (line-anchored, so the
 // Options `--dry-run` mention of `db:*` never counts as a command).
 function advertisesAnyDbCommand(text: string): boolean {
-	return text.split("\n").some((line) => /^\s+db:/.test(line));
+  return text.split("\n").some((line) => /^\s+db:/.test(line));
 }
 
 // The commands the spec fixes as UNIVERSAL — always listed, whatever the repo's
@@ -4705,36 +4892,36 @@ const UNIVERSAL_COMMANDS = ["env", "check", "update"];
 // capability (its package.json declares no matching signal). cwd IS that repo, so
 // this reproduces the report directly and pins the fix.
 describe("run() — capability-aware usage (field-report fix: this plugin repo)", () => {
-	it("does NOT advertise dev in the bare usage of this repo (no vite capability)", async () => {
-		const result = await run([], cwd);
-		expect(result.exitCode).toBe(0);
-		expect(advertisesCommand(result.stdout, "dev")).toBe(false);
-	});
+  it("does NOT advertise dev in the bare usage of this repo (no vite capability)", async () => {
+    const result = await run([], cwd);
+    expect(result.exitCode).toBe(0);
+    expect(advertisesCommand(result.stdout, "dev")).toBe(false);
+  });
 
-	it("does NOT advertise any db:* task in the bare usage of this repo (no db capability)", async () => {
-		const result = await run([], cwd);
-		expect(result.exitCode).toBe(0);
-		expect(advertisesAnyDbCommand(result.stdout)).toBe(false);
-	});
+  it("does NOT advertise any db:* task in the bare usage of this repo (no db capability)", async () => {
+    const result = await run([], cwd);
+    expect(result.exitCode).toBe(0);
+    expect(advertisesAnyDbCommand(result.stdout)).toBe(false);
+  });
 });
 
 // --- Slice 2: a no-capability fixture hides the vite/db-gated commands -----------
 // The same contract on a deterministic hand-written fixture (empty-pkg declares no
 // signals): the vite-gated trio (dev/up/down) and every db:* task are absent.
 describe("run() — capability-aware usage (no-capability repo hides dev/up/down/db:*)", () => {
-	it("hides the vite-gated commands dev, up, and down", async () => {
-		const result = await run([], fixture("empty-pkg"));
-		expect(result.exitCode).toBe(0);
-		expect(advertisesCommand(result.stdout, "dev")).toBe(false);
-		expect(advertisesCommand(result.stdout, "up")).toBe(false);
-		expect(advertisesCommand(result.stdout, "down")).toBe(false);
-	});
+  it("hides the vite-gated commands dev, up, and down", async () => {
+    const result = await run([], fixture("empty-pkg"));
+    expect(result.exitCode).toBe(0);
+    expect(advertisesCommand(result.stdout, "dev")).toBe(false);
+    expect(advertisesCommand(result.stdout, "up")).toBe(false);
+    expect(advertisesCommand(result.stdout, "down")).toBe(false);
+  });
 
-	it("hides every db:* task (no drizzle capability)", async () => {
-		const result = await run([], fixture("empty-pkg"));
-		expect(result.exitCode).toBe(0);
-		expect(advertisesAnyDbCommand(result.stdout)).toBe(false);
-	});
+  it("hides every db:* task (no drizzle capability)", async () => {
+    const result = await run([], fixture("empty-pkg"));
+    expect(result.exitCode).toBe(0);
+    expect(advertisesAnyDbCommand(result.stdout)).toBe(false);
+  });
 });
 
 // --- Slice 3: universal commands are ALWAYS listed (over-filter guard) -----------
@@ -4742,13 +4929,13 @@ describe("run() — capability-aware usage (no-capability repo hides dev/up/down
 // a no-capability repo. Guards against an implementation that over-filters and drops
 // a universal command while removing the capability-gated ones.
 describe("run() — capability-aware usage (universal commands always listed)", () => {
-	for (const name of UNIVERSAL_COMMANDS) {
-		it(`advertises the universal command '${name}' even in a no-capability repo`, async () => {
-			const result = await run([], fixture("empty-pkg"));
-			expect(result.exitCode).toBe(0);
-			expect(advertisesCommand(result.stdout, name)).toBe(true);
-		});
-	}
+  for (const name of UNIVERSAL_COMMANDS) {
+    it(`advertises the universal command '${name}' even in a no-capability repo`, async () => {
+      const result = await run([], fixture("empty-pkg"));
+      expect(result.exitCode).toBe(0);
+      expect(advertisesCommand(result.stdout, name)).toBe(true);
+    });
+  }
 });
 
 // --- Slice 4: a single db tool → SHORT db:* names, still no vite lifecycle -------
@@ -4757,25 +4944,25 @@ describe("run() — capability-aware usage (universal commands always listed)", 
 // and NEVER the tool-namespaced forms; and because there is no vite capability,
 // dev/up/down stay hidden — proving db-gating and vite-gating are independent axes.
 describe("run() — capability-aware usage (single db tool → short db:* names)", () => {
-	it("advertises the resolved SHORT db task names (db:push, db:studio) for a drizzle-only repo", async () => {
-		const result = await run([], fixture("db-drizzle-only"));
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toContain("db:push");
-		expect(result.stdout).toContain("db:studio");
-	});
+  it("advertises the resolved SHORT db task names (db:push, db:studio) for a drizzle-only repo", async () => {
+    const result = await run([], fixture("db-drizzle-only"));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("db:push");
+    expect(result.stdout).toContain("db:studio");
+  });
 
-	it("never uses the tool-namespaced forms when only one db tool is present", async () => {
-		const result = await run([], fixture("db-drizzle-only"));
-		expect(result.stdout).not.toContain("db:drizzle:");
-		expect(result.stdout).not.toContain("db:supabase:");
-	});
+  it("never uses the tool-namespaced forms when only one db tool is present", async () => {
+    const result = await run([], fixture("db-drizzle-only"));
+    expect(result.stdout).not.toContain("db:drizzle:");
+    expect(result.stdout).not.toContain("db:supabase:");
+  });
 
-	it("still hides dev/up/down for a db-only repo without the vite capability", async () => {
-		const result = await run([], fixture("db-drizzle-only"));
-		expect(advertisesCommand(result.stdout, "dev")).toBe(false);
-		expect(advertisesCommand(result.stdout, "up")).toBe(false);
-		expect(advertisesCommand(result.stdout, "down")).toBe(false);
-	});
+  it("still hides dev/up/down for a db-only repo without the vite capability", async () => {
+    const result = await run([], fixture("db-drizzle-only"));
+    expect(advertisesCommand(result.stdout, "dev")).toBe(false);
+    expect(advertisesCommand(result.stdout, "up")).toBe(false);
+    expect(advertisesCommand(result.stdout, "down")).toBe(false);
+  });
 });
 
 // --- Slice 5: vite + drizzle → dev/up/down + SHORT db:* names --------------------
@@ -4784,38 +4971,38 @@ describe("run() — capability-aware usage (single db tool → short db:* names)
 // tool now) → the SHORT db task names (db:push, db:studio) appear and NO
 // tool-namespaced form exists (supabase-local is removed).
 describe("run() — capability-aware usage (vite + drizzle)", () => {
-	it("advertises the vite-gated commands dev, up, and down", async () => {
-		const result = await run([], fixture("dev-admin"));
-		expect(result.exitCode).toBe(0);
-		expect(advertisesCommand(result.stdout, "dev")).toBe(true);
-		expect(advertisesCommand(result.stdout, "up")).toBe(true);
-		expect(advertisesCommand(result.stdout, "down")).toBe(true);
-	});
+  it("advertises the vite-gated commands dev, up, and down", async () => {
+    const result = await run([], fixture("dev-admin"));
+    expect(result.exitCode).toBe(0);
+    expect(advertisesCommand(result.stdout, "dev")).toBe(true);
+    expect(advertisesCommand(result.stdout, "up")).toBe(true);
+    expect(advertisesCommand(result.stdout, "down")).toBe(true);
+  });
 
-	it("describes `up` as 'prepare + run the workspace' — the merged setup+run entry point, not just the run command", async () => {
-		// setup is folded into up, so up's usage description now covers PREPARE (bun
-		// install + worktree copies + extras) as well as run. The old up description
-		// named only the run command, so /prepare/i on the up line is the discriminator.
-		const result = await run([], fixture("dev-admin"));
-		expect(result.exitCode).toBe(0);
-		const upLine = result.stdout
-			.split("\n")
-			.find((line) => /^\s+up\b/.test(line));
-		expect(upLine, "usage should list `up`").toBeDefined();
-		expect(upLine).toMatch(/prepare/i);
-	});
+  it("describes `up` as 'prepare + run the workspace' — the merged setup+run entry point, not just the run command", async () => {
+    // setup is folded into up, so up's usage description now covers PREPARE (bun
+    // install + worktree copies + extras) as well as run. The old up description
+    // named only the run command, so /prepare/i on the up line is the discriminator.
+    const result = await run([], fixture("dev-admin"));
+    expect(result.exitCode).toBe(0);
+    const upLine = result.stdout
+      .split("\n")
+      .find((line) => /^\s+up\b/.test(line));
+    expect(upLine, "usage should list `up`").toBeDefined();
+    expect(upLine).toMatch(/prepare/i);
+  });
 
-	it("advertises the SHORT drizzle db task names (db:push, db:studio)", async () => {
-		const result = await run([], fixture("dev-admin"));
-		expect(result.stdout).toContain("db:push");
-		expect(result.stdout).toContain("db:studio");
-	});
+  it("advertises the SHORT drizzle db task names (db:push, db:studio)", async () => {
+    const result = await run([], fixture("dev-admin"));
+    expect(result.stdout).toContain("db:push");
+    expect(result.stdout).toContain("db:studio");
+  });
 
-	it("uses NO tool-namespaced db forms (db:drizzle:* / db:supabase:*)", async () => {
-		const result = await run([], fixture("dev-admin"));
-		expect(result.stdout).not.toContain("db:drizzle:");
-		expect(result.stdout).not.toContain("db:supabase:");
-	});
+  it("uses NO tool-namespaced db forms (db:drizzle:* / db:supabase:*)", async () => {
+    const result = await run([], fixture("dev-admin"));
+    expect(result.stdout).not.toContain("db:drizzle:");
+    expect(result.stdout).not.toContain("db:supabase:");
+  });
 });
 
 // --- Slice 6: the unknown-command error follows the SAME filter ------------------
@@ -4824,21 +5011,21 @@ describe("run() — capability-aware usage (vite + drizzle)", () => {
 // unknown-command slice pins that), so the filter must apply there too: hidden in a
 // no-capability repo, and showing the resolved short db names in a drizzle-only repo.
 describe("run() — capability-aware usage (the unknown-command error follows the same filter)", () => {
-	it("hides dev/up/down and every db:* task in the unknown-command usage of a no-capability repo", async () => {
-		const result = await run(["frobnicate"], fixture("empty-pkg"));
-		expect(result.exitCode).toBe(1);
-		expect(result.stderr).toContain("unknown command: frobnicate");
-		expect(advertisesCommand(result.stderr, "dev")).toBe(false);
-		expect(advertisesCommand(result.stderr, "up")).toBe(false);
-		expect(advertisesCommand(result.stderr, "down")).toBe(false);
-		expect(advertisesAnyDbCommand(result.stderr)).toBe(false);
-	});
+  it("hides dev/up/down and every db:* task in the unknown-command usage of a no-capability repo", async () => {
+    const result = await run(["frobnicate"], fixture("empty-pkg"));
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("unknown command: frobnicate");
+    expect(advertisesCommand(result.stderr, "dev")).toBe(false);
+    expect(advertisesCommand(result.stderr, "up")).toBe(false);
+    expect(advertisesCommand(result.stderr, "down")).toBe(false);
+    expect(advertisesAnyDbCommand(result.stderr)).toBe(false);
+  });
 
-	it("shows the resolved short db:* names in the unknown-command usage of a drizzle-only repo", async () => {
-		const result = await run(["frobnicate"], fixture("db-drizzle-only"));
-		expect(result.exitCode).toBe(1);
-		expect(result.stderr).toContain("db:push");
-	});
+  it("shows the resolved short db:* names in the unknown-command usage of a drizzle-only repo", async () => {
+    const result = await run(["frobnicate"], fixture("db-drizzle-only"));
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("db:push");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -4849,145 +5036,145 @@ describe("run() — capability-aware usage (the unknown-command error follows th
 // the README is written. Each expected literal is a spec-stated value.
 // ---------------------------------------------------------------------------
 describe("cli/README.md — npm-facing package documentation", () => {
-	it("exists at the cli package root", () => {
-		expect(existsSync(cliFile("README.md"))).toBe(true);
-	});
+  it("exists at the cli package root", () => {
+    expect(existsSync(cliFile("README.md"))).toBe(true);
+  });
 
-	it("introduces @kvnwolf/dobby as a zero-config toolchain", () => {
-		const raw = safeRead("README.md");
-		expect(raw).toContain("@kvnwolf/dobby");
-		expect(raw).toMatch(/zero-config/i);
-	});
+  it("introduces @kvnwolf/dobby as a zero-config toolchain", () => {
+    const raw = safeRead("README.md");
+    expect(raw).toContain("@kvnwolf/dobby");
+    expect(raw).toMatch(/zero-config/i);
+  });
 
-	it("documents the single-devDependency install", () => {
-		expect(safeRead("README.md")).toContain("bun add -d @kvnwolf/dobby");
-	});
+  it("documents the single-devDependency install", () => {
+    expect(safeRead("README.md")).toContain("bun add -d @kvnwolf/dobby");
+  });
 
-	it("documents the thin-config extends targets (tsconfig + biome/react)", () => {
-		const raw = safeRead("README.md");
-		expect(raw).toContain("@kvnwolf/dobby/tsconfig");
-		expect(raw).toContain("@kvnwolf/dobby/biome/react");
-	});
+  it("documents the thin-config extends targets (tsconfig + biome/react)", () => {
+    const raw = safeRead("README.md");
+    expect(raw).toContain("@kvnwolf/dobby/tsconfig");
+    expect(raw).toContain("@kvnwolf/dobby/biome/react");
+  });
 
-	it("documents the full command surface with dobby-prefixed examples", () => {
-		// `dobby commit` (→ `check --fix`) and `dobby setup` (folded into `up`) are
-		// both REMOVED — no longer part of the surface. Their absence is pinned by the
-		// sibling slices (the commit/setup removal describes and the negatives below).
-		const raw = safeRead("README.md");
-		for (const cmd of [
-			"dobby env",
-			"dobby check",
-			"dobby dev",
-			"dobby up",
-			"dobby down",
-			"dobby update",
-		]) {
-			expect(raw, `README must document \`${cmd}\``).toContain(cmd);
-		}
-		// db:* tasks are part of the documented surface (drizzle-only short names).
-		expect(raw).toContain("db:");
-	});
+  it("documents the full command surface with dobby-prefixed examples", () => {
+    // `dobby commit` (→ `check --fix`) and `dobby setup` (folded into `up`) are
+    // both REMOVED — no longer part of the surface. Their absence is pinned by the
+    // sibling slices (the commit/setup removal describes and the negatives below).
+    const raw = safeRead("README.md");
+    for (const cmd of [
+      "dobby env",
+      "dobby check",
+      "dobby dev",
+      "dobby up",
+      "dobby down",
+      "dobby update",
+    ]) {
+      expect(raw, `README must document \`${cmd}\``).toContain(cmd);
+    }
+    // db:* tasks are part of the documented surface (drizzle-only short names).
+    expect(raw).toContain("db:");
+  });
 
-	it("documents `dobby up` as 'prepare + run the workspace (idempotent)' — the single lifecycle entry point", () => {
-		// Spec part (c): up absorbs setup, so up's OWN docs must now cover PREPARE as
-		// well as run + idempotent. Splitting on `###` headings isolates the up section
-		// from the (deleted) setup section, so the "prepare" currently living in the
-		// setup section can't satisfy this vacuously — the word must appear in up's own
-		// section.
-		const raw = safeRead("README.md");
-		expect(raw).toContain("dobby up");
-		const upSection =
-			raw
-				.split(/^###\s/m)
-				.find((section) => /^`?dobby up\b/.test(section.trimStart())) ?? "";
-		expect(upSection, "README must have a `dobby up` section").not.toBe("");
-		expect(upSection).toMatch(/prepare/i);
-		expect(upSection).toMatch(/idempotent/i);
-	});
+  it("documents `dobby up` as 'prepare + run the workspace (idempotent)' — the single lifecycle entry point", () => {
+    // Spec part (c): up absorbs setup, so up's OWN docs must now cover PREPARE as
+    // well as run + idempotent. Splitting on `###` headings isolates the up section
+    // from the (deleted) setup section, so the "prepare" currently living in the
+    // setup section can't satisfy this vacuously — the word must appear in up's own
+    // section.
+    const raw = safeRead("README.md");
+    expect(raw).toContain("dobby up");
+    const upSection =
+      raw
+        .split(/^###\s/m)
+        .find((section) => /^`?dobby up\b/.test(section.trimStart())) ?? "";
+    expect(upSection, "README must have a `dobby up` section").not.toBe("");
+    expect(upSection).toMatch(/prepare/i);
+    expect(upSection).toMatch(/idempotent/i);
+  });
 
-	it("no longer documents the removed standalone `dobby setup` command, but keeps the setup[] extras as up's setup phase", () => {
-		// The removal contract on the docs: the standalone command is gone from the
-		// surface, but the `setup[]` config extras survive — now documented as running
-		// in up's setup phase (so the word "setup" still appears; only the command
-		// invocation `dobby setup` is purged).
-		const raw = safeRead("README.md");
-		// Anti-vacuous guard: the README must have real content.
-		expect(raw.length).toBeGreaterThan(0);
-		expect(raw).not.toContain("dobby setup");
-		// The setup[] extras are documented as part of up's setup phase.
-		expect(raw).toMatch(/setup phase/i);
-	});
+  it("no longer documents the removed standalone `dobby setup` command, but keeps the setup[] extras as up's setup phase", () => {
+    // The removal contract on the docs: the standalone command is gone from the
+    // surface, but the `setup[]` config extras survive — now documented as running
+    // in up's setup phase (so the word "setup" still appears; only the command
+    // invocation `dobby setup` is purged).
+    const raw = safeRead("README.md");
+    // Anti-vacuous guard: the README must have real content.
+    expect(raw.length).toBeGreaterThan(0);
+    expect(raw).not.toContain("dobby setup");
+    // The setup[] extras are documented as part of up's setup phase.
+    expect(raw).toMatch(/setup phase/i);
+  });
 
-	it("documents `dobby check --fix` and the convention of running it before committing", () => {
-		// Spec part (c): the README documents `check --fix` and states the standard —
-		// "run `bunx dobby check --fix` before committing — it IS the pre-commit gate".
-		const raw = safeRead("README.md");
-		expect(raw).toContain("check --fix");
-		expect(raw).toMatch(/before commit/i);
-		expect(raw).toMatch(/pre[- ]commit/i);
-	});
+  it("documents `dobby check --fix` and the convention of running it before committing", () => {
+    // Spec part (c): the README documents `check --fix` and states the standard —
+    // "run `bunx dobby check --fix` before committing — it IS the pre-commit gate".
+    const raw = safeRead("README.md");
+    expect(raw).toContain("check --fix");
+    expect(raw).toMatch(/before commit/i);
+    expect(raw).toMatch(/pre[- ]commit/i);
+  });
 
-	it("no longer documents the removed `dobby commit` command or its `--pr` flag", () => {
-		// The removal contract on the docs: the commit command and its commit-only PR
-		// flags are gone from the CLI, so the README must not advertise them.
-		const raw = safeRead("README.md");
-		// Anti-vacuous guard: the README must have real content, else the negatives
-		// below pass trivially on an empty string.
-		expect(raw.length).toBeGreaterThan(0);
-		expect(raw).not.toContain("dobby commit");
-		expect(raw).not.toContain("--pr");
-	});
+  it("no longer documents the removed `dobby commit` command or its `--pr` flag", () => {
+    // The removal contract on the docs: the commit command and its commit-only PR
+    // flags are gone from the CLI, so the README must not advertise them.
+    const raw = safeRead("README.md");
+    // Anti-vacuous guard: the README must have real content, else the negatives
+    // below pass trivially on an empty string.
+    expect(raw.length).toBeGreaterThan(0);
+    expect(raw).not.toContain("dobby commit");
+    expect(raw).not.toContain("--pr");
+  });
 
-	it("documents the key command flags in examples (--json, --hook, --dry-run, --fix)", () => {
-		// `--db` (supabase-local) and `--pr` (commit) are both REMOVED, so neither is
-		// documented; `--fix` is the new documented check flag.
-		const raw = safeRead("README.md");
-		for (const flag of ["--json", "--hook", "--dry-run", "--fix"]) {
-			expect(raw, `README must document the ${flag} flag`).toContain(flag);
-		}
-	});
+  it("documents the key command flags in examples (--json, --hook, --dry-run, --fix)", () => {
+    // `--db` (supabase-local) and `--pr` (commit) are both REMOVED, so neither is
+    // documented; `--fix` is the new documented check flag.
+    const raw = safeRead("README.md");
+    for (const flag of ["--json", "--hook", "--dry-run", "--fix"]) {
+      expect(raw, `README must document the ${flag} flag`).toContain(flag);
+    }
+  });
 
-	it("notes that the help output is capability-filtered per repo", () => {
-		const raw = safeRead("README.md");
-		expect(raw).toMatch(/capabilit/i);
-		expect(raw).toMatch(/help|usage/i);
-		expect(raw).toMatch(
-			/filter|only what applies|applicable|subset|per[- ]repo/i,
-		);
-	});
+  it("notes that the help output is capability-filtered per repo", () => {
+    const raw = safeRead("README.md");
+    expect(raw).toMatch(/capabilit/i);
+    expect(raw).toMatch(/help|usage/i);
+    expect(raw).toMatch(
+      /filter|only what applies|applicable|subset|per[- ]repo/i
+    );
+  });
 
-	it("documents the surviving canonical conventions (emails dir, NEON creds in .env.local)", () => {
-		// `src/emails` STAYS; `src/database.types.ts` DIES (it was supabase codegen,
-		// removed this task) — asserted absent by the purge test below.
-		const raw = safeRead("README.md");
-		expect(raw).toContain("src/emails");
-		expect(raw).toContain(".env.local");
-		expect(raw).toMatch(/NEON_/);
-	});
+  it("documents the surviving canonical conventions (emails dir, NEON creds in .env.local)", () => {
+    // `src/emails` STAYS; `src/database.types.ts` DIES (it was supabase codegen,
+    // removed this task) — asserted absent by the purge test below.
+    const raw = safeRead("README.md");
+    expect(raw).toContain("src/emails");
+    expect(raw).toContain(".env.local");
+    expect(raw).toMatch(/NEON_/);
+  });
 
-	it("purges every supabase and convex mention, and the dead src/database.types.ts path", () => {
-		// The removal contract on the docs: supabase-local and convex support are gone,
-		// so the README must not mention either tool, and the supabase-codegen canonical
-		// path `src/database.types.ts` must not appear.
-		const raw = safeRead("README.md");
-		// Anti-vacuous guard: the README must actually exist / have content, else the
-		// negatives below pass trivially on an empty string.
-		expect(raw.length).toBeGreaterThan(0);
-		expect(raw).not.toMatch(/supabase/i);
-		expect(raw).not.toMatch(/convex/i);
-		expect(raw).not.toContain("src/database.types.ts");
-	});
+  it("purges every supabase and convex mention, and the dead src/database.types.ts path", () => {
+    // The removal contract on the docs: supabase-local and convex support are gone,
+    // so the README must not mention either tool, and the supabase-codegen canonical
+    // path `src/database.types.ts` must not appear.
+    const raw = safeRead("README.md");
+    // Anti-vacuous guard: the README must actually exist / have content, else the
+    // negatives below pass trivially on an empty string.
+    expect(raw.length).toBeGreaterThan(0);
+    expect(raw).not.toMatch(/supabase/i);
+    expect(raw).not.toMatch(/convex/i);
+    expect(raw).not.toContain("src/database.types.ts");
+  });
 
-	it("documents the dobby.config.json schema (files[] + setup/teardown/checks extras)", () => {
-		// The config schema is UNCHANGED by the merge: setup[] extras stay under the
-		// same `setup` key (now consumed by up's setup phase, not a standalone command).
-		const raw = safeRead("README.md");
-		expect(raw).toContain("dobby.config.json");
-		expect(raw).toContain("files");
-		expect(raw).toContain("setup");
-		expect(raw).toContain("teardown");
-		expect(raw).toContain("checks");
-	});
+  it("documents the dobby.config.json schema (files[] + setup/teardown/checks extras)", () => {
+    // The config schema is UNCHANGED by the merge: setup[] extras stay under the
+    // same `setup` key (now consumed by up's setup phase, not a standalone command).
+    const raw = safeRead("README.md");
+    expect(raw).toContain("dobby.config.json");
+    expect(raw).toContain("files");
+    expect(raw).toContain("setup");
+    expect(raw).toContain("teardown");
+    expect(raw).toContain("checks");
+  });
 });
 
 // ===========================================================================
@@ -5037,23 +5224,23 @@ describe("cli/README.md — npm-facing package documentation", () => {
 // (dry-run only). Returns the realpath-normalized root (matching git's resolved
 // top-level); registered in `track` for afterAll cleanup.
 function makeBinResRepo(
-	track: string[],
-	opts: { pkg?: unknown; consumerBins?: string[] } = {},
+  track: string[],
+  opts: { pkg?: unknown; consumerBins?: string[] } = {}
 ): string {
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-binres-")));
-	track.push(dir);
-	gitIn(dir, "init", "-q");
-	if (opts.pkg !== undefined) {
-		writeFileSync(join(dir, "package.json"), JSON.stringify(opts.pkg, null, 2));
-	}
-	for (const name of opts.consumerBins ?? []) {
-		const binDir = join(dir, "node_modules", ".bin");
-		mkdirSync(binDir, { recursive: true });
-		const binPath = join(binDir, name);
-		writeFileSync(binPath, "#!/bin/sh\nexit 0\n");
-		chmodSync(binPath, 0o755);
-	}
-	return dir;
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-binres-")));
+  track.push(dir);
+  gitIn(dir, "init", "-q");
+  if (opts.pkg !== undefined) {
+    writeFileSync(join(dir, "package.json"), JSON.stringify(opts.pkg, null, 2));
+  }
+  for (const name of opts.consumerBins ?? []) {
+    const binDir = join(dir, "node_modules", ".bin");
+    mkdirSync(binDir, { recursive: true });
+    const binPath = join(binDir, name);
+    writeFileSync(binPath, "#!/bin/sh\nexit 0\n");
+    chmodSync(binPath, 0o755);
+  }
+  return dir;
 }
 
 // The portless-wrapped MAIN line of a `dev --dry-run` plan: the only line that
@@ -5063,140 +5250,147 @@ function makeBinResRepo(
 // node_modules/.vite` cache-clear line match neither ` run ` nor a lowercase
 // `\bdev\b`, so this uniquely finds the portless main.)
 const devMainLine = (stdout: string): string | undefined =>
-	stdout.split("\n").find((l) => / run /.test(l) && /\bdev\b/.test(l));
+  stdout.split("\n").find((l) => / run /.test(l) && /\bdev\b/.test(l));
 
 // The whitespace-delimited token on `line` referencing `tool` — the resolved
 // absolute path after the fix, or the bare tool name before it. Immune to the
 // plan's leading indentation.
 const toolToken = (line: string, tool: string): string | undefined =>
-	line
-		.split(/\s+/)
-		.filter(Boolean)
-		.find((t) => t.includes(tool));
+  line
+    .split(/\s+/)
+    .filter(Boolean)
+    .find((t) => t.includes(tool));
 
 // The resolved-command line of a `db:* --dry-run` plan: the line naming the db
 // tool's subcommand, never the `cwd:` line (which carries the workroot path).
 const dbCommandLine = (stdout: string, tool: string): string | undefined =>
-	stdout
-		.split("\n")
-		.find((l) => l.includes(tool) && !l.trim().startsWith("cwd:"));
+  stdout
+    .split("\n")
+    .find((l) => l.includes(tool) && !l.trim().startsWith("cwd:"));
 
 // --- Slice 1 (tracer bullet): bundled portless resolves PATH-independently -----
 // The headline of the fix — the exact field bug. A vite project's `dev --dry-run`
 // must render the portless wrapper as an ABSOLUTE path from dobby's OWN tree, and
 // that resolution must hold even with PATH emptied (portless is never on PATH).
 describe("run() — dev command (bundled portless resolves from dobby's own tree)", () => {
-	const dirs: string[] = [];
-	let repo: string;
+  const dirs: string[] = [];
+  let repo: string;
 
-	beforeAll(() => {
-		// vite ONLY (the app) and NO consumer vite bin — so vite stays bare and the
-		// portless wrapper is the sole thing under test here.
-		repo = makeBinResRepo(dirs, {
-			pkg: { name: "binres-vite", devDependencies: { vite: "^5.0.0" } },
-		});
-	});
+  beforeAll(() => {
+    // vite ONLY (the app) and NO consumer vite bin — so vite stays bare and the
+    // portless wrapper is the sole thing under test here.
+    repo = makeBinResRepo(dirs, {
+      pkg: { devDependencies: { vite: "^5.0.0" }, name: "binres-vite" },
+    });
+  });
 
-	afterAll(() => {
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	it("renders the portless wrapper as an ABSOLUTE bundled path in `dev --dry-run` (never the bare word `portless`)", async () => {
-		const result = await run(["dev", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		// Anti-tautology guard: an unimplemented `dev` ALSO exits nonzero via the
-		// unknown-command branch — assert this is the genuine dev/dry-run path.
-		expect(result.stderr).not.toContain("unknown command");
-		const line = devMainLine(result.stdout);
-		expect(
-			line,
-			"expected a portless-wrapped dev line in the plan",
-		).toBeDefined();
-		const token = toolToken(line ?? "", "portless");
-		expect(token, "expected a portless token on the main line").toBeDefined();
-		// The field bug: a BARE `portless` (off PATH) fails to spawn. The fix
-		// resolves dobby's bundled copy to an ABSOLUTE path.
-		expect(token?.startsWith("/")).toBe(true);
-	}, 20000);
+  it("renders the portless wrapper as an ABSOLUTE bundled path in `dev --dry-run` (never the bare word `portless`)", async () => {
+    const result = await run(["dev", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    // Anti-tautology guard: an unimplemented `dev` ALSO exits nonzero via the
+    // unknown-command branch — assert this is the genuine dev/dry-run path.
+    expect(result.stderr).not.toContain("unknown command");
+    const line = devMainLine(result.stdout);
+    expect(
+      line,
+      "expected a portless-wrapped dev line in the plan"
+    ).toBeDefined();
+    const token = toolToken(line ?? "", "portless");
+    expect(token, "expected a portless token on the main line").toBeDefined();
+    // The field bug: a BARE `portless` (off PATH) fails to spawn. The fix
+    // resolves dobby's bundled copy to an ABSOLUTE path.
+    expect(token?.startsWith("/")).toBe(true);
+  }, 20_000);
 
-	it("resolves portless to a real bin inside a node_modules tree (absolute + exists on disk)", async () => {
-		const result = await run(["dev", "--dry-run"], repo);
-		const token = toolToken(devMainLine(result.stdout) ?? "", "portless") ?? "";
-		expect(token.startsWith("/")).toBe(true);
-		// dobby bundles portless as a dependency, so the resolved path sits under a
-		// node_modules tree and names a REAL file (not a fabricated string).
-		expect(token).toContain("node_modules");
-		expect(existsSync(token)).toBe(true);
-	}, 20000);
+  it("resolves portless to a real bin inside a node_modules tree (absolute + exists on disk)", async () => {
+    const result = await run(["dev", "--dry-run"], repo);
+    const token = toolToken(devMainLine(result.stdout) ?? "", "portless") ?? "";
+    expect(token.startsWith("/")).toBe(true);
+    // dobby bundles portless as a dependency, so the resolved path sits under a
+    // node_modules tree and names a REAL file (not a fabricated string).
+    expect(token).toContain("node_modules");
+    expect(existsSync(token)).toBe(true);
+  }, 20_000);
 
-	it("still resolves portless to an absolute existing path when PATH is emptied (reproduces the field condition)", async () => {
-		// The exact field condition: portless is NOT on the spawn PATH. Bundled
-		// resolution walks dobby's node_modules, so it must be PATH-independent — a
-		// `which portless`-style (PATH-based) resolver would find nothing here and
-		// fall back to the bare word.
-		const savedPath = process.env.PATH;
-		// A minimal PATH that still carries `git` (the workroot resolve) but NOT
-		// portless.
-		process.env.PATH = "/usr/bin:/bin";
-		try {
-			const result = await run(["dev", "--dry-run"], repo);
-			expect(result.exitCode).toBe(0);
-			const token =
-				toolToken(devMainLine(result.stdout) ?? "", "portless") ?? "";
-			expect(token.startsWith("/")).toBe(true);
-			expect(existsSync(token)).toBe(true);
-		} finally {
-			if (savedPath === undefined) delete process.env.PATH;
-			else process.env.PATH = savedPath;
-		}
-	}, 20000);
+  it("still resolves portless to an absolute existing path when PATH is emptied (reproduces the field condition)", async () => {
+    // The exact field condition: portless is NOT on the spawn PATH. Bundled
+    // resolution walks dobby's node_modules, so it must be PATH-independent — a
+    // `which portless`-style (PATH-based) resolver would find nothing here and
+    // fall back to the bare word.
+    const savedPath = process.env.PATH;
+    // A minimal PATH that still carries `git` (the workroot resolve) but NOT
+    // portless.
+    process.env.PATH = "/usr/bin:/bin";
+    try {
+      const result = await run(["dev", "--dry-run"], repo);
+      expect(result.exitCode).toBe(0);
+      const token =
+        toolToken(devMainLine(result.stdout) ?? "", "portless") ?? "";
+      expect(token.startsWith("/")).toBe(true);
+      expect(existsSync(token)).toBe(true);
+    } finally {
+      if (savedPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = savedPath;
+      }
+    }
+  }, 20_000);
 });
 
 // --- Slice 2: consumer bin resolution in `dev --dry-run` (vite) -----------------
 // The consumer half: with a fake <workroot>/node_modules/.bin/vite the dev plan
 // must render that EXACT absolute path; without it, the bare `vite` name.
 describe("run() — dev command (consumer vite bin resolution in the plan)", () => {
-	const dirs: string[] = [];
+  const dirs: string[] = [];
 
-	afterAll(() => {
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	it("renders the consumer vite bin as the absolute <workroot>/node_modules/.bin/vite path when present", async () => {
-		const repo = makeBinResRepo(dirs, {
-			pkg: {
-				name: "binres-vite-consumer",
-				devDependencies: { vite: "^5.0.0" },
-			},
-			consumerBins: ["vite"],
-		});
-		// Independent expected value: WE created this bin, so its absolute path is a
-		// known literal the resolved dev plan must echo.
-		const viteBin = join(repo, "node_modules", ".bin", "vite");
-		const result = await run(["dev", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		const line = devMainLine(result.stdout);
-		expect(
-			line,
-			"expected a portless-wrapped dev line in the plan",
-		).toBeDefined();
-		expect(line).toContain(viteBin);
-	}, 20000);
+  it("renders the consumer vite bin as the absolute <workroot>/node_modules/.bin/vite path when present", async () => {
+    const repo = makeBinResRepo(dirs, {
+      consumerBins: ["vite"],
+      pkg: {
+        devDependencies: { vite: "^5.0.0" },
+        name: "binres-vite-consumer",
+      },
+    });
+    // Independent expected value: WE created this bin, so its absolute path is a
+    // known literal the resolved dev plan must echo.
+    const viteBin = join(repo, "node_modules", ".bin", "vite");
+    const result = await run(["dev", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    const line = devMainLine(result.stdout);
+    expect(
+      line,
+      "expected a portless-wrapped dev line in the plan"
+    ).toBeDefined();
+    expect(line).toContain(viteBin);
+  }, 20_000);
 
-	it("falls back to the bare `vite` name when no consumer vite bin is installed", async () => {
-		// Regression guard for the fallback half: no consumer bin → the bare tool
-		// name, never an absolute node_modules path.
-		const repo = makeBinResRepo(dirs, {
-			pkg: { name: "binres-vite-bare", devDependencies: { vite: "^5.0.0" } },
-		});
-		const result = await run(["dev", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		const token = toolToken(devMainLine(result.stdout) ?? "", "vite");
-		expect(token, "expected a vite token on the main line").toBeDefined();
-		expect(token).toBe("vite");
-	}, 20000);
+  it("falls back to the bare `vite` name when no consumer vite bin is installed", async () => {
+    // Regression guard for the fallback half: no consumer bin → the bare tool
+    // name, never an absolute node_modules path.
+    const repo = makeBinResRepo(dirs, {
+      pkg: { devDependencies: { vite: "^5.0.0" }, name: "binres-vite-bare" },
+    });
+    const result = await run(["dev", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    const token = toolToken(devMainLine(result.stdout) ?? "", "vite");
+    expect(token, "expected a vite token on the main line").toBeDefined();
+    expect(token).toBe("vite");
+  }, 20_000);
 });
 
 // --- Slice 3: consumer bin resolution in `db:* --dry-run` (drizzle-kit) ---------
@@ -5204,52 +5398,54 @@ describe("run() — dev command (consumer vite bin resolution in the plan)", () 
 // fake <workroot>/node_modules/.bin/drizzle-kit → `db:generate --dry-run` renders
 // that absolute consumer path; without it, the bare name.
 describe("run() — db:* dispatch (consumer bin resolution in the dry-run plan)", () => {
-	const dirs: string[] = [];
+  const dirs: string[] = [];
 
-	afterAll(() => {
-		for (const d of dirs) rmSync(d, { recursive: true, force: true });
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	it("renders the db tool as the absolute <workroot>/node_modules/.bin/drizzle-kit path when the consumer bin is present", async () => {
-		const repo = makeBinResRepo(dirs, {
-			pkg: {
-				name: "binres-drizzle",
-				devDependencies: { "drizzle-kit": "^0.20.0" },
-			},
-			consumerBins: ["drizzle-kit"],
-		});
-		// Independent expected value: WE created this bin; the resolved db plan must
-		// echo its exact path.
-		const drizzleBin = join(repo, "node_modules", ".bin", "drizzle-kit");
-		const result = await run(["db:generate", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		expect(result.stderr).not.toContain("unknown command");
-		expect(result.stdout).toContain(drizzleBin);
-		// The resolved-path form still names the `generate` subcommand (…/.bin/
-		// drizzle-kit generate).
-		const line = dbCommandLine(result.stdout, "drizzle-kit");
-		expect(line, "expected a drizzle-kit command line").toBeDefined();
-		expect(line).toContain("generate");
-	}, 20000);
+  it("renders the db tool as the absolute <workroot>/node_modules/.bin/drizzle-kit path when the consumer bin is present", async () => {
+    const repo = makeBinResRepo(dirs, {
+      consumerBins: ["drizzle-kit"],
+      pkg: {
+        devDependencies: { "drizzle-kit": "^0.20.0" },
+        name: "binres-drizzle",
+      },
+    });
+    // Independent expected value: WE created this bin; the resolved db plan must
+    // echo its exact path.
+    const drizzleBin = join(repo, "node_modules", ".bin", "drizzle-kit");
+    const result = await run(["db:generate", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toContain("unknown command");
+    expect(result.stdout).toContain(drizzleBin);
+    // The resolved-path form still names the `generate` subcommand (…/.bin/
+    // drizzle-kit generate).
+    const line = dbCommandLine(result.stdout, "drizzle-kit");
+    expect(line, "expected a drizzle-kit command line").toBeDefined();
+    expect(line).toContain("generate");
+  }, 20_000);
 
-	it("falls back to the bare `drizzle-kit` name in db:* --dry-run when no consumer bin is installed", async () => {
-		// Regression guard: no consumer bin → the bare command, never an absolute
-		// node_modules/.bin path (the `cwd:` line carries the workroot path, so we
-		// scope to the tool's command line).
-		const repo = makeBinResRepo(dirs, {
-			pkg: {
-				name: "binres-drizzle-bare",
-				devDependencies: { "drizzle-kit": "^0.20.0" },
-			},
-		});
-		const result = await run(["db:generate", "--dry-run"], repo);
-		expect(result.exitCode).toBe(0);
-		const line = dbCommandLine(result.stdout, "drizzle-kit");
-		expect(line, "expected a drizzle-kit command line").toBeDefined();
-		expect(line).toContain("drizzle-kit generate");
-		expect(line).not.toContain(join(repo, "node_modules", ".bin"));
-	}, 20000);
+  it("falls back to the bare `drizzle-kit` name in db:* --dry-run when no consumer bin is installed", async () => {
+    // Regression guard: no consumer bin → the bare command, never an absolute
+    // node_modules/.bin path (the `cwd:` line carries the workroot path, so we
+    // scope to the tool's command line).
+    const repo = makeBinResRepo(dirs, {
+      pkg: {
+        devDependencies: { "drizzle-kit": "^0.20.0" },
+        name: "binres-drizzle-bare",
+      },
+    });
+    const result = await run(["db:generate", "--dry-run"], repo);
+    expect(result.exitCode).toBe(0);
+    const line = dbCommandLine(result.stdout, "drizzle-kit");
+    expect(line, "expected a drizzle-kit command line").toBeDefined();
+    expect(line).toContain("drizzle-kit generate");
+    expect(line).not.toContain(join(repo, "node_modules", ".bin"));
+  }, 20_000);
 });
 
 // ===========================================================================
@@ -5292,36 +5488,36 @@ const DRIZZLE_ASSET = cliFile("drizzle.base.mjs");
 // (ADR-0015 fail-loud, NO silent vite.base — base has no framework plugins, so the
 // app couldn't serve). A tanstack-start app declares ALL of these (the house stack).
 const TANSTACK_DEPS: Record<string, string> = {
-	"@tanstack/react-start": "^1.0.0",
-	"@tanstack/devtools-vite": "^0.2.0",
-	"@tailwindcss/vite": "^4.0.0",
-	nitro: "^2.0.0",
-	"@vitejs/plugin-react": "^4.0.0",
+  "@tailwindcss/vite": "^4.0.0",
+  "@tanstack/devtools-vite": "^0.2.0",
+  "@tanstack/react-start": "^1.0.0",
+  "@vitejs/plugin-react": "^4.0.0",
+  nitro: "^2.0.0",
 };
 
 // The same house stack MINUS `nitro` — a config-less tanstack app that dobby BLOCKS
 // (ADR-0015 fail-loud): there is no import-safe fallback that still serves, so
 // dev/build/check hard-error naming the missing package, never a silent vite.base.
 const TANSTACK_MISSING_NITRO: Record<string, string> = {
-	"@tanstack/react-start": "^1.0.0",
-	"@tanstack/devtools-vite": "^0.2.0",
-	"@tailwindcss/vite": "^4.0.0",
-	"@vitejs/plugin-react": "^4.0.0",
-	// nitro deliberately absent.
+  "@tailwindcss/vite": "^4.0.0",
+  "@tanstack/devtools-vite": "^0.2.0",
+  "@tanstack/react-start": "^1.0.0",
+  "@vitejs/plugin-react": "^4.0.0",
+  // nitro deliberately absent.
 };
 
 // Assert a stream carries the ADR-0015 BLOCKED-tanstack error: the missing package(s)
 // named PLUS both remedies (install with `bun add -d`, or write your own
 // vite.config.ts). Used across the dev/build/check --build surfaces (identical text).
 function expectViteBlocked(text: string, ...missing: string[]): void {
-	expect(text).toContain("missing packages the default vite config imports");
-	for (const pkg of missing) {
-		expect(text).toContain(pkg);
-	}
-	expect(text).toContain("bun add -d");
-	expect(text).toContain("write your own vite.config.ts");
-	// The base preset must NEVER be silently substituted for a blocked tanstack app.
-	expect(text).not.toContain(VITE_BASE_ASSET);
+  expect(text).toContain("missing packages the default vite config imports");
+  for (const missingName of missing) {
+    expect(text).toContain(missingName);
+  }
+  expect(text).toContain("bun add -d");
+  expect(text).toContain("write your own vite.config.ts");
+  // The base preset must NEVER be silently substituted for a blocked tanstack app.
+  expect(text).not.toContain(VITE_BASE_ASSET);
 }
 
 // Build a THROWAWAY git repo for the config-less slices: `git init` (the workroot
@@ -5330,527 +5526,527 @@ function expectViteBlocked(text: string, ...missing: string[]): void {
 // optional own-config FILES (whose presence flips a tool to the override path), and
 // optional fake consumer bins. Registered in `dirs` for afterAll cleanup.
 function makeCfglessRepo(
-	dirs: string[],
-	opts: {
-		pkg?: unknown;
-		files?: Record<string, string>;
-		consumerBins?: string[];
-	} = {},
+  dirs: string[],
+  opts: {
+    pkg?: unknown;
+    files?: Record<string, string>;
+    consumerBins?: string[];
+  } = {}
 ): string {
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-cfgless-")));
-	dirs.push(dir);
-	gitIn(dir, "init", "-q");
-	if (opts.pkg !== undefined) {
-		writeFileSync(join(dir, "package.json"), JSON.stringify(opts.pkg, null, 2));
-	}
-	for (const [rel, content] of Object.entries(opts.files ?? {})) {
-		const full = join(dir, rel);
-		mkdirSync(dirname(full), { recursive: true });
-		writeFileSync(full, content);
-	}
-	for (const name of opts.consumerBins ?? []) {
-		const binDir = join(dir, "node_modules", ".bin");
-		mkdirSync(binDir, { recursive: true });
-		const binPath = join(binDir, name);
-		writeFileSync(binPath, "#!/bin/sh\nexit 0\n");
-		chmodSync(binPath, 0o755);
-	}
-	return dir;
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-cfgless-")));
+  dirs.push(dir);
+  gitIn(dir, "init", "-q");
+  if (opts.pkg !== undefined) {
+    writeFileSync(join(dir, "package.json"), JSON.stringify(opts.pkg, null, 2));
+  }
+  for (const [rel, content] of Object.entries(opts.files ?? {})) {
+    const full = join(dir, rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  }
+  for (const name of opts.consumerBins ?? []) {
+    const binDir = join(dir, "node_modules", ".bin");
+    mkdirSync(binDir, { recursive: true });
+    const binPath = join(binDir, name);
+    writeFileSync(binPath, "#!/bin/sh\nexit 0\n");
+    chmodSync(binPath, 0o755);
+  }
+  return dir;
 }
 
 describe("config-less defaults (ADR-0015) + dobby build", () => {
-	const dirs: string[] = [];
+  const dirs: string[] = [];
 
-	afterAll(() => {
-		for (const d of dirs) {
-			rmSync(d, { recursive: true, force: true });
-		}
-		dirs.length = 0;
-	});
+  afterAll(() => {
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
 
-	// --- dev --dry-run: --config-when-absent on the vite main -------------------
-	describe("dev --dry-run carries --config only when the consumer has none", () => {
-		it("appends --config <vite.base.mjs> to the vite dev main when no vite.config is present", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "cfg-vite", devDependencies: { vite: "^5.0.0" } },
-			});
-			const result = await run(["dev", "--dry-run"], repo);
-			expect(result.exitCode).toBe(0);
-			expect(result.stderr).not.toContain("unknown command");
-			const line = devMainLine(result.stdout);
-			expect(line, "expected a portless-wrapped vite dev line").toBeDefined();
-			expect(line).toContain("--config");
-			expect(line).toContain(VITE_BASE_ASSET);
-		}, 20000);
+  // --- dev --dry-run: --config-when-absent on the vite main -------------------
+  describe("dev --dry-run carries --config only when the consumer has none", () => {
+    it("appends --config <vite.base.mjs> to the vite dev main when no vite.config is present", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: { devDependencies: { vite: "^5.0.0" }, name: "cfg-vite" },
+      });
+      const result = await run(["dev", "--dry-run"], repo);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).not.toContain("unknown command");
+      const line = devMainLine(result.stdout);
+      expect(line, "expected a portless-wrapped vite dev line").toBeDefined();
+      expect(line).toContain("--config");
+      expect(line).toContain(VITE_BASE_ASSET);
+    }, 20_000);
 
-		it("picks the tanstack vite preset for a tanstack app declaring ALL five imported packages", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "cfg-tanstack",
-					dependencies: { ...TANSTACK_DEPS },
-					devDependencies: { vite: "^5.0.0" },
-				},
-			});
-			const result = await run(["dev", "--dry-run"], repo);
-			expect(result.exitCode).toBe(0);
-			const line = devMainLine(result.stdout);
-			expect(line).toContain(VITE_TANSTACK_ASSET);
-			// The base preset must NOT leak in — every imported package is present.
-			expect(line).not.toContain(VITE_BASE_ASSET);
-		}, 20000);
+    it("picks the tanstack vite preset for a tanstack app declaring ALL five imported packages", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: {
+          dependencies: { ...TANSTACK_DEPS },
+          devDependencies: { vite: "^5.0.0" },
+          name: "cfg-tanstack",
+        },
+      });
+      const result = await run(["dev", "--dry-run"], repo);
+      expect(result.exitCode).toBe(0);
+      const line = devMainLine(result.stdout);
+      expect(line).toContain(VITE_TANSTACK_ASSET);
+      // The base preset must NOT leak in — every imported package is present.
+      expect(line).not.toContain(VITE_BASE_ASSET);
+    }, 20_000);
 
-		// The fail-loud stance (ADR-0015, round 3): the tanstack-start capability fires
-		// on @tanstack/react-start ALONE, but the preset imports five packages
-		// unconditionally. Missing ANY one (here nitro, an optional peer) leaves dobby
-		// with NO import-safe fallback that still serves — vite.base has no framework
-		// plugins — so a config-less tanstack app is a HARD ERROR naming the missing
-		// package + both remedies, NEVER a silent vite.base fallback.
-		it("HARD-ERRORS (never falls back to vite.base) when a config-less tanstack app is MISSING an imported package (no nitro)", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "cfg-tanstack-partial",
-					dependencies: { ...TANSTACK_MISSING_NITRO },
-					devDependencies: { vite: "^5.0.0" },
-				},
-			});
-			const result = await run(["dev", "--dry-run"], repo);
-			expect(result.exitCode).toBe(1);
-			expect(result.stderr).not.toContain("unknown command");
-			expectViteBlocked(combined(result), "nitro");
-		}, 20000);
+    // The fail-loud stance (ADR-0015, round 3): the tanstack-start capability fires
+    // on @tanstack/react-start ALONE, but the preset imports five packages
+    // unconditionally. Missing ANY one (here nitro, an optional peer) leaves dobby
+    // with NO import-safe fallback that still serves — vite.base has no framework
+    // plugins — so a config-less tanstack app is a HARD ERROR naming the missing
+    // package + both remedies, NEVER a silent vite.base fallback.
+    it("HARD-ERRORS (never falls back to vite.base) when a config-less tanstack app is MISSING an imported package (no nitro)", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: {
+          dependencies: { ...TANSTACK_MISSING_NITRO },
+          devDependencies: { vite: "^5.0.0" },
+          name: "cfg-tanstack-partial",
+        },
+      });
+      const result = await run(["dev", "--dry-run"], repo);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).not.toContain("unknown command");
+      expectViteBlocked(combined(result), "nitro");
+    }, 20_000);
 
-		it("omits --config entirely when the consumer ships a vite.config.ts (total override)", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "cfg-vite-own", devDependencies: { vite: "^5.0.0" } },
-				files: { "vite.config.ts": "export default {};\n" },
-			});
-			const result = await run(["dev", "--dry-run"], repo);
-			expect(result.exitCode).toBe(0);
-			const line = devMainLine(result.stdout);
-			expect(line, "expected a vite dev line").toBeDefined();
-			expect(line).not.toContain("--config");
-		}, 20000);
+    it("omits --config entirely when the consumer ships a vite.config.ts (total override)", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: { "vite.config.ts": "export default {};\n" },
+        pkg: { devDependencies: { vite: "^5.0.0" }, name: "cfg-vite-own" },
+      });
+      const result = await run(["dev", "--dry-run"], repo);
+      expect(result.exitCode).toBe(0);
+      const line = devMainLine(result.stdout);
+      expect(line, "expected a vite dev line").toBeDefined();
+      expect(line).not.toContain("--config");
+    }, 20_000);
 
-		// A tanstack app MISSING an import but shipping its OWN vite.config is NOT
-		// blocked: a present config is a TOTAL override that supersedes both the default
-		// AND the block (the consumer supplies the plugins itself). No error, no default.
-		it("does NOT block a tanstack app missing an import when it ships its own vite.config.ts", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "cfg-tanstack-own",
-					dependencies: { ...TANSTACK_MISSING_NITRO },
-					devDependencies: { vite: "^5.0.0" },
-				},
-				files: { "vite.config.ts": "export default {};\n" },
-			});
-			const result = await run(["dev", "--dry-run"], repo);
-			expect(result.exitCode).toBe(0);
-			expect(combined(result)).not.toContain(
-				"missing packages the default vite config imports",
-			);
-			const line = devMainLine(result.stdout);
-			expect(line, "expected a vite dev line").toBeDefined();
-			expect(line).not.toContain("--config");
-		}, 20000);
+    // A tanstack app MISSING an import but shipping its OWN vite.config is NOT
+    // blocked: a present config is a TOTAL override that supersedes both the default
+    // AND the block (the consumer supplies the plugins itself). No error, no default.
+    it("does NOT block a tanstack app missing an import when it ships its own vite.config.ts", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: { "vite.config.ts": "export default {};\n" },
+        pkg: {
+          dependencies: { ...TANSTACK_MISSING_NITRO },
+          devDependencies: { vite: "^5.0.0" },
+          name: "cfg-tanstack-own",
+        },
+      });
+      const result = await run(["dev", "--dry-run"], repo);
+      expect(result.exitCode).toBe(0);
+      expect(combined(result)).not.toContain(
+        "missing packages the default vite config imports"
+      );
+      const line = devMainLine(result.stdout);
+      expect(line, "expected a vite dev line").toBeDefined();
+      expect(line).not.toContain("--config");
+    }, 20_000);
 
-		// vite@8's DEFAULT_CONFIG_FILES includes the `.cts` form, so a `vite.config.cts`
-		// is a LEGAL consumer override that vite's bare discovery finds — dobby must NOT
-		// silently supply its default over it (the override-list-mirrors-native-discovery
-		// contract; `.cts` was the previously-missing form).
-		it("omits --config when the consumer ships a vite.config.cts (legal override form)", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "cfg-vite-cts", devDependencies: { vite: "^5.0.0" } },
-				files: { "vite.config.cts": "module.exports = {};\n" },
-			});
-			const result = await run(["dev", "--dry-run"], repo);
-			expect(result.exitCode).toBe(0);
-			const line = devMainLine(result.stdout);
-			expect(line, "expected a vite dev line").toBeDefined();
-			expect(line).not.toContain("--config");
-		}, 20000);
-	});
+    // vite@8's DEFAULT_CONFIG_FILES includes the `.cts` form, so a `vite.config.cts`
+    // is a LEGAL consumer override that vite's bare discovery finds — dobby must NOT
+    // silently supply its default over it (the override-list-mirrors-native-discovery
+    // contract; `.cts` was the previously-missing form).
+    it("omits --config when the consumer ships a vite.config.cts (legal override form)", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: { "vite.config.cts": "module.exports = {};\n" },
+        pkg: { devDependencies: { vite: "^5.0.0" }, name: "cfg-vite-cts" },
+      });
+      const result = await run(["dev", "--dry-run"], repo);
+      expect(result.exitCode).toBe(0);
+      const line = devMainLine(result.stdout);
+      expect(line, "expected a vite dev line").toBeDefined();
+      expect(line).not.toContain("--config");
+    }, 20_000);
+  });
 
-	// --- dobby build (new command) ----------------------------------------------
-	describe("dobby build (inferred vite build, config-when-absent)", () => {
-		it("renders `vite build --config <vite.base.mjs>` + cwd under --dry-run when no vite.config is present", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "build-vite", devDependencies: { vite: "^5.0.0" } },
-			});
-			const result = await run(["build", "--dry-run"], repo);
-			expect(result.exitCode).toBe(0);
-			expect(result.stderr).not.toContain("unknown command");
-			expect(result.stdout).toMatch(/build \(dry-run\)/);
-			expect(result.stdout).toContain("build");
-			expect(result.stdout).toContain(VITE_BASE_ASSET);
-			expect(result.stdout).toContain(`cwd: ${repo}`);
-		}, 20000);
+  // --- dobby build (new command) ----------------------------------------------
+  describe("dobby build (inferred vite build, config-when-absent)", () => {
+    it("renders `vite build --config <vite.base.mjs>` + cwd under --dry-run when no vite.config is present", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: { devDependencies: { vite: "^5.0.0" }, name: "build-vite" },
+      });
+      const result = await run(["build", "--dry-run"], repo);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).not.toContain("unknown command");
+      expect(result.stdout).toMatch(/build \(dry-run\)/);
+      expect(result.stdout).toContain("build");
+      expect(result.stdout).toContain(VITE_BASE_ASSET);
+      expect(result.stdout).toContain(`cwd: ${repo}`);
+    }, 20_000);
 
-		it("picks the tanstack vite preset for a tanstack app declaring ALL five imported packages", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "build-tanstack",
-					dependencies: { ...TANSTACK_DEPS },
-					devDependencies: { vite: "^5.0.0" },
-				},
-			});
-			const result = await run(["build", "--dry-run"], repo);
-			expect(result.stdout).toContain(VITE_TANSTACK_ASSET);
-			expect(result.stdout).not.toContain(VITE_BASE_ASSET);
-		}, 20000);
+    it("picks the tanstack vite preset for a tanstack app declaring ALL five imported packages", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: {
+          dependencies: { ...TANSTACK_DEPS },
+          devDependencies: { vite: "^5.0.0" },
+          name: "build-tanstack",
+        },
+      });
+      const result = await run(["build", "--dry-run"], repo);
+      expect(result.stdout).toContain(VITE_TANSTACK_ASSET);
+      expect(result.stdout).not.toContain(VITE_BASE_ASSET);
+    }, 20_000);
 
-		// The fail-loud stance on the build surface (shares `viteConfigSpec` with dev +
-		// check --build): a config-less tanstack app missing an imported package has no
-		// import-safe fallback that serves, so build HARD-ERRORS (a blocked plan is an
-		// error, not a render) naming the missing package + both remedies — never base.
-		it("HARD-ERRORS (never falls back to vite.base) when a config-less tanstack app is MISSING an imported package (no nitro)", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "build-tanstack-partial",
-					dependencies: { ...TANSTACK_MISSING_NITRO },
-					devDependencies: { vite: "^5.0.0" },
-				},
-			});
-			const result = await run(["build", "--dry-run"], repo);
-			expect(result.exitCode).toBe(1);
-			expect(result.stderr).not.toContain("unknown command");
-			expectViteBlocked(combined(result), "nitro");
-		}, 20000);
+    // The fail-loud stance on the build surface (shares `viteConfigSpec` with dev +
+    // check --build): a config-less tanstack app missing an imported package has no
+    // import-safe fallback that serves, so build HARD-ERRORS (a blocked plan is an
+    // error, not a render) naming the missing package + both remedies — never base.
+    it("HARD-ERRORS (never falls back to vite.base) when a config-less tanstack app is MISSING an imported package (no nitro)", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: {
+          dependencies: { ...TANSTACK_MISSING_NITRO },
+          devDependencies: { vite: "^5.0.0" },
+          name: "build-tanstack-partial",
+        },
+      });
+      const result = await run(["build", "--dry-run"], repo);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).not.toContain("unknown command");
+      expectViteBlocked(combined(result), "nitro");
+    }, 20_000);
 
-		it("omits --config when the consumer ships a vite.config.ts (total override)", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "build-vite-own", devDependencies: { vite: "^5.0.0" } },
-				files: { "vite.config.ts": "export default {};\n" },
-			});
-			const result = await run(["build", "--dry-run"], repo);
-			expect(result.exitCode).toBe(0);
-			expect(result.stdout).not.toContain("--config");
-		}, 20000);
+    it("omits --config when the consumer ships a vite.config.ts (total override)", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: { "vite.config.ts": "export default {};\n" },
+        pkg: { devDependencies: { vite: "^5.0.0" }, name: "build-vite-own" },
+      });
+      const result = await run(["build", "--dry-run"], repo);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).not.toContain("--config");
+    }, 20_000);
 
-		// The `.cts` form is in vite@8's DEFAULT_CONFIG_FILES — build must treat it as a
-		// consumer override too (the build/dev/check surfaces share `viteConfigSpec`).
-		it("omits --config when the consumer ships a vite.config.cts (legal override form)", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "build-vite-cts", devDependencies: { vite: "^5.0.0" } },
-				files: { "vite.config.cts": "module.exports = {};\n" },
-			});
-			const result = await run(["build", "--dry-run"], repo);
-			expect(result.exitCode).toBe(0);
-			expect(result.stdout).not.toContain("--config");
-		}, 20000);
+    // The `.cts` form is in vite@8's DEFAULT_CONFIG_FILES — build must treat it as a
+    // consumer override too (the build/dev/check surfaces share `viteConfigSpec`).
+    it("omits --config when the consumer ships a vite.config.cts (legal override form)", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: { "vite.config.cts": "module.exports = {};\n" },
+        pkg: { devDependencies: { vite: "^5.0.0" }, name: "build-vite-cts" },
+      });
+      const result = await run(["build", "--dry-run"], repo);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).not.toContain("--config");
+    }, 20_000);
 
-		it("exits 1 with 'nothing to build' for a project without the vite capability", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "build-noapp",
-					dependencies: { "drizzle-orm": "^0.30.0" },
-				},
-			});
-			const result = await run(["build", "--dry-run"], repo);
-			expect(result.exitCode).toBe(1);
-			expect(result.stderr).not.toContain("unknown command");
-			expect(combined(result)).toMatch(/nothing to build/i);
-		}, 20000);
+    it("exits 1 with 'nothing to build' for a project without the vite capability", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: {
+          dependencies: { "drizzle-orm": "^0.30.0" },
+          name: "build-noapp",
+        },
+      });
+      const result = await run(["build", "--dry-run"], repo);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).not.toContain("unknown command");
+      expect(combined(result)).toMatch(/nothing to build/i);
+    }, 20_000);
 
-		it("a real build with no consumer vite installed fails at resolution (not the unknown-command path)", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "build-nobin", devDependencies: { vite: "^5.0.0" } },
-			});
-			const result = await run(["build"], repo);
-			expect(result.exitCode).not.toBe(0);
-			expect(result.stderr).not.toContain("unknown command");
-			expect(result.stderr).toMatch(/vite not found|dobby up/);
-		}, 20000);
-	});
+    it("a real build with no consumer vite installed fails at resolution (not the unknown-command path)", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: { devDependencies: { vite: "^5.0.0" }, name: "build-nobin" },
+      });
+      const result = await run(["build"], repo);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).not.toContain("unknown command");
+      expect(result.stderr).toMatch(/vite not found|dobby up/);
+    }, 20_000);
+  });
 
-	// --- check --build surface: the SAME fail-loud stance ------------------------
-	// `check --build` selects ONLY the build step (no biome/tsc/knip), so a blocked
-	// tanstack app hard-errors CHEAPLY — the step fails with the blocked note (exit 1),
-	// NO vite spawn. Same `viteConfigSpec` the dev/build surfaces resolve.
-	describe("check --build enforces the blocked-tanstack fail-loud", () => {
-		it("fails the build step (exit 1) with the missing package + remedies for a config-less tanstack app missing an import", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "check-tanstack-partial",
-					dependencies: { ...TANSTACK_MISSING_NITRO },
-					devDependencies: { vite: "^5.0.0" },
-				},
-			});
-			const result = await run(["check", "--build"], repo);
-			expect(result.exitCode).toBe(1);
-			expect(result.stderr).not.toContain("unknown command");
-			expectViteBlocked(combined(result), "nitro");
-		}, 20000);
-	});
+  // --- check --build surface: the SAME fail-loud stance ------------------------
+  // `check --build` selects ONLY the build step (no biome/tsc/knip), so a blocked
+  // tanstack app hard-errors CHEAPLY — the step fails with the blocked note (exit 1),
+  // NO vite spawn. Same `viteConfigSpec` the dev/build surfaces resolve.
+  describe("check --build enforces the blocked-tanstack fail-loud", () => {
+    it("fails the build step (exit 1) with the missing package + remedies for a config-less tanstack app missing an import", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: {
+          dependencies: { ...TANSTACK_MISSING_NITRO },
+          devDependencies: { vite: "^5.0.0" },
+          name: "check-tanstack-partial",
+        },
+      });
+      const result = await run(["check", "--build"], repo);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).not.toContain("unknown command");
+      expectViteBlocked(combined(result), "nitro");
+    }, 20_000);
+  });
 
-	// --- db:* --dry-run: drizzle-kit --config= when absent ----------------------
-	describe("db:* --dry-run carries --config= only when the consumer has none", () => {
-		it("appends --config=<drizzle.base.mjs> when no drizzle.config is present", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "db-cfg", devDependencies: { "drizzle-kit": "^0.20.0" } },
-			});
-			const result = await run(["db:generate", "--dry-run"], repo);
-			expect(result.exitCode).toBe(0);
-			const line = dbCommandLine(result.stdout, "drizzle-kit");
-			expect(line, "expected a drizzle-kit command line").toBeDefined();
-			expect(line).toContain(`--config=${DRIZZLE_ASSET}`);
-		}, 20000);
+  // --- db:* --dry-run: drizzle-kit --config= when absent ----------------------
+  describe("db:* --dry-run carries --config= only when the consumer has none", () => {
+    it("appends --config=<drizzle.base.mjs> when no drizzle.config is present", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: { devDependencies: { "drizzle-kit": "^0.20.0" }, name: "db-cfg" },
+      });
+      const result = await run(["db:generate", "--dry-run"], repo);
+      expect(result.exitCode).toBe(0);
+      const line = dbCommandLine(result.stdout, "drizzle-kit");
+      expect(line, "expected a drizzle-kit command line").toBeDefined();
+      expect(line).toContain(`--config=${DRIZZLE_ASSET}`);
+    }, 20_000);
 
-		it("omits --config= when the consumer ships a drizzle.config.ts (total override)", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "db-cfg-own",
-					devDependencies: { "drizzle-kit": "^0.20.0" },
-				},
-				files: { "drizzle.config.ts": "export default {};\n" },
-			});
-			const result = await run(["db:generate", "--dry-run"], repo);
-			expect(result.exitCode).toBe(0);
-			const line = dbCommandLine(result.stdout, "drizzle-kit");
-			expect(line).not.toContain("--config");
-		}, 20000);
+    it("omits --config= when the consumer ships a drizzle.config.ts (total override)", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: { "drizzle.config.ts": "export default {};\n" },
+        pkg: {
+          devDependencies: { "drizzle-kit": "^0.20.0" },
+          name: "db-cfg-own",
+        },
+      });
+      const result = await run(["db:generate", "--dry-run"], repo);
+      expect(result.exitCode).toBe(0);
+      const line = dbCommandLine(result.stdout, "drizzle-kit");
+      expect(line).not.toContain("--config");
+    }, 20_000);
 
-		// drizzle-kit's bare discovery tries drizzle.config.ts → .js → .json (verified
-		// against drizzle-kit 0.31.10 `bin.cjs`), so a `drizzle.config.json` is a LEGAL
-		// consumer override that must NOT be silently defaulted over — `.json` was the
-		// previously-missing form.
-		it("omits --config= when the consumer ships a drizzle.config.json (legal override form)", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "db-cfg-json",
-					devDependencies: { "drizzle-kit": "^0.20.0" },
-				},
-				files: { "drizzle.config.json": '{ "dialect": "postgresql" }\n' },
-			});
-			const result = await run(["db:generate", "--dry-run"], repo);
-			expect(result.exitCode).toBe(0);
-			const line = dbCommandLine(result.stdout, "drizzle-kit");
-			expect(line).not.toContain("--config");
-		}, 20000);
-	});
+    // drizzle-kit's bare discovery tries drizzle.config.ts → .js → .json (verified
+    // against drizzle-kit 0.31.10 `bin.cjs`), so a `drizzle.config.json` is a LEGAL
+    // consumer override that must NOT be silently defaulted over — `.json` was the
+    // previously-missing form.
+    it("omits --config= when the consumer ships a drizzle.config.json (legal override form)", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: { "drizzle.config.json": '{ "dialect": "postgresql" }\n' },
+        pkg: {
+          devDependencies: { "drizzle-kit": "^0.20.0" },
+          name: "db-cfg-json",
+        },
+      });
+      const result = await run(["db:generate", "--dry-run"], repo);
+      expect(result.exitCode).toBe(0);
+      const line = dbCommandLine(result.stdout, "drizzle-kit");
+      expect(line).not.toContain("--config");
+    }, 20_000);
+  });
 
-	// --- usage shows `build` for vite repos, hides it otherwise -----------------
-	describe("usage text advertises build only for a vite repo", () => {
-		it("lists `build` in the usage Commands block for a vite repo", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "usage-vite", devDependencies: { vite: "^5.0.0" } },
-			});
-			const result = await run([], repo);
-			const advertises = result.stdout
-				.split("\n")
-				.some((line) => /^\s+build\b/.test(line));
-			expect(advertises).toBe(true);
-		});
+  // --- usage shows `build` for vite repos, hides it otherwise -----------------
+  describe("usage text advertises build only for a vite repo", () => {
+    it("lists `build` in the usage Commands block for a vite repo", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: { devDependencies: { vite: "^5.0.0" }, name: "usage-vite" },
+      });
+      const result = await run([], repo);
+      const advertises = result.stdout
+        .split("\n")
+        .some((line) => /^\s+build\b/.test(line));
+      expect(advertises).toBe(true);
+    });
 
-		it("hides `build` for a repo without the vite capability", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "usage-novite",
-					dependencies: { "drizzle-orm": "^0.30.0" },
-				},
-			});
-			const result = await run([], repo);
-			const advertises = result.stdout
-				.split("\n")
-				.some((line) => /^\s+build\b/.test(line));
-			expect(advertises).toBe(false);
-		});
-	});
+    it("hides `build` for a repo without the vite capability", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: {
+          dependencies: { "drizzle-orm": "^0.30.0" },
+          name: "usage-novite",
+        },
+      });
+      const result = await run([], repo);
+      const advertises = result.stdout
+        .split("\n")
+        .some((line) => /^\s+build\b/.test(line));
+      expect(advertises).toBe(false);
+    });
+  });
 
-	// --- check biome default: real biome via the shipped preset -----------------
-	describe("check biome default (real biome via the shipped preset)", () => {
-		it("reports real biome findings via the default AND emits the configs note when no biome.jsonc is present", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "biome-default" },
-				files: { "src/lintbad.ts": LINTBAD },
-			});
-			const result = await run(["check", "--lint"], repo);
-			expect(result.exitCode).toBe(1);
-			expect(result.stderr).not.toContain("unknown command");
-			// The default preset (ultracite core) fired noDoubleEquals on the `==` line.
-			expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
-			// ADR-0015 observability: the configs note names the active default.
-			expect(hasNoteLine(combined(result), [/configs:/, /biome=default/])).toBe(
-				true,
-			);
-		}, 30000);
+  // --- check biome default: real biome via the shipped preset -----------------
+  describe("check biome default (real biome via the shipped preset)", () => {
+    it("reports real biome findings via the default AND emits the configs note when no biome.jsonc is present", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: { "src/lintbad.ts": LINTBAD },
+        pkg: { name: "biome-default" },
+      });
+      const result = await run(["check", "--lint"], repo);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).not.toContain("unknown command");
+      // The default preset (ultracite core) fired noDoubleEquals on the `==` line.
+      expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
+      // ADR-0015 observability: the configs note names the active default.
+      expect(hasNoteLine(combined(result), [/configs:/, /biome=default/])).toBe(
+        true
+      );
+    }, 30_000);
 
-		it("labels the default `default(react)` when the react capability is present", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "biome-react", dependencies: { react: "^19.0.0" } },
-				files: { "src/lintbad.ts": LINTBAD },
-			});
-			const result = await run(["check", "--lint"], repo);
-			expect(result.exitCode).toBe(1);
-			expect(combined(result)).toContain("biome=default(react)");
-		}, 30000);
+    it("labels the default `default(react)` when the react capability is present", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: { "src/lintbad.ts": LINTBAD },
+        pkg: { dependencies: { react: "^19.0.0" }, name: "biome-react" },
+      });
+      const result = await run(["check", "--lint"], repo);
+      expect(result.exitCode).toBe(1);
+      expect(combined(result)).toContain("biome=default(react)");
+    }, 30_000);
 
-		it("omits the configs note when the consumer ships its OWN biome.jsonc (total override)", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "biome-own" },
-				files: {
-					"biome.jsonc": JSON.stringify({
-						formatter: { enabled: false },
-						assist: { enabled: false },
-						linter: {
-							enabled: true,
-							rules: {
-								recommended: false,
-								suspicious: { noDoubleEquals: "error" },
-							},
-						},
-					}),
-					"src/lintbad.ts": LINTBAD,
-				},
-			});
-			const result = await run(["check", "--lint"], repo);
-			// biome still runs (the consumer config) and reports the finding…
-			expect(result.exitCode).toBe(1);
-			expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
-			// …but NO default was used, so the configs note is omitted entirely.
-			expect(combined(result)).not.toContain("configs:");
-		}, 30000);
-	});
+    it("omits the configs note when the consumer ships its OWN biome.jsonc (total override)", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: {
+          "biome.jsonc": JSON.stringify({
+            assist: { enabled: false },
+            formatter: { enabled: false },
+            linter: {
+              enabled: true,
+              rules: {
+                recommended: false,
+                suspicious: { noDoubleEquals: "error" },
+              },
+            },
+          }),
+          "src/lintbad.ts": LINTBAD,
+        },
+        pkg: { name: "biome-own" },
+      });
+      const result = await run(["check", "--lint"], repo);
+      // biome still runs (the consumer config) and reports the finding…
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
+      // …but NO default was used, so the configs note is omitted entirely.
+      expect(combined(result)).not.toContain("configs:");
+    }, 30_000);
+  });
 
-	// --- check --hook autofix via the default (real biome) ----------------------
-	describe("check --hook autofixes via the default when no biome.jsonc is present", () => {
-		it("applies biome's safe fixes through the shipped preset and exits 0", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "hook-default" },
-				files: {
-					// dobby.config.json is the hook's project marker (config.ts reads it).
-					"dobby.config.json": JSON.stringify({ files: [] }),
-					// Single quotes: a formatter-only fix the default preset applies safely.
-					"src/messy.ts": "export const x = 'hi';\n",
-				},
-			});
-			const messy = join(repo, "src", "messy.ts");
-			const payload = JSON.stringify({ tool_input: { file_path: messy } });
-			const result = await run(["check", "--hook"], repo, payload);
-			// Everything was auto-fixed → the guard's silent exit 0 (nothing surfaced).
-			expect(result.exitCode).toBe(0);
-			expect(result.stderr).toBe("");
-			// The default preset formatted the file in place: single → double quotes.
-			expect(readFileSync(messy, "utf8")).toContain('"hi"');
-		}, 30000);
-	});
+  // --- check --hook autofix via the default (real biome) ----------------------
+  describe("check --hook autofixes via the default when no biome.jsonc is present", () => {
+    it("applies biome's safe fixes through the shipped preset and exits 0", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: {
+          // dobby.config.json is the hook's project marker (config.ts reads it).
+          "dobby.config.json": JSON.stringify({ files: [] }),
+          // Single quotes: a formatter-only fix the default preset applies safely.
+          "src/messy.ts": "export const x = 'hi';\n",
+        },
+        pkg: { name: "hook-default" },
+      });
+      const messy = join(repo, "src", "messy.ts");
+      const payload = JSON.stringify({ tool_input: { file_path: messy } });
+      const result = await run(["check", "--hook"], repo, payload);
+      // Everything was auto-fixed → the guard's silent exit 0 (nothing surfaced).
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      // The default preset formatted the file in place: single → double quotes.
+      expect(readFileSync(messy, "utf8")).toContain('"hi"');
+    }, 30_000);
+  });
 
-	// --- knip default: a test file is an entry, not an unused file ---------------
-	// Mirrors the Wave-1 asset verification: knip's vitest plugin can't see test
-	// globs through a consumer .mjs re-export, so dobby's default re-states the test
-	// glob as an entry. With the default, a `*.test.ts` is NOT flagged unused.
-	describe("check knip default (test file is an entry, not unused)", () => {
-		it("reports NO unused-file finding for a test file when no knip config is present, and names the default", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "knip-default" },
-				files: {
-					"src/index.ts": "export const main = () => 42;\n",
-					"src/index.test.ts":
-						'import { main } from "./index.ts";\nif (main() !== 42) {\n  throw new Error("bad");\n}\n',
-				},
-			});
-			const result = await run(["check", "--unused"], repo);
-			// The default made the test file an entry → knip clean → the gate passes.
-			expect(result.exitCode).toBe(0);
-			expect(combined(result)).not.toMatch(/unused file/i);
-			expect(combined(result)).not.toMatch(/index\.test\.ts/);
-			// The configs note records that knip ran on the default.
-			expect(hasNoteLine(combined(result), [/configs:/, /knip=default/])).toBe(
-				true,
-			);
-		}, 30000);
+  // --- knip default: a test file is an entry, not an unused file ---------------
+  // Mirrors the Wave-1 asset verification: knip's vitest plugin can't see test
+  // globs through a consumer .mjs re-export, so dobby's default re-states the test
+  // glob as an entry. With the default, a `*.test.ts` is NOT flagged unused.
+  describe("check knip default (test file is an entry, not unused)", () => {
+    it("reports NO unused-file finding for a test file when no knip config is present, and names the default", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: {
+          "src/index.test.ts":
+            'import { main } from "./index.ts";\nif (main() !== 42) {\n  throw new Error("bad");\n}\n',
+          "src/index.ts": "export const main = () => 42;\n",
+        },
+        pkg: { name: "knip-default" },
+      });
+      const result = await run(["check", "--unused"], repo);
+      // The default made the test file an entry → knip clean → the gate passes.
+      expect(result.exitCode).toBe(0);
+      expect(combined(result)).not.toMatch(/unused file/i);
+      expect(combined(result)).not.toMatch(/index\.test\.ts/);
+      // The configs note records that knip ran on the default.
+      expect(hasNoteLine(combined(result), [/configs:/, /knip=default/])).toBe(
+        true
+      );
+    }, 30_000);
 
-		// knip@6's KNIP_CONFIG_LOCATIONS includes `knip.config.ts` (verified against
-		// knip 6.26.0 `dist/constants.js`), so a consumer `knip.config.ts` is a LEGAL
-		// override that knip's bare discovery finds — dobby must NOT append its default
-		// `--config` over it. Cheapest observable surface (mirroring the biome override
-		// slice): the `configs:` note, driven by the override-detection presence check
-		// independent of knip's own run, carries no `knip=default` — and is omitted
-		// entirely since knip is the only default-eligible tool on `--unused`.
-		it("does NOT supply the knip default when the consumer ships a knip.config.ts (legal override form)", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: { name: "knip-own-config" },
-				files: {
-					"knip.config.ts": "export default {};\n",
-					"src/index.ts": "export const main = () => 42;\n",
-				},
-			});
-			const result = await run(["check", "--unused"], repo);
-			expect(result.stderr).not.toContain("unknown command");
-			// The consumer config is a TOTAL override → dobby stayed bare → no default.
-			expect(combined(result)).not.toContain("knip=default");
-			expect(combined(result)).not.toContain("configs:");
-		}, 30000);
-	});
+    // knip@6's KNIP_CONFIG_LOCATIONS includes `knip.config.ts` (verified against
+    // knip 6.26.0 `dist/constants.js`), so a consumer `knip.config.ts` is a LEGAL
+    // override that knip's bare discovery finds — dobby must NOT append its default
+    // `--config` over it. Cheapest observable surface (mirroring the biome override
+    // slice): the `configs:` note, driven by the override-detection presence check
+    // independent of knip's own run, carries no `knip=default` — and is omitted
+    // entirely since knip is the only default-eligible tool on `--unused`.
+    it("does NOT supply the knip default when the consumer ships a knip.config.ts (legal override form)", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: {
+          "knip.config.ts": "export default {};\n",
+          "src/index.ts": "export const main = () => 42;\n",
+        },
+        pkg: { name: "knip-own-config" },
+      });
+      const result = await run(["check", "--unused"], repo);
+      expect(result.stderr).not.toContain("unknown command");
+      // The consumer config is a TOTAL override → dobby stayed bare → no default.
+      expect(combined(result)).not.toContain("knip=default");
+      expect(combined(result)).not.toContain("configs:");
+    }, 30_000);
+  });
 
-	// --- vitest vite-fallback stance: a vite.config test block is NOT a vitest override
-	// Vitest natively falls back to a `test` block inside vite.config.* when no
-	// dedicated vitest.config.* exists. dobby DELIBERATELY does not honor that fallback
-	// as the consumer override (ADR-0015; house convention: test wiring lives in
-	// vitest.config.*). So with ONLY a vite.config.ts (carrying a test block) present,
-	// dobby STILL supplies its vitest default — observable via the configs note's
-	// `vitest=default`, which `recordDefault` emits from the presence check regardless
-	// of whether the vitest bin resolves (here consumer vitest is DECLARED but not
-	// installed, so the step skips WITHOUT spawning vitest — yet the default was planned).
-	describe("check vitest default (a vite.config test block is not a vitest override)", () => {
-		it("still plans the vitest default when only a vite.config.ts carrying a test block is present", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "vitest-vite-fallback",
-					devDependencies: { vitest: "^2.0.0" },
-				},
-				files: {
-					"vite.config.ts":
-						"export default { test: { environment: 'node' } };\n",
-				},
-			});
-			const result = await run(["check", "--test"], repo);
-			expect(result.stderr).not.toContain("unknown command");
-			// No dedicated vitest.config.* → the vite.config test block is NOT treated as
-			// an override → dobby's vitest default is still planned and named.
-			expect(combined(result)).toContain("vitest=default");
-		}, 30000);
-	});
+  // --- vitest vite-fallback stance: a vite.config test block is NOT a vitest override
+  // Vitest natively falls back to a `test` block inside vite.config.* when no
+  // dedicated vitest.config.* exists. dobby DELIBERATELY does not honor that fallback
+  // as the consumer override (ADR-0015; house convention: test wiring lives in
+  // vitest.config.*). So with ONLY a vite.config.ts (carrying a test block) present,
+  // dobby STILL supplies its vitest default — observable via the configs note's
+  // `vitest=default`, which `recordDefault` emits from the presence check regardless
+  // of whether the vitest bin resolves (here consumer vitest is DECLARED but not
+  // installed, so the step skips WITHOUT spawning vitest — yet the default was planned).
+  describe("check vitest default (a vite.config test block is not a vitest override)", () => {
+    it("still plans the vitest default when only a vite.config.ts carrying a test block is present", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        files: {
+          "vite.config.ts":
+            "export default { test: { environment: 'node' } };\n",
+        },
+        pkg: {
+          devDependencies: { vitest: "^2.0.0" },
+          name: "vitest-vite-fallback",
+        },
+      });
+      const result = await run(["check", "--test"], repo);
+      expect(result.stderr).not.toContain("unknown command");
+      // No dedicated vitest.config.* → the vite.config test block is NOT treated as
+      // an override → dobby's vitest default is still planned and named.
+      expect(combined(result)).toContain("vitest=default");
+    }, 30_000);
+  });
 
-	// --- vitest react variant require-all-imports guard (ADR-0015) ---------------
-	// `vitest.react.mjs` imports @vitejs/plugin-react + vite unconditionally, so the
-	// `react` CAPABILITY alone (fires on `react`) must NOT pick it — the react
-	// variant is import-safe ONLY when BOTH imported packages are declared, else the
-	// base (imports only `vitest/config`). Asserted through the configs note the
-	// presence check records regardless of whether the vitest bin resolves (declared
-	// but not installed here, so no vitest spawns — the cheapest observable surface).
-	describe("check vitest default (react variant requires @vitejs/plugin-react + vite)", () => {
-		it("falls back to vitest.base (label `default`) for a react app WITHOUT @vitejs/plugin-react", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "vitest-react-partial",
-					dependencies: { react: "^19.0.0" },
-					devDependencies: { vitest: "^2.0.0" },
-				},
-			});
-			const result = await run(["check", "--test"], repo);
-			expect(result.stderr).not.toContain("unknown command");
-			// The react capability fired, but @vitejs/plugin-react (and vite) are absent
-			// → the base default, NOT the react one.
-			expect(combined(result)).toContain("vitest=default");
-			expect(combined(result)).not.toContain("vitest=default(react)");
-		}, 30000);
+  // --- vitest react variant require-all-imports guard (ADR-0015) ---------------
+  // `vitest.react.mjs` imports @vitejs/plugin-react + vite unconditionally, so the
+  // `react` CAPABILITY alone (fires on `react`) must NOT pick it — the react
+  // variant is import-safe ONLY when BOTH imported packages are declared, else the
+  // base (imports only `vitest/config`). Asserted through the configs note the
+  // presence check records regardless of whether the vitest bin resolves (declared
+  // but not installed here, so no vitest spawns — the cheapest observable surface).
+  describe("check vitest default (react variant requires @vitejs/plugin-react + vite)", () => {
+    it("falls back to vitest.base (label `default`) for a react app WITHOUT @vitejs/plugin-react", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: {
+          dependencies: { react: "^19.0.0" },
+          devDependencies: { vitest: "^2.0.0" },
+          name: "vitest-react-partial",
+        },
+      });
+      const result = await run(["check", "--test"], repo);
+      expect(result.stderr).not.toContain("unknown command");
+      // The react capability fired, but @vitejs/plugin-react (and vite) are absent
+      // → the base default, NOT the react one.
+      expect(combined(result)).toContain("vitest=default");
+      expect(combined(result)).not.toContain("vitest=default(react)");
+    }, 30_000);
 
-		it("picks vitest.react (label `default(react)`) for a react app WITH @vitejs/plugin-react + vite", async () => {
-			const repo = makeCfglessRepo(dirs, {
-				pkg: {
-					name: "vitest-react-full",
-					dependencies: { react: "^19.0.0" },
-					devDependencies: {
-						vitest: "^2.0.0",
-						vite: "^5.0.0",
-						"@vitejs/plugin-react": "^4.0.0",
-					},
-				},
-			});
-			const result = await run(["check", "--test"], repo);
-			expect(result.stderr).not.toContain("unknown command");
-			// Every package vitest.react.mjs imports is declared → the react variant.
-			expect(combined(result)).toContain("vitest=default(react)");
-		}, 30000);
-	});
+    it("picks vitest.react (label `default(react)`) for a react app WITH @vitejs/plugin-react + vite", async () => {
+      const repo = makeCfglessRepo(dirs, {
+        pkg: {
+          dependencies: { react: "^19.0.0" },
+          devDependencies: {
+            "@vitejs/plugin-react": "^4.0.0",
+            vite: "^5.0.0",
+            vitest: "^2.0.0",
+          },
+          name: "vitest-react-full",
+        },
+      });
+      const result = await run(["check", "--test"], repo);
+      expect(result.stderr).not.toContain("unknown command");
+      // Every package vitest.react.mjs imports is declared → the react variant.
+      expect(combined(result)).toContain("vitest=default(react)");
+    }, 30_000);
+  });
 });

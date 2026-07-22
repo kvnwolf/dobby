@@ -17,9 +17,9 @@ import { join } from "node:path";
 //  - `depPrefix`: some declared dependency name starts with this scope prefix,
 //    e.g. "@react-email/" matches "@react-email/components".
 interface Signal {
-	capability: string;
-	deps?: string[];
-	depPrefix?: string;
+  capability: string;
+  depPrefix?: string;
+  deps?: string[];
 }
 
 // The capability catalog, in FIXED declaration order. Output order follows this
@@ -27,23 +27,23 @@ interface Signal {
 // dependency lives in `dependencies` or `devDependencies`. (`env` reports the
 // set order-independently, but a stable order keeps text output deterministic.)
 const SIGNALS: readonly Signal[] = [
-	{ capability: "vite", deps: ["vite"] },
-	{ capability: "tanstack-start", deps: ["@tanstack/react-start"] },
-	{ capability: "react", deps: ["react"] },
-	{ capability: "neon", deps: ["@neondatabase/serverless"] },
-	{ capability: "drizzle", deps: ["drizzle-orm", "drizzle-kit"] },
-	{
-		capability: "react-email",
-		deps: ["react-email"],
-		depPrefix: "@react-email/",
-	},
-	{ capability: "vitest", deps: ["vitest"] },
-	{ capability: "expo", deps: ["expo"] },
+  { capability: "vite", deps: ["vite"] },
+  { capability: "tanstack-start", deps: ["@tanstack/react-start"] },
+  { capability: "react", deps: ["react"] },
+  { capability: "neon", deps: ["@neondatabase/serverless"] },
+  { capability: "drizzle", deps: ["drizzle-orm", "drizzle-kit"] },
+  {
+    capability: "react-email",
+    depPrefix: "@react-email/",
+    deps: ["react-email"],
+  },
+  { capability: "vitest", deps: ["vitest"] },
+  { capability: "expo", deps: ["expo"] },
 ];
 
 interface PackageManifest {
-	dependencies?: Record<string, string>;
-	devDependencies?: Record<string, string>;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
 }
 
 // The declared dependency names at `root`: the UNION of `dependencies` and
@@ -51,34 +51,34 @@ interface PackageManifest {
 // unparseable package.json (or one with no dependency fields) yields an empty
 // set rather than throwing, so `env` never fails on a malformed project.
 function declaredDependencies(root: string): Set<string> {
-	const pkgPath = join(root, "package.json");
-	if (!existsSync(pkgPath)) {
-		return new Set();
-	}
+  const pkgPath = join(root, "package.json");
+  if (!existsSync(pkgPath)) {
+    return new Set();
+  }
 
-	let manifest: PackageManifest;
-	try {
-		manifest = JSON.parse(readFileSync(pkgPath, "utf8")) as PackageManifest;
-	} catch {
-		return new Set();
-	}
+  let manifest: PackageManifest;
+  try {
+    manifest = JSON.parse(readFileSync(pkgPath, "utf8")) as PackageManifest;
+  } catch {
+    return new Set();
+  }
 
-	return new Set([
-		...Object.keys(manifest?.dependencies ?? {}),
-		...Object.keys(manifest?.devDependencies ?? {}),
-	]);
+  return new Set([
+    ...Object.keys(manifest?.dependencies ?? {}),
+    ...Object.keys(manifest?.devDependencies ?? {}),
+  ]);
 }
 
 // Whether a single signal fires for the given declared dependencies.
 function signalFires(signal: Signal, declared: Set<string>): boolean {
-	if (signal.deps?.some((dependency) => declared.has(dependency))) {
-		return true;
-	}
-	const { depPrefix } = signal;
-	if (depPrefix && [...declared].some((name) => name.startsWith(depPrefix))) {
-		return true;
-	}
-	return false;
+  if (signal.deps?.some((dependency) => declared.has(dependency))) {
+    return true;
+  }
+  const { depPrefix } = signal;
+  if (depPrefix && [...declared].some((name) => name.startsWith(depPrefix))) {
+    return true;
+  }
+  return false;
 }
 
 // Both the detected capabilities AND the raw declared-dependency name set, from a
@@ -89,19 +89,19 @@ function signalFires(signal: Signal, declared: Set<string>): boolean {
 // read is right there). `dependencies` is the same union (`deps ∪ devDeps`, never
 // `peerDependencies`) the signals fire on.
 export interface CapabilityScan {
-	capabilities: string[];
-	dependencies: Set<string>;
+  capabilities: string[];
+  dependencies: Set<string>;
 }
 
 // Scan the single package at `root` once: the declared dependency set + the
 // capabilities it fires, in fixed catalog order. Tolerant (a missing/unparseable
 // package.json yields an empty set and no capabilities).
 export function scanCapabilities(root: string): CapabilityScan {
-	const dependencies = declaredDependencies(root);
-	const capabilities = SIGNALS.filter((signal) =>
-		signalFires(signal, dependencies),
-	).map((signal) => signal.capability);
-	return { capabilities, dependencies };
+  const dependencies = declaredDependencies(root);
+  const capabilities = SIGNALS.filter((signal) =>
+    signalFires(signal, dependencies)
+  ).map((signal) => signal.capability);
+  return { capabilities, dependencies };
 }
 
 // Detect the capabilities declared by the single package at `root`, in fixed
@@ -110,5 +110,5 @@ export function scanCapabilities(root: string): CapabilityScan {
 // wrapper over `scanCapabilities` (the same single read) for callers needing only
 // the capability list.
 export function detectCapabilities(root: string): string[] {
-	return scanCapabilities(root).capabilities;
+  return scanCapabilities(root).capabilities;
 }

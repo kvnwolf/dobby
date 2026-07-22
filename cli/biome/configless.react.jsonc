@@ -1,0 +1,11 @@
+// Internal config-less ROOT wrapper — NOT a consumer extends target. dobby's
+// package.json `exports` expose ONLY `./biome/core` and `./biome/react`, so a
+// consumer can never `extends` this file by package specifier (consumers extending
+// a wrapper is exactly the non-transitive-extends bug this vendoring kills).
+//
+// Used ONLY by dobby: `tasks.biomeConfigSpec` points a config-less react app's
+// `--config-path` here via `resolveAsset`. Biome's `extends` resolves ONE level
+// from the ROOT config, and both targets are now flat/vendored, so nothing is lost.
+{
+  "extends": ["./core.jsonc", "./react.jsonc"]
+}

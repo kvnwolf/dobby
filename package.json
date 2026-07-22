@@ -1,29 +1,29 @@
 {
-	"name": "dobby",
-	"private": true,
-	"workspaces": [
-		"cli"
-	],
-	"devDependencies": {
-		"@kvnwolf/dobby": "workspace:*",
-		"@types/node": "^22.10.0",
-		"vitest": "^4.1.10"
-	},
-	"packageManager": "bun@1.3.13",
-	"knip": {
-		"ignoreDependencies": [
-			"@biomejs/biome",
-			"@tailwindcss/vite",
-			"@tanstack/devtools-vite",
-			"@tanstack/react-start",
-			"@vitejs/plugin-react",
-			"drizzle-kit",
-			"nitro",
-			"portless",
-			"taze",
-			"ultracite",
-			"vite",
-			"vitest"
-		]
-	}
+  "name": "dobby",
+  "private": true,
+  "workspaces": [
+    "cli"
+  ],
+  "devDependencies": {
+    "@kvnwolf/dobby": "workspace:*",
+    "@types/node": "^22.10.0",
+    "vitest": "^4.1.10"
+  },
+  "packageManager": "bun@1.3.13",
+  "knip": {
+    "ignoreDependencies": [
+      "@biomejs/biome",
+      "@tailwindcss/vite",
+      "@tanstack/devtools-vite",
+      "@tanstack/react-start",
+      "@vitejs/plugin-react",
+      "drizzle-kit",
+      "nitro",
+      "portless",
+      "taze",
+      "ultracite",
+      "vite",
+      "vitest"
+    ]
+  }
 }
