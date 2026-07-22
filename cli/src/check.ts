@@ -9,7 +9,7 @@ import {
 	resolve,
 } from "node:path";
 import { loadConfig } from "./config.ts";
-import { detectCapabilities } from "./detect.ts";
+import { detectCapabilities, scanCapabilities } from "./detect.ts";
 import {
 	configArgs,
 	type RunResult,
@@ -122,9 +122,11 @@ export function check(
 	// Config-less defaults (ADR-0015): resolve biome's config args ONCE — the
 	// default preset (react vs core, capability-driven) via `--config-path` +
 	// `--vcs-root` when the consumer ships no biome.json/jsonc, else NO args (bare
-	// spawn, native discovery of the consumer's file — a total override). Capabilities
-	// drive the preset choice, so detect them up front (both paths below use them).
-	const capabilities = detectCapabilities(root);
+	// spawn, native discovery of the consumer's file — a total override). Scan ONCE
+	// for both the capabilities (preset choice) AND the raw dependency set — the
+	// vite/vitest specs need it for the require-all-imports guard (a multi-import
+	// preset is chosen only when every package it imports is declared).
+	const { capabilities, dependencies } = scanCapabilities(root);
 	const biomeCfg = configArgs(root, biomeConfigSpec(capabilities));
 
 	// Per-file fast path: biome ONLY over the named files (resolved against the
@@ -247,7 +249,10 @@ export function check(
 					notes.push({ text: step.skipNote, raw: null });
 					break;
 				}
-				const viteCfg = configArgs(root, viteConfigSpec(capabilities));
+				const viteCfg = configArgs(
+					root,
+					viteConfigSpec(capabilities, dependencies),
+				);
 				const built = runBuild(root, viteCfg.args);
 				if (built.note !== null) {
 					notes.push(built.note);
@@ -261,7 +266,10 @@ export function check(
 					notes.push({ text: step.skipNote, raw: null });
 					break;
 				}
-				const vitestCfg = configArgs(root, vitestConfigSpec(capabilities));
+				const vitestCfg = configArgs(
+					root,
+					vitestConfigSpec(capabilities, dependencies),
+				);
 				const tested = runTest(root, vitestCfg.args);
 				if (tested.note !== null) {
 					notes.push(tested.note);

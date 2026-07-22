@@ -183,9 +183,53 @@ export function knipConfigSpec(): ConfigDefaultSpec {
 	};
 }
 
-// Vitest's default: the react variant when the `react` capability is present, else
-// the base. `--config <file>` — vitest keeps `root = cwd` (the pinned workroot),
-// so discovery is unchanged; the flag only supplies the config.
+// ---------------------------------------------------------------------------
+// Require-all-imports guard for MULTI-IMPORT preset selection (ADR-0015).
+//
+// A capability alone is a WEAK signal for a preset that imports several packages
+// UNCONDITIONALLY: those packages are declared as OPTIONAL peers, so the capability
+// firing (one of them) does NOT prove the rest are installed. Selecting such a
+// preset when a package is missing hands the consumer a default config whose import
+// CRASHES dev/build/check. So a multi-import preset is chosen ONLY when the dep set
+// declares EVERY package it imports; otherwise dobby falls back to the import-safe
+// base preset (which imports only `vite` / `vitest/config`, guaranteed present by
+// the gating capability). Single-import presets (biome/react extends a BUNDLED dobby
+// dep; drizzle.base imports only `drizzle-kit` = the gating capability) need no guard.
+
+// The CONSUMER packages `vite.tanstack.mjs` imports beyond the vite base — see
+// cli/vite.tanstack.mjs, which imports ALL FIVE unconditionally at preset load. The
+// `tanstack-start` capability fires on only `@tanstack/react-start`, so the other
+// four are unproven; the tanstack default is import-safe ONLY when EVERY one is
+// declared. Cross-ref: cli/src/run.test.ts `PRESET_IMPORTED_PACKAGES`.
+const VITE_TANSTACK_IMPORTS: readonly string[] = [
+	"@tanstack/react-start", // @tanstack/react-start/plugin/vite
+	"@tanstack/devtools-vite",
+	"@tailwindcss/vite",
+	"nitro", // nitro/vite
+	"@vitejs/plugin-react",
+];
+
+// The CONSUMER packages `vitest.react.mjs` imports beyond the vitest base — see
+// cli/vitest.react.mjs: `@vitejs/plugin-react` + `vite`'s `loadEnv`. The `react`
+// capability fires on `react` alone, so neither is proven; the react vitest variant
+// is import-safe ONLY when BOTH are declared.
+const VITEST_REACT_IMPORTS: readonly string[] = [
+	"@vitejs/plugin-react",
+	"vite",
+];
+
+// Whether the dependency set declares EVERY package a multi-import preset imports.
+function hasAll(
+	dependencies: Set<string>,
+	required: readonly string[],
+): boolean {
+	return required.every((name) => dependencies.has(name));
+}
+
+// Vitest's default: the react variant when the `react` capability is present AND the
+// consumer declares every package `vitest.react.mjs` imports (`@vitejs/plugin-react`
+// + `vite`), else the import-safe base. `--config <file>` — vitest keeps `root = cwd`
+// (the pinned workroot), so discovery is unchanged; the flag only supplies the config.
 //
 // DELIBERATE STANCE (ADR-0015): `ownFiles` lists ONLY the DEDICATED `vitest.config.*`
 // forms — NEVER `vite.config.*`. Vitest natively FALLS BACK to a `test` block inside
@@ -195,8 +239,15 @@ export function knipConfigSpec(): ConfigDefaultSpec {
 // `vitest.config.*`, and a `vite.config.*` kept only for app-plugin deltas must NOT
 // silently disable dobby's vitest default. Only a DEDICATED `vitest.config.*` counts
 // as the override — otherwise dobby supplies its shipped vitest preset via `--config`.
-export function vitestConfigSpec(capabilities: string[]): ConfigDefaultSpec {
-	const react = capabilities.includes("react");
+export function vitestConfigSpec(
+	capabilities: string[],
+	dependencies: Set<string>,
+): ConfigDefaultSpec {
+	// The react variant imports @vitejs/plugin-react + vite unconditionally; the
+	// react capability alone does not prove them installed, so require both.
+	const react =
+		capabilities.includes("react") &&
+		hasAll(dependencies, VITEST_REACT_IMPORTS);
 	return {
 		tool: "vitest",
 		ownFiles: [
@@ -215,13 +266,22 @@ export function vitestConfigSpec(capabilities: string[]): ConfigDefaultSpec {
 }
 
 // Vite's default: the house TanStack Start stack when the `tanstack-start`
-// capability is present, else the universal vite base. `--config <file>`. `ownFiles`
-// MIRRORS vite@8's `DEFAULT_CONFIG_FILES` verbatim (verified against vite 8.1.5,
-// `dist/node/chunks/node.js`) — all six extensions vite's bare discovery scans, so a
-// legal `vite.config.cjs`/`.cts` is not SILENTLY overridden. Shared by build, dev,
-// and `check --build` (all three read this spec).
-export function viteConfigSpec(capabilities: string[]): ConfigDefaultSpec {
-	const tanstack = capabilities.includes("tanstack-start");
+// capability is present AND the consumer declares every package `vite.tanstack.mjs`
+// imports (the five in `VITE_TANSTACK_IMPORTS`), else the universal vite base.
+// `--config <file>`. `ownFiles` MIRRORS vite@8's `DEFAULT_CONFIG_FILES` verbatim
+// (verified against vite 8.1.5, `dist/node/chunks/node.js`) — all six extensions
+// vite's bare discovery scans, so a legal `vite.config.cjs`/`.cts` is not SILENTLY
+// overridden. Shared by build, dev, and `check --build` (all three read this spec).
+export function viteConfigSpec(
+	capabilities: string[],
+	dependencies: Set<string>,
+): ConfigDefaultSpec {
+	// The tanstack preset imports five consumer packages unconditionally; the
+	// capability fires on only @tanstack/react-start, so require ALL five present —
+	// else the default's import would crash dev/build/check. Fall back to vite.base.
+	const tanstack =
+		capabilities.includes("tanstack-start") &&
+		hasAll(dependencies, VITE_TANSTACK_IMPORTS);
 	return {
 		tool: "vite",
 		ownFiles: [

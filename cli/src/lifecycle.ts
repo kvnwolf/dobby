@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { loadConfig } from "./config.ts";
-import { detectCapabilities } from "./detect.ts";
+import { detectCapabilities, scanCapabilities } from "./detect.ts";
 import { discoverPanes, resolveDevUrl } from "./envinfo.ts";
 import {
 	configArgs,
@@ -449,7 +449,10 @@ export type DevReport =
 // config-driven dev behavior). No vite app → the "nothing to run" gate (exit 1);
 // `up` is the graceful path for a project with nothing to serve.
 export function planDev(cwd: string): DevReport {
-	const capabilities = detectCapabilities(cwd);
+	// Scan ONCE for both the capabilities AND the raw dependency set — the latter
+	// feeds `viteConfigSpec`'s require-all-imports guard (the tanstack preset is
+	// picked only when every package it imports is declared).
+	const { capabilities, dependencies } = scanCapabilities(cwd);
 	const loaded = loadConfig(cwd);
 	const config = loaded?.ok ? loaded.config : null;
 	const plan = devPlan(capabilities, config);
@@ -466,7 +469,12 @@ export function planDev(cwd: string): DevReport {
 	// documented fallback). The real streaming path re-asserts a hard workroot.
 	return {
 		ok: true,
-		plan: resolveDevPlan(plan, resolveWorkroot(cwd), capabilities),
+		plan: resolveDevPlan(
+			plan,
+			resolveWorkroot(cwd),
+			capabilities,
+			dependencies,
+		),
 	};
 }
 
@@ -481,6 +489,7 @@ function resolveDevPlan(
 	plan: DevPlan,
 	root: string | null,
 	capabilities: string[],
+	dependencies: Set<string>,
 ): ResolvedDevPlan {
 	const consumer = (command: DevCommand): ResolvedDevCommand => ({
 		bin: resolveBin(command.tool, {
@@ -490,7 +499,10 @@ function resolveDevPlan(
 		args: command.args,
 	});
 	// The vite dev command (the main) gains `--config <preset>` when absent.
-	const viteCfg = configArgs(root, viteConfigSpec(capabilities)).args;
+	const viteCfg = configArgs(
+		root,
+		viteConfigSpec(capabilities, dependencies),
+	).args;
 	const main = ((): ResolvedDevPlan["main"] => {
 		if (plan.main === null) {
 			return null;
@@ -659,7 +671,9 @@ export type BuildReport =
 // workroot is resolved for the pinned spawn cwd, so a real run fails hard outside a
 // git repo.
 export function runBuild(cwd: string, opts: { dryRun: boolean }): BuildReport {
-	const capabilities = detectCapabilities(cwd);
+	// Scan ONCE — capabilities gate the build, the dependency set feeds
+	// `viteConfigSpec`'s require-all-imports guard (tanstack preset vs vite base).
+	const { capabilities, dependencies } = scanCapabilities(cwd);
 	if (!capabilities.includes("vite")) {
 		return {
 			ok: false,
@@ -679,7 +693,10 @@ export function runBuild(cwd: string, opts: { dryRun: boolean }): BuildReport {
 	}
 
 	const bin = resolveBin("vite", { scope: "consumer", root });
-	const cfgArgs = configArgs(root, viteConfigSpec(capabilities)).args;
+	const cfgArgs = configArgs(
+		root,
+		viteConfigSpec(capabilities, dependencies),
+	).args;
 	const args = ["build", ...cfgArgs];
 
 	if (opts.dryRun) {

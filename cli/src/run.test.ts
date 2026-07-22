@@ -4757,6 +4757,18 @@ const VITE_BASE_ASSET = cliFile("vite.base.mjs");
 const VITE_TANSTACK_ASSET = cliFile("vite.tanstack.mjs");
 const DRIZZLE_ASSET = cliFile("drizzle.base.mjs");
 
+// The FIVE consumer packages `vite.tanstack.mjs` imports unconditionally (mirrors
+// tasks.ts `VITE_TANSTACK_IMPORTS`). The require-all-imports guard picks the
+// tanstack preset ONLY when EVERY one is declared; missing any → the import-safe
+// vite.base. A tanstack-start app declares ALL of these (the whole house stack).
+const TANSTACK_DEPS: Record<string, string> = {
+	"@tanstack/react-start": "^1.0.0",
+	"@tanstack/devtools-vite": "^0.2.0",
+	"@tailwindcss/vite": "^4.0.0",
+	nitro: "^2.0.0",
+	"@vitejs/plugin-react": "^4.0.0",
+};
+
 // Build a THROWAWAY git repo for the config-less slices: `git init` (the workroot
 // resolves with no commit — and it is the REPO ITSELF, not dobby's, so the
 // presence check reads the repo's own tree), a package.json (the capabilities),
@@ -4816,11 +4828,11 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
 			expect(line).toContain(VITE_BASE_ASSET);
 		}, 20000);
 
-		it("picks the tanstack vite preset when the tanstack-start capability is present", async () => {
+		it("picks the tanstack vite preset for a tanstack app declaring ALL five imported packages", async () => {
 			const repo = makeCfglessRepo(dirs, {
 				pkg: {
 					name: "cfg-tanstack",
-					dependencies: { "@tanstack/react-start": "^1.0.0" },
+					dependencies: { ...TANSTACK_DEPS },
 					devDependencies: { vite: "^5.0.0" },
 				},
 			});
@@ -4828,8 +4840,34 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
 			expect(result.exitCode).toBe(0);
 			const line = devMainLine(result.stdout);
 			expect(line).toContain(VITE_TANSTACK_ASSET);
-			// The base preset must NOT leak in — the capability picked the tanstack one.
+			// The base preset must NOT leak in — every imported package is present.
 			expect(line).not.toContain(VITE_BASE_ASSET);
+		}, 20000);
+
+		// The require-all-imports guard (ADR-0015): the tanstack-start capability fires
+		// on @tanstack/react-start ALONE, but the preset imports five packages
+		// unconditionally. Missing ANY one (here nitro, an optional peer) → its
+		// `import ... "nitro/vite"` would crash dev/build/check, so dobby must fall
+		// back to the import-safe vite.base.
+		it("falls back to vite.base when a tanstack app is MISSING an imported package (no nitro)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "cfg-tanstack-partial",
+					dependencies: {
+						"@tanstack/react-start": "^1.0.0",
+						"@tanstack/devtools-vite": "^0.2.0",
+						"@tailwindcss/vite": "^4.0.0",
+						"@vitejs/plugin-react": "^4.0.0",
+						// nitro deliberately absent.
+					},
+					devDependencies: { vite: "^5.0.0" },
+				},
+			});
+			const result = await run(["dev", "--dry-run"], repo);
+			expect(result.exitCode).toBe(0);
+			const line = devMainLine(result.stdout);
+			expect(line).toContain(VITE_BASE_ASSET);
+			expect(line).not.toContain(VITE_TANSTACK_ASSET);
 		}, 20000);
 
 		it("omits --config entirely when the consumer ships a vite.config.ts (total override)", async () => {
@@ -4876,17 +4914,39 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
 			expect(result.stdout).toContain(`cwd: ${repo}`);
 		}, 20000);
 
-		it("picks the tanstack vite preset for a tanstack-start app under --dry-run", async () => {
+		it("picks the tanstack vite preset for a tanstack app declaring ALL five imported packages", async () => {
 			const repo = makeCfglessRepo(dirs, {
 				pkg: {
 					name: "build-tanstack",
-					dependencies: { "@tanstack/react-start": "^1.0.0" },
+					dependencies: { ...TANSTACK_DEPS },
 					devDependencies: { vite: "^5.0.0" },
 				},
 			});
 			const result = await run(["build", "--dry-run"], repo);
 			expect(result.stdout).toContain(VITE_TANSTACK_ASSET);
 			expect(result.stdout).not.toContain(VITE_BASE_ASSET);
+		}, 20000);
+
+		// The require-all-imports guard on the build surface (shares `viteConfigSpec`
+		// with dev + check --build): a tanstack app missing an imported package gets
+		// the import-safe vite.base, never a default whose import would crash the build.
+		it("falls back to vite.base when a tanstack app is MISSING an imported package (no nitro)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "build-tanstack-partial",
+					dependencies: {
+						"@tanstack/react-start": "^1.0.0",
+						"@tanstack/devtools-vite": "^0.2.0",
+						"@tailwindcss/vite": "^4.0.0",
+						"@vitejs/plugin-react": "^4.0.0",
+						// nitro deliberately absent.
+					},
+					devDependencies: { vite: "^5.0.0" },
+				},
+			});
+			const result = await run(["build", "--dry-run"], repo);
+			expect(result.stdout).toContain(VITE_BASE_ASSET);
+			expect(result.stdout).not.toContain(VITE_TANSTACK_ASSET);
 		}, 20000);
 
 		it("omits --config when the consumer ships a vite.config.ts (total override)", async () => {
@@ -5161,6 +5221,49 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
 			// No dedicated vitest.config.* → the vite.config test block is NOT treated as
 			// an override → dobby's vitest default is still planned and named.
 			expect(combined(result)).toContain("vitest=default");
+		}, 30000);
+	});
+
+	// --- vitest react variant require-all-imports guard (ADR-0015) ---------------
+	// `vitest.react.mjs` imports @vitejs/plugin-react + vite unconditionally, so the
+	// `react` CAPABILITY alone (fires on `react`) must NOT pick it — the react
+	// variant is import-safe ONLY when BOTH imported packages are declared, else the
+	// base (imports only `vitest/config`). Asserted through the configs note the
+	// presence check records regardless of whether the vitest bin resolves (declared
+	// but not installed here, so no vitest spawns — the cheapest observable surface).
+	describe("check vitest default (react variant requires @vitejs/plugin-react + vite)", () => {
+		it("falls back to vitest.base (label `default`) for a react app WITHOUT @vitejs/plugin-react", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "vitest-react-partial",
+					dependencies: { react: "^19.0.0" },
+					devDependencies: { vitest: "^2.0.0" },
+				},
+			});
+			const result = await run(["check", "--test"], repo);
+			expect(result.stderr).not.toContain("unknown command");
+			// The react capability fired, but @vitejs/plugin-react (and vite) are absent
+			// → the base default, NOT the react one.
+			expect(combined(result)).toContain("vitest=default");
+			expect(combined(result)).not.toContain("vitest=default(react)");
+		}, 30000);
+
+		it("picks vitest.react (label `default(react)`) for a react app WITH @vitejs/plugin-react + vite", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "vitest-react-full",
+					dependencies: { react: "^19.0.0" },
+					devDependencies: {
+						vitest: "^2.0.0",
+						vite: "^5.0.0",
+						"@vitejs/plugin-react": "^4.0.0",
+					},
+				},
+			});
+			const result = await run(["check", "--test"], repo);
+			expect(result.stderr).not.toContain("unknown command");
+			// Every package vitest.react.mjs imports is declared → the react variant.
+			expect(combined(result)).toContain("vitest=default(react)");
 		}, 30000);
 	});
 });
