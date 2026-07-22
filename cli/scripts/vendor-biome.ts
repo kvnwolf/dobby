@@ -28,12 +28,19 @@ const SCHEMA_URL = "https://biomejs.dev/schemas/2.5.4/schema.json";
 
 // dobby's common consumer ignores, appended to ultracite's `files.includes`:
 // Claude Code's dir (worktrees live under .claude — scanning them double-lints
-// every file), dobby's own runtime state, CI config, and markdown.
+// every file), dobby's own runtime state, CI config, and markdown; plus the
+// house-convention generated/vendored consumer dirs biome should never lint by
+// default (Convex functions + generated dir, shadcn-vendored ui components,
+// generated DB types).
 const DOBBY_IGNORES: readonly string[] = [
   "!.claude",
   "!.dobby",
   "!.github",
   "!**/*.md",
+  // House conventions: generated/vendored consumer dirs.
+  "!convex/**",
+  "!src/components/ui/**",
+  "!src/lib/database.types.ts",
 ];
 
 // The house-style comment (kept verbatim from the previous hand-written core):
@@ -55,6 +62,12 @@ const REACT_NO_ARRAY_INDEX_KEY_REASON: readonly string[] = [
 
 const IGNORES_REASON: readonly string[] = [
   "// dobby's common consumer ignores (appended to ultracite's includes).",
+];
+
+// The house-convention ignores appended after the tooling ignores above:
+// generated/vendored consumer dirs biome should never lint by default.
+const HOUSE_IGNORES_REASON: readonly string[] = [
+  "// House conventions: generated/vendored consumer dirs (never linted by default).",
 ];
 
 // The biome-config subset this generator reaches into. Everything else rides
@@ -191,6 +204,7 @@ function generateCore(version: string): string {
   let body = JSON.stringify(config, null, 2);
   body = injectBefore(body, '"noArrayIndexKey"', NO_ARRAY_INDEX_KEY_REASON);
   body = injectBefore(body, '"!.claude"', IGNORES_REASON);
+  body = injectBefore(body, '"!convex/**"', HOUSE_IGNORES_REASON);
   return `${header(version)}${body}\n`;
 }
 

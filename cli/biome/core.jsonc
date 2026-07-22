@@ -63,7 +63,11 @@
       "!.claude",
       "!.dobby",
       "!.github",
-      "!**/*.md"
+      "!**/*.md",
+      // House conventions: generated/vendored consumer dirs (never linted by default).
+      "!convex/**",
+      "!src/components/ui/**",
+      "!src/lib/database.types.ts"
     ]
   },
   "formatter": {
