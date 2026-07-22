@@ -287,15 +287,24 @@ export function check(
 				if (tested.note !== null) {
 					notes.push(tested.note);
 				}
-				// A2 hermeticity note: the vitest step (capability present, not skipped)
-				// inherits whatever env files exist locally — CI has none. A local
-				// `.env.local` with NO committed `.env.test` means the gate validates a
-				// DIFFERENT environment than CI, so a suite that validates env at import can
-				// LOAD locally yet crash in CI. Silent when hermetic (.env.test present) or
-				// when there is no .env.local.
-				const hermeticity = hermeticityNote(root);
-				if (hermeticity !== null) {
-					notes.push({ text: hermeticity, raw: null });
+				// A2 hermeticity/missing-keys advisory. The vitest step inherits whatever
+				// env files exist locally — CI has none — so a `.env.local` the gate reads
+				// but CI lacks can let a suite that validates env at import LOAD locally yet
+				// crash in CI. Emit the advisory ONLY when BOTH hold:
+				//   - the step ACTUALLY SPAWNED (F2): a missing consumer bin degrades/skips
+				//     WITHOUT running vitest, so there is nothing to advise about.
+				//   - the SELECTED config is dobby's react default (F3): only
+				//     `vitest.react.mjs` calls `loadEnv`, so the env-file contract is dobby's
+				//     to judge ONLY there — a base preset or a consumer-owned vitest config
+				//     (`usedDefault` not `default(react)`) is silent (their config, their
+				//     contract). `hermeticityNote` then compares env-file KEY sets (never
+				//     values): no `.env.test` → the inherits note; an INCOMPLETE `.env.test`
+				//     → the missing-keys note; a complete superset / no `.env.local` → silent.
+				if (tested.spawned && vitestCfg.usedDefault === "default(react)") {
+					const hermeticity = hermeticityNote(root);
+					if (hermeticity !== null) {
+						notes.push({ text: hermeticity, raw: null });
+					}
 				}
 				recordDefault("vitest", vitestCfg.usedDefault);
 				fail(tested.exitCode);
@@ -836,15 +845,20 @@ function runBuild(
 function runTest(
 	root: string,
 	cfgArgs: string[],
-): { note: CheckNote | null; exitCode: number } {
+): { note: CheckNote | null; exitCode: number; spawned: boolean } {
 	const bin = resolveConsumerBin(root, "vitest", "vitest");
 	if (bin === null) {
+		// The consumer bin is not installed: the step degrades WITHOUT spawning
+		// vitest. `spawned: false` tells the caller no run happened — so the A2
+		// hermeticity advisory (which reasons about an ACTUAL run's inherited env)
+		// stays silent on this path (F2).
 		return {
 			note: {
 				text: "test: skipped (consumer vitest binary not found — run dobby up)",
 				raw: null,
 			},
 			exitCode: 0,
+			spawned: false,
 		};
 	}
 	const { runtime, isNode } = resolveTestRuntime(root);
@@ -857,7 +871,7 @@ function runTest(
 	);
 	const exitCode = result.error ? 1 : (result.status ?? 1);
 	if (exitCode === 0) {
-		return { note: null, exitCode };
+		return { note: null, exitCode, spawned: true };
 	}
 	// A1: on a nonzero exit, PARSE vitest's --reporter=json stdout into a REAL
 	// failure summary — one line per failed test FILE (its message + the first
@@ -871,6 +885,7 @@ function runTest(
 		return {
 			note: { text: vitestSummary(failures, isNode, runtime), raw: null },
 			exitCode,
+			spawned: true,
 		};
 	}
 	// The RAW TAIL survives ONLY for the true findingless crash: JSON that can't be
@@ -880,7 +895,11 @@ function runTest(
 	const text = isNode
 		? `test: failed (exit ${exitCode})`
 		: `test: failed (exit ${exitCode}) — ran under ${runtime} (no node found; vitest under this runtime can mis-resolve some deps)`;
-	return { note: { text, raw: rawOutputTail(result) }, exitCode };
+	return {
+		note: { text, raw: rawOutputTail(result) },
+		exitCode,
+		spawned: true,
+	};
 }
 
 // Pick the runtime for the vitest step: prefer NODE (a cheap `node --version`
@@ -899,20 +918,64 @@ function resolveTestRuntime(root: string): {
 	return { runtime: process.execPath, isNode: false };
 }
 
+// A dotenv assignment line's KEY: a leading `export` is tolerated, then the
+// standard env-name shape (`[A-Za-z_][A-Za-z0-9_]*`) up to the `=`. ONLY the key
+// name is captured — the value is never read, so no secret is parsed, compared, or
+// logged. Blank/comment/malformed lines simply don't match.
+const ENV_KEY_LINE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
+
+// The cap on missing-key names listed inline before collapsing to `…N more`.
+const ENV_KEY_LIST_CAP = 6;
+
+// The set of KEY names declared in a dotenv-style file (values deliberately
+// ignored). A read failure folds to an empty set — never a throw.
+function envFileKeys(path: string): Set<string> {
+	const keys = new Set<string>();
+	let raw: string;
+	try {
+		raw = readFileSync(path, "utf8");
+	} catch {
+		return keys;
+	}
+	for (const line of raw.split("\n")) {
+		const match = ENV_KEY_LINE.exec(line);
+		if (match?.[1] !== undefined) {
+			keys.add(match[1]);
+		}
+	}
+	return keys;
+}
+
 // The advisory hermeticity note (A2): the vitest step inherits the workroot's
-// `.env.local`, which CI does NOT have. When `.env.local` exists but no `.env.test`
-// does, the local gate validates a DIFFERENT environment than CI — a field failure
-// where a suite validated env at IMPORT time, loaded fine locally (dev creds), and
-// crashed only in CI (no env). Returns the one advisory line, or null when hermetic
-// (`.env.test` committed) or when there is no `.env.local` at all.
+// `.env.local`, which CI does NOT have — so a suite that validates env at IMPORT
+// time can load locally (dev creds) yet crash in CI (no env). Two shapes:
+//   - `.env.local` present, NO `.env.test` → the inherits note (nothing hermetic).
+//   - BOTH present → compare KEY SETS only, never values (F1): an INCOMPLETE
+//     `.env.test` (keys present in `.env.local` but absent in `.env.test`) still
+//     sources those keys from `.env.local` — which CI lacks — so name them (capped
+//     at ~6, then `…N more`). A complete superset is genuinely hermetic → silent.
+// Null when there is no `.env.local` at all, or `.env.test` covers every key.
 function hermeticityNote(root: string): string | null {
-	if (
-		!existsSync(join(root, ".env.local")) ||
-		existsSync(join(root, ".env.test"))
-	) {
+	const localPath = join(root, ".env.local");
+	if (!existsSync(localPath)) {
 		return null;
 	}
-	return "test: vitest inherits .env.local (absent in CI) — commit a placeholder .env.test for hermetic runs";
+	const testPath = join(root, ".env.test");
+	if (!existsSync(testPath)) {
+		return "test: vitest inherits .env.local (absent in CI) — commit a placeholder .env.test for hermetic runs";
+	}
+	const testKeys = envFileKeys(testPath);
+	const missing = [...envFileKeys(localPath)].filter(
+		(key) => !testKeys.has(key),
+	);
+	if (missing.length === 0) {
+		return null;
+	}
+	const shown = missing.slice(0, ENV_KEY_LIST_CAP);
+	const overflow = missing.length - shown.length;
+	const list =
+		overflow > 0 ? `${shown.join(", ")}, …${overflow} more` : shown.join(", ");
+	return `test: .env.test is missing ${missing.length} key(s) present in .env.local: ${list} — CI runs without them`;
 }
 
 // The per-file cap on the vitest failure summary: enough failed suites to orient,
@@ -974,10 +1037,11 @@ function vitestSummary(
 // could report). Covers BOTH failure shapes: a file-level load error (the `message`)
 // and individual failed tests (the first `failureMessages`).
 //
-// PURE, but kept PRIVATE and NOT unit-tested directly: the only reachable caller is
-// the vitest step, which spawns real vitest — a documented non-CI boundary (the
-// task forbids spawning vitest; no run() seam reaches this without it). Same
-// precedent as `parseEtimeSeconds` in lifecycle.ts.
+// PURE and PRIVATE — reached only through the vitest step. Exercised in CI via a
+// STUB vitest bin (a fake `node_modules/vitest` that exits nonzero writing
+// hand-written reporter JSON), never a real vitest run, so the parser is covered
+// without the forbidden real spawn — the same stub-bin seam the hermeticity tests
+// use to make the step actually run.
 function parseVitestFailures(
 	stdout: string,
 	root: string,
