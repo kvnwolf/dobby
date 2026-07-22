@@ -22,7 +22,8 @@
 			"portless",
 			"taze",
 			"ultracite",
-			"vite"
+			"vite",
+			"vitest"
 		]
 	}
 }

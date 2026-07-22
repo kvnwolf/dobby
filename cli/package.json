@@ -52,5 +52,41 @@
 		"taze": "^19.14.1",
 		"typescript": "^7.0.2",
 		"ultracite": "^7.9.4"
+	},
+	"peerDependencies": {
+		"@tailwindcss/vite": "*",
+		"@tanstack/devtools-vite": "*",
+		"@tanstack/react-start": "*",
+		"@vitejs/plugin-react": "*",
+		"drizzle-kit": "*",
+		"nitro": "*",
+		"vite": "*",
+		"vitest": "*"
+	},
+	"peerDependenciesMeta": {
+		"@tailwindcss/vite": {
+			"optional": true
+		},
+		"@tanstack/devtools-vite": {
+			"optional": true
+		},
+		"@tanstack/react-start": {
+			"optional": true
+		},
+		"@vitejs/plugin-react": {
+			"optional": true
+		},
+		"drizzle-kit": {
+			"optional": true
+		},
+		"nitro": {
+			"optional": true
+		},
+		"vite": {
+			"optional": true
+		},
+		"vitest": {
+			"optional": true
+		}
 	}
 }

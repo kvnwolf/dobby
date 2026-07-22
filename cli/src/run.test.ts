@@ -778,6 +778,8 @@ function readCliManifest(): {
 	exports?: Record<string, unknown>;
 	bin?: Record<string, string>;
 	dependencies?: Record<string, string>;
+	peerDependencies?: Record<string, string>;
+	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 	files?: string[];
 } {
 	return JSON.parse(readFileSync(cliFile("package.json"), "utf8"));
@@ -1444,22 +1446,37 @@ describe("dobby preset — drizzle.base.mjs", () => {
 	});
 });
 
+// The consumer-resolved packages the SHIPPED presets import — the single source
+// of truth for both the never-a-dependency guard and the optional-peer guard
+// below. Every entry is a bare specifier imported by a `.mjs` preset (and
+// type-imported by its `.d.mts` sibling); NONE is ever bundled (the dual-Vite
+// invariant). Derived by grepping every preset import in cli/, mapping each
+// subpath specifier back to its package:
+//   vite                     — vite.base.mjs, vite.tanstack.mjs, vitest.react.mjs, *.d.mts
+//   vitest                   — vitest.base.mjs, vitest.react.mjs (`vitest/config`), *.d.mts
+//   drizzle-kit              — drizzle.base.mjs, drizzle.base.d.mts
+//   @vitejs/plugin-react     — vite.tanstack.mjs, vitest.react.mjs
+//   @tailwindcss/vite        — vite.tanstack.mjs
+//   @tanstack/react-start    — vite.tanstack.mjs (`@tanstack/react-start/plugin/vite`)
+//   @tanstack/devtools-vite  — vite.tanstack.mjs
+//   nitro                    — vite.tanstack.mjs (`nitro/vite`)
+const PRESET_IMPORTED_PACKAGES = [
+	"vite",
+	"vitest",
+	"drizzle-kit",
+	"@vitejs/plugin-react",
+	"@tailwindcss/vite",
+	"@tanstack/react-start",
+	"@tanstack/devtools-vite",
+	"nitro",
+] as const;
+
 // --- No consumer-resolved package leaks into cli dependencies ----------------
 // The dual-Vite invariant, extended to the whole preset suite: vite / vitest /
 // drizzle-kit / @vitejs are ALWAYS resolved from the consumer's tree at
 // config-load time, never bundled inside dobby.
 describe("dobby dependencies — no consumer-resolved stack packages", () => {
-	for (const name of [
-		"vite",
-		"vitest",
-		"drizzle-kit",
-		"@vitejs/plugin-react",
-		// The tanstack preset's plugins are consumer-resolved too — NONE bundles.
-		"@tailwindcss/vite",
-		"@tanstack/react-start",
-		"@tanstack/devtools-vite",
-		"nitro",
-	]) {
+	for (const name of PRESET_IMPORTED_PACKAGES) {
 		it(`never declares ${name} as a dobby dependency`, () => {
 			const deps = readCliManifest().dependencies ?? {};
 			expect(deps[name]).toBeUndefined();
@@ -1478,6 +1495,51 @@ describe("dobby dependencies — no consumer-resolved stack packages", () => {
 		expect(Object.keys(deps).some((key) => key.startsWith("@tanstack/"))).toBe(
 			false,
 		);
+	});
+});
+
+// --- Every preset-imported package is an OPTIONAL peerDependency --------------
+// The companion to the never-a-dependency guard: the same consumer-resolved set
+// (imported by the .mjs presets, type-imported by the .d.mts siblings) is
+// declared in peerDependencies with a permissive "*" range — dobby tracks the
+// house fleet, not a version policy — and marked optional in
+// peerDependenciesMeta. The peer declaration is what lets STRICT, non-hoisted
+// layouts (pnpm/isolated linkers) resolve these from dobby's own package
+// location; `optional: true` keeps hoisted/bun consumers and non-users of a
+// given preset free of install pressure and warnings (ADR-0015 world).
+describe("dobby peerDependencies — preset-imported packages, all optional", () => {
+	for (const name of PRESET_IMPORTED_PACKAGES) {
+		it(`declares ${name} as a peerDependency with a permissive "*" range`, () => {
+			const peers = readCliManifest().peerDependencies ?? {};
+			expect(peers[name]).toBe("*");
+		});
+
+		it(`marks ${name} optional in peerDependenciesMeta`, () => {
+			const meta = readCliManifest().peerDependenciesMeta ?? {};
+			expect(meta[name]).toEqual({ optional: true });
+		});
+	}
+
+	// The dual-Vite invariant holds across the two declaration sites: nothing may
+	// be both a bundled dependency AND a peer (peers resolve from the consumer).
+	it("declares no package as both a bundled dependency and a peerDependency (peers ≠ deps)", () => {
+		const manifest = readCliManifest();
+		const deps = manifest.dependencies ?? {};
+		const peers = manifest.peerDependencies ?? {};
+		for (const name of Object.keys(peers)) {
+			expect(deps[name]).toBeUndefined();
+		}
+	});
+
+	// peerDependenciesMeta must not drift from peerDependencies: every optional
+	// marker names a package that is actually a declared peer.
+	it("every peerDependenciesMeta entry names a declared peerDependency", () => {
+		const manifest = readCliManifest();
+		const peers = manifest.peerDependencies ?? {};
+		const meta = manifest.peerDependenciesMeta ?? {};
+		for (const name of Object.keys(meta)) {
+			expect(peers[name]).toBeDefined();
+		}
 	});
 });
 
