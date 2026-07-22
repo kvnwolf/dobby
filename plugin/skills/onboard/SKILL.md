@@ -91,7 +91,7 @@ Persist the tracker chosen in Step 1 into `dobby.config.json`'s optional top-lev
 
 ### .worktreeinclude
 
-Scaffold `.worktreeinclude` at the repo root (gitignore syntax) — one glob per line listing the gitignored env/config files a fresh worktree needs (e.g. `.env`, `.env.local`). Claude Code copies these into each new `EnterWorktree` worktree so the app can run there, and `dobby up`'s setup phase re-materializes them if the native copy didn't run. Discover the set the same way as the rest of onboard's discovery (inspect the repo's `.gitignore` + `.env*` files); apply the no-clobber rule if the file already exists. Skip if the project has no gitignored env files.
+Scaffold `.worktreeinclude` at the repo root (gitignore syntax) — one glob per line listing the gitignored env/config files a fresh worktree needs (e.g. `.env`, `.env.local`). Claude Code copies these into each new `EnterWorktree` worktree so the app can run there, and `dobby up`'s setup phase re-materializes them if the native copy didn't run. Discover the set the same way as the rest of onboard's discovery (inspect the repo's `.gitignore` + `.env*` files); apply the no-clobber rule if the file already exists. Skip if the project has no gitignored env files. If the app validates its env at import (a `src/lib/env.ts` calling `@t3-oss/env-core`'s `createEnv`), also commit a placeholder `.env.test` alongside — dummy values for every validated var — so CI can run the suite envless; the vitest preset loads it via mode `test`, and `.env.local` still wins locally.
 
 ### External-service setup (offer the wizard)
 
