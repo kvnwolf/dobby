@@ -34,6 +34,7 @@
   "files": [
     "src",
     "!src/run.test.ts",
+    "!src/vendor-biome.test.ts",
     "biome",
     "tsconfig.base.json",
     "tsconfig.vite.json",

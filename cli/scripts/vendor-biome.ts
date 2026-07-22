@@ -14,7 +14,7 @@
 // so this uses a tiny string-aware JSONC stripper instead — NO new dependency, and
 // it runs identically under Bun (the script) and Node/vitest (the drift test).
 
-import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -120,11 +120,30 @@ function injectBefore(
 }
 
 // The ultracite package root, derived from a RESOLVED config file path (ultracite's
-// `exports` block `./package.json`, so it can't be resolved directly). From
-// `.../ultracite/config/biome/core/biome.jsonc`, four `dirname`s reach the root.
+// `exports` block hides `./package.json` — require.resolve("ultracite/package.json")
+// throws ERR_PACKAGE_PATH_NOT_EXPORTED — so the root can't be resolved directly).
+// Walk up from the resolved core config until a directory holds a `package.json`
+// whose `name` is "ultracite"; the nesting depth is ultracite's to change, not ours.
 function ultraciteRoot(): string {
   const core = requireFrom.resolve("ultracite/biome/core");
-  return dirname(dirname(dirname(dirname(core))));
+  let dir = dirname(core);
+  let parent = dirname(dir);
+  while (parent !== dir) {
+    const manifestPath = join(dir, "package.json");
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+        name?: string;
+      };
+      if (manifest.name === "ultracite") {
+        return dir;
+      }
+    }
+    dir = parent;
+    parent = dirname(dir);
+  }
+  throw new Error(
+    `vendor-biome: could not locate the ultracite package root by walking up from ${core}`
+  );
 }
 
 function ultraciteVersion(): string {
