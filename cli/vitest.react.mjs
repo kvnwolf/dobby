@@ -21,15 +21,15 @@ import dobbyVitest from "./vitest.base.mjs";
 // vite / @vitejs packages: vitest.base.mjs must stay importable in repos WITHOUT
 // vite installed (dobby's own repo). All three resolve from the CONSUMER's tree.
 export default mergeConfig(
-	dobbyVitest,
-	defineConfig({
-		// Test plugins ≠ app plugins — never the SSR set (which would start
-		// servers that never tear down and hang the run).
-		plugins: [react()],
-		// vite@8 native tsconfig path-alias resolution.
-		resolve: { tsconfigPaths: true },
-		// "" prefix loads EVERY var: house apps validate the full env at import
-		// time (src/lib/env.ts), so the test run needs all of it.
-		test: { env: loadEnv("test", process.cwd(), "") },
-	}),
+  dobbyVitest,
+  defineConfig({
+    // Test plugins ≠ app plugins — never the SSR set (which would start
+    // servers that never tear down and hang the run).
+    plugins: [react()],
+    // vite@8 native tsconfig path-alias resolution.
+    resolve: { tsconfigPaths: true },
+    // "" prefix loads EVERY var: house apps validate the full env at import
+    // time (src/lib/env.ts), so the test run needs all of it.
+    test: { env: loadEnv("test", process.cwd(), "") },
+  })
 );

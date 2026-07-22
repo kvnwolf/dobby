@@ -17,37 +17,41 @@ import { run } from "./run.ts";
 const argv = process.argv.slice(2);
 
 if (isLiveDev(argv)) {
-	// Share (the ngrok tunnel) is ON BY DEFAULT; `--no-share` opts out.
-	process.exit(
-		await runDev(process.cwd(), { share: !argv.includes("--no-share") }),
-	);
+  // Share (the ngrok tunnel) is ON BY DEFAULT; `--no-share` opts out.
+  process.exit(
+    await runDev(process.cwd(), { share: !argv.includes("--no-share") })
+  );
 }
 
 const stdin = argv.includes("--hook") ? await readStdin() : undefined;
 
 const { exitCode, stdout, stderr } = await run(argv, process.cwd(), stdin);
-if (stdout) process.stdout.write(stdout);
-if (stderr) process.stderr.write(stderr);
+if (stdout) {
+  process.stdout.write(stdout);
+}
+if (stderr) {
+  process.stderr.write(stderr);
+}
 process.exit(exitCode);
 
 // A live `dobby dev` is the `dev` command WITHOUT --dry-run. `dev --dry-run` stays
 // on the capture path (run() prints the plan); every non-dev command is finite.
 // The command is the first positional (ignoring any leading flags).
 function isLiveDev(args: string[]): boolean {
-	const command = args.find((arg) => !arg.startsWith("-"));
-	return command === "dev" && !args.includes("--dry-run");
+  const command = args.find((arg) => !arg.startsWith("-"));
+  return command === "dev" && !args.includes("--dry-run");
 }
 
 // Read all of process stdin as a UTF-8 string. Event-based (not async-iteration)
 // so a closed/empty stdin resolves to "" rather than hanging.
 function readStdin(): Promise<string> {
-	return new Promise((resolve) => {
-		let data = "";
-		process.stdin.setEncoding("utf8");
-		process.stdin.on("data", (chunk: string) => {
-			data += chunk;
-		});
-		process.stdin.on("end", () => resolve(data));
-		process.stdin.on("error", () => resolve(data));
-	});
+  return new Promise((resolve) => {
+    let data = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk: string) => {
+      data += chunk;
+    });
+    process.stdin.on("end", () => resolve(data));
+    process.stdin.on("error", () => resolve(data));
+  });
 }

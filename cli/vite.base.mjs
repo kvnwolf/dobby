@@ -18,11 +18,11 @@ import { defineConfig } from "vite";
 // dual-Vite invariant — a bundled second copy would clash with the consumer's
 // plugins).
 export default defineConfig({
-	// vite@8 resolves tsconfig path aliases natively — never the
-	// vite-tsconfig-paths plugin (vitest itself warns to remove it).
-	resolve: { tsconfigPaths: true },
-	// portless serves the app through per-worktree custom hostnames; vite must
-	// accept them. This key is dobby-lifecycle-coupled — that is WHY it's preset,
-	// not a consumer delta.
-	server: { allowedHosts: true },
+  // vite@8 resolves tsconfig path aliases natively — never the
+  // vite-tsconfig-paths plugin (vitest itself warns to remove it).
+  resolve: { tsconfigPaths: true },
+  // portless serves the app through per-worktree custom hostnames; vite must
+  // accept them. This key is dobby-lifecycle-coupled — that is WHY it's preset,
+  // not a consumer delta.
+  server: { allowedHosts: true },
 });

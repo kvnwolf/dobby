@@ -5,6 +5,11 @@ import { loadConfig } from "./config.ts";
 import { detectCapabilities } from "./detect.ts";
 import { resolveBin, resolveWorkroot, runCapture } from "./runner.ts";
 
+// Top-level regexes (biome useTopLevelRegex — a literal inside a function recompiles
+// on every call).
+const SCOPED_NAME_RE = /^@[^/]+\/(.+)$/;
+const WHITESPACE_SPLIT_RE = /\s+/;
+
 // Assembles the `dobby env` snapshot: a local picture of the working environment.
 // Pure over its `root` argument plus process.env; every fact is best-effort and
 // degrades to null/false/[] rather than throwing — `env` must NEVER fail. Only
@@ -19,59 +24,59 @@ import { resolveBin, resolveWorkroot, runCapture } from "./runner.ts";
 // The env snapshot as pure data. run() owns all rendering (the `key: value`
 // text form and the `--json` object) — this module returns facts, never lines.
 export interface EnvSnapshot {
-	// The CMUX_WORKSPACE_ID value, or null when unset/empty.
-	cmux: string | null;
-	// The enclosing git worktree root (git's resolved top-level), or null outside a repo.
-	worktree: string | null;
-	// The current git branch, or null outside a repo / on a detached HEAD.
-	branch: string | null;
-	// Detected project capabilities (may be empty).
-	capabilities: string[];
-	// Whether a parseable dobby.config.json exists at the root.
-	config: boolean;
-	// The portless-resolved dev URL, or null (no vite capability / portless absent / errors).
-	devUrl: string | null;
-	// The public ngrok share URL for the running app, read from portless's local
-	// routes.json (network-free), or null (no tunnel / no devUrl / no routes file).
-	shareUrl: string | null;
-	// The kit run-pane surface ref (surface titled dobby-run-<slug>), or null.
-	runPane: string | null;
-	// The kit browser-pane surface ref (surface titled dobby-browser-<slug>), or null.
-	browserPane: string | null;
+  // The current git branch, or null outside a repo / on a detached HEAD.
+  branch: string | null;
+  // The kit browser-pane surface ref (surface titled dobby-browser-<slug>), or null.
+  browserPane: string | null;
+  // Detected project capabilities (may be empty).
+  capabilities: string[];
+  // The CMUX_WORKSPACE_ID value, or null when unset/empty.
+  cmux: string | null;
+  // Whether a parseable dobby.config.json exists at the root.
+  config: boolean;
+  // The portless-resolved dev URL, or null (no vite capability / portless absent / errors).
+  devUrl: string | null;
+  // The kit run-pane surface ref (surface titled dobby-run-<slug>), or null.
+  runPane: string | null;
+  // The public ngrok share URL for the running app, read from portless's local
+  // routes.json (network-free), or null (no tunnel / no devUrl / no routes file).
+  shareUrl: string | null;
+  // The enclosing git worktree root (git's resolved top-level), or null outside a repo.
+  worktree: string | null;
 }
 
 // Assemble the environment snapshot for the project at `root` (the caller's cwd).
 export function collectEnv(root: string): EnvSnapshot {
-	const cmux = process.env.CMUX_WORKSPACE_ID || null;
-	// Resolve the workroot ONCE; every git/portless/cmux spawn below pins to it.
-	const workroot = resolveWorkroot(root);
-	// Capabilities are read from the CALLER's cwd (a single-package project runs
-	// dobby at its root), independent of the git top-level.
-	const capabilities = detectCapabilities(root);
-	const panes = discoverPanes(workroot, cmux);
-	const devUrl = resolveDevUrl(root, workroot, capabilities);
-	return {
-		cmux,
-		worktree: workroot,
-		branch: workroot === null ? null : gitBranch(workroot),
-		capabilities,
-		config: loadConfig(root)?.ok === true,
-		devUrl,
-		shareUrl: resolveShareUrl(devUrl),
-		runPane: panes.runPane,
-		browserPane: panes.browserPane,
-	};
+  const cmux = process.env.CMUX_WORKSPACE_ID || null;
+  // Resolve the workroot ONCE; every git/portless/cmux spawn below pins to it.
+  const workroot = resolveWorkroot(root);
+  // Capabilities are read from the CALLER's cwd (a single-package project runs
+  // dobby at its root), independent of the git top-level.
+  const capabilities = detectCapabilities(root);
+  const panes = discoverPanes(workroot, cmux);
+  const devUrl = resolveDevUrl(root, workroot, capabilities);
+  return {
+    branch: workroot === null ? null : gitBranch(workroot),
+    browserPane: panes.browserPane,
+    capabilities,
+    cmux,
+    config: loadConfig(root)?.ok === true,
+    devUrl,
+    runPane: panes.runPane,
+    shareUrl: resolveShareUrl(devUrl),
+    worktree: workroot,
+  };
 }
 
 // The current branch of the repo at `root`, pinned via the shared runner; null on
 // a detached HEAD (empty output), a git failure, or a missing git binary.
 function gitBranch(root: string): string | null {
-	const result = runCapture("git", ["branch", "--show-current"], { root });
-	if (result.status !== 0) {
-		return null;
-	}
-	const branch = result.stdout.trim();
-	return branch === "" ? null : branch;
+  const result = runCapture("git", ["branch", "--show-current"], { root });
+  if (result.status !== 0) {
+    return null;
+  }
+  const branch = result.stdout.trim();
+  return branch === "" ? null : branch;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,32 +98,32 @@ function gitBranch(root: string): string | null {
  * the identical URL `dobby env` reports.
  */
 export function resolveDevUrl(
-	cwd: string,
-	workroot: string | null,
-	capabilities: string[],
+  cwd: string,
+  workroot: string | null,
+  capabilities: string[]
 ): string | null {
-	// Only vite projects have a portless dev URL; skip the spawn otherwise.
-	if (!capabilities.includes("vite")) {
-		return null;
-	}
-	// No workroot to pin the child to (env is exempt from the fail-hard rule).
-	if (workroot === null) {
-		return null;
-	}
-	const name = portlessName(cwd);
-	if (name === null) {
-		return null;
-	}
-	// THE field-bug fix: resolve portless from dobby's OWN bundled tree, not a bare
-	// PATH spawn — dobby bundles portless, so it must resolve even when portless is
-	// not on PATH (the exact condition that made `env` print `devUrl: null`).
-	const portless = resolveBin("portless", { scope: "bundled" });
-	const result = runCapture(portless, ["get", name], { root: workroot });
-	if (result.status !== 0) {
-		return null;
-	}
-	const url = result.stdout.trim();
-	return url === "" ? null : url;
+  // Only vite projects have a portless dev URL; skip the spawn otherwise.
+  if (!capabilities.includes("vite")) {
+    return null;
+  }
+  // No workroot to pin the child to (env is exempt from the fail-hard rule).
+  if (workroot === null) {
+    return null;
+  }
+  const name = portlessName(cwd);
+  if (name === null) {
+    return null;
+  }
+  // THE field-bug fix: resolve portless from dobby's OWN bundled tree, not a bare
+  // PATH spawn — dobby bundles portless, so it must resolve even when portless is
+  // not on PATH (the exact condition that made `env` print `devUrl: null`).
+  const portless = resolveBin("portless", { scope: "bundled" });
+  const result = runCapture(portless, ["get", name], { root: workroot });
+  if (result.status !== 0) {
+    return null;
+  }
+  const url = result.stdout.trim();
+  return url === "" ? null : url;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,28 +149,29 @@ export function resolveDevUrl(
  * the running instance already has a tunnel.
  */
 export function resolveShareUrl(devUrl: string | null): string | null {
-	if (devUrl === null) {
-		return null;
-	}
-	let hostname: string;
-	try {
-		hostname = new URL(devUrl).hostname;
-	} catch {
-		return null;
-	}
-	if (hostname === "") {
-		return null;
-	}
-	const stateDir =
-		process.env.PORTLESS_STATE_DIR ?? join(homedir(), ".portless");
-	let data: unknown;
-	try {
-		data = JSON.parse(readFileSync(join(stateDir, "routes.json"), "utf8"));
-	} catch {
-		// Missing / unreadable / unparseable routes.json — no tunnel to report.
-		return null;
-	}
-	return findNgrokUrl(data, hostname);
+  if (devUrl === null) {
+    return null;
+  }
+  let url: URL;
+  try {
+    url = new URL(devUrl);
+  } catch {
+    return null;
+  }
+  const { hostname } = url;
+  if (hostname === "") {
+    return null;
+  }
+  const stateDir =
+    process.env.PORTLESS_STATE_DIR ?? join(homedir(), ".portless");
+  let data: unknown;
+  try {
+    data = JSON.parse(readFileSync(join(stateDir, "routes.json"), "utf8"));
+  } catch {
+    // Missing / unreadable / unparseable routes.json — no tunnel to report.
+    return null;
+  }
+  return findNgrokUrl(data, hostname);
 }
 
 // Extract the `ngrokUrl` for `hostname` from a parsed routes.json — tolerant of the
@@ -174,62 +180,62 @@ export function resolveShareUrl(devUrl: string | null): string | null {
 // or an ARRAY of route objects each carrying its own hostname. Any other shape, or a
 // missing/blank `ngrokUrl`, yields null.
 function findNgrokUrl(data: unknown, hostname: string): string | null {
-	if (typeof data !== "object" || data === null) {
-		return null;
-	}
-	const routes =
-		"routes" in data
-			? (data as { routes?: unknown }).routes
-			: (data as unknown);
+  if (typeof data !== "object" || data === null) {
+    return null;
+  }
+  const routes =
+    "routes" in data
+      ? (data as { routes?: unknown }).routes
+      : (data as unknown);
 
-	// Array of route objects: match on any hostname-ish field.
-	if (Array.isArray(routes)) {
-		for (const entry of routes) {
-			if (routeHostname(entry) === hostname) {
-				return ngrokUrlOf(entry);
-			}
-		}
-		return null;
-	}
+  // Array of route objects: match on any hostname-ish field.
+  if (Array.isArray(routes)) {
+    for (const entry of routes) {
+      if (routeHostname(entry) === hostname) {
+        return ngrokUrlOf(entry);
+      }
+    }
+    return null;
+  }
 
-	// Map keyed by hostname: look the host up directly.
-	if (typeof routes === "object" && routes !== null) {
-		const keyed = (routes as Record<string, unknown>)[hostname];
-		if (keyed !== undefined) {
-			return ngrokUrlOf(keyed);
-		}
-	}
-	return null;
+  // Map keyed by hostname: look the host up directly.
+  if (typeof routes === "object" && routes !== null) {
+    const keyed = (routes as Record<string, unknown>)[hostname];
+    if (keyed !== undefined) {
+      return ngrokUrlOf(keyed);
+    }
+  }
+  return null;
 }
 
 // The hostname a route entry declares (for the array shape), across the plausible
 // field names, or null when none is a string.
 function routeHostname(entry: unknown): string | null {
-	if (typeof entry !== "object" || entry === null) {
-		return null;
-	}
-	const record = entry as Record<string, unknown>;
-	for (const key of ["hostname", "host", "domain"]) {
-		const value = record[key];
-		if (typeof value === "string" && value !== "") {
-			return value;
-		}
-	}
-	return null;
+  if (typeof entry !== "object" || entry === null) {
+    return null;
+  }
+  const record = entry as Record<string, unknown>;
+  for (const key of ["hostname", "host", "domain"]) {
+    const value = record[key];
+    if (typeof value === "string" && value !== "") {
+      return value;
+    }
+  }
+  return null;
 }
 
 // A route entry's `ngrokUrl` when it is a non-empty string, else null.
 function ngrokUrlOf(entry: unknown): string | null {
-	if (typeof entry !== "object" || entry === null) {
-		return null;
-	}
-	const url = (entry as { ngrokUrl?: unknown }).ngrokUrl;
-	return typeof url === "string" && url !== "" ? url : null;
+  if (typeof entry !== "object" || entry === null) {
+    return null;
+  }
+  const url = (entry as { ngrokUrl?: unknown }).ngrokUrl;
+  return typeof url === "string" && url !== "" ? url : null;
 }
 
 interface Manifest {
-	name?: string;
-	portless?: string;
+  name?: string;
+  portless?: string;
 }
 
 // The portless project name from `<root>/package.json`: the explicit `portless`
@@ -237,39 +243,39 @@ interface Manifest {
 // ("@acme/admin" -> "admin"). Null when the manifest is absent/unparseable or
 // declares no usable name. Read from the same cwd the vite capability came from.
 function portlessName(root: string): string | null {
-	const manifest = readManifest(root);
-	if (manifest === null) {
-		return null;
-	}
-	if (
-		typeof manifest.portless === "string" &&
-		manifest.portless.trim() !== ""
-	) {
-		return manifest.portless.trim();
-	}
-	if (typeof manifest.name === "string" && manifest.name.trim() !== "") {
-		return stripScope(manifest.name.trim());
-	}
-	return null;
+  const manifest = readManifest(root);
+  if (manifest === null) {
+    return null;
+  }
+  if (
+    typeof manifest.portless === "string" &&
+    manifest.portless.trim() !== ""
+  ) {
+    return manifest.portless.trim();
+  }
+  if (typeof manifest.name === "string" && manifest.name.trim() !== "") {
+    return stripScope(manifest.name.trim());
+  }
+  return null;
 }
 
 // "@scope/pkg" -> "pkg"; an unscoped name is returned unchanged.
 function stripScope(name: string): string {
-	const scoped = /^@[^/]+\/(.+)$/.exec(name);
-	// The required capture group is always present when `scoped` matched; the
-	// `?? name` keeps `noUncheckedIndexedAccess` happy without changing behavior.
-	return scoped?.[1] ?? name;
+  const scoped = SCOPED_NAME_RE.exec(name);
+  // The required capture group is always present when `scoped` matched; the
+  // `?? name` keeps `noUncheckedIndexedAccess` happy without changing behavior.
+  return scoped?.[1] ?? name;
 }
 
 // Read + parse `<root>/package.json`, tolerant: null on any read/parse failure.
 function readManifest(root: string): Manifest | null {
-	try {
-		return JSON.parse(
-			readFileSync(join(root, "package.json"), "utf8"),
-		) as Manifest;
-	} catch {
-		return null;
-	}
+  try {
+    return JSON.parse(
+      readFileSync(join(root, "package.json"), "utf8")
+    ) as Manifest;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -296,52 +302,52 @@ function readManifest(root: string): Manifest | null {
  * existing kit panes (idempotent), `down` discovers them to close.
  */
 export function discoverPanes(
-	workroot: string | null,
-	cmux: string | null,
+  workroot: string | null,
+  cmux: string | null
 ): { runPane: string | null; browserPane: string | null } {
-	const none = { runPane: null, browserPane: null };
-	if (cmux === null || workroot === null) {
-		return none;
-	}
-	const slug = basename(workroot);
-	const runTitle = `dobby-run-${slug}`;
-	const browserTitle = `dobby-browser-${slug}`;
+  const none = { browserPane: null, runPane: null };
+  if (cmux === null || workroot === null) {
+    return none;
+  }
+  const slug = basename(workroot);
+  const runTitle = `dobby-run-${slug}`;
+  const browserTitle = `dobby-browser-${slug}`;
 
-	const panes = runCapture("cmux", ["list-panes", "--workspace", cmux], {
-		root: workroot,
-	});
-	if (panes.status !== 0) {
-		return none;
-	}
-	const paneRefs = parseRefs(panes.stdout, "pane");
-	if (paneRefs.length === 0) {
-		return none;
-	}
+  const panes = runCapture("cmux", ["list-panes", "--workspace", cmux], {
+    root: workroot,
+  });
+  if (panes.status !== 0) {
+    return none;
+  }
+  const paneRefs = parseRefs(panes.stdout, "pane");
+  if (paneRefs.length === 0) {
+    return none;
+  }
 
-	let runPane: string | null = null;
-	let browserPane: string | null = null;
-	for (const pane of paneRefs) {
-		const surfaces = runCapture(
-			"cmux",
-			["list-pane-surfaces", "--workspace", cmux, "--pane", pane],
-			{ root: workroot },
-		);
-		if (surfaces.status !== 0) {
-			continue;
-		}
-		for (const line of surfaces.stdout.split("\n")) {
-			if (runPane === null && line.includes(runTitle)) {
-				runPane = refOf(line, "surface");
-			}
-			if (browserPane === null && line.includes(browserTitle)) {
-				browserPane = refOf(line, "surface");
-			}
-		}
-		if (runPane !== null && browserPane !== null) {
-			break;
-		}
-	}
-	return { runPane, browserPane };
+  let runPane: string | null = null;
+  let browserPane: string | null = null;
+  for (const pane of paneRefs) {
+    const surfaces = runCapture(
+      "cmux",
+      ["list-pane-surfaces", "--workspace", cmux, "--pane", pane],
+      { root: workroot }
+    );
+    if (surfaces.status !== 0) {
+      continue;
+    }
+    for (const line of surfaces.stdout.split("\n")) {
+      if (runPane === null && line.includes(runTitle)) {
+        runPane = refOf(line, "surface");
+      }
+      if (browserPane === null && line.includes(browserTitle)) {
+        browserPane = refOf(line, "surface");
+      }
+    }
+    if (runPane !== null && browserPane !== null) {
+      break;
+    }
+  }
+  return { browserPane, runPane };
 }
 
 // Extract the ref token of `kind` (e.g. "pane" / "surface") from each non-empty
@@ -349,25 +355,25 @@ export function discoverPanes(
 // we scan for that token and fall back to the line's first whitespace-delimited
 // field when it is absent (format is runtime-unverified).
 function parseRefs(stdout: string, kind: string): string[] {
-	const refs: string[] = [];
-	for (const line of stdout.split("\n")) {
-		if (line.trim() === "") {
-			continue;
-		}
-		const ref = refOf(line, kind);
-		if (ref !== null) {
-			refs.push(ref);
-		}
-	}
-	return refs;
+  const refs: string[] = [];
+  for (const line of stdout.split("\n")) {
+    if (line.trim() === "") {
+      continue;
+    }
+    const ref = refOf(line, kind);
+    if (ref !== null) {
+      refs.push(ref);
+    }
+  }
+  return refs;
 }
 
 // The `kind:ref` token in a line (`surface:4`), or the first field as a fallback.
 function refOf(line: string, kind: string): string | null {
-	const token = new RegExp(`${kind}:\\S+`).exec(line);
-	if (token !== null) {
-		return token[0];
-	}
-	const first = line.trim().split(/\s+/)[0];
-	return first === undefined || first === "" ? null : first;
+  const token = new RegExp(`${kind}:\\S+`).exec(line);
+  if (token !== null) {
+    return token[0];
+  }
+  const [first] = line.trim().split(WHITESPACE_SPLIT_RE);
+  return first === undefined || first === "" ? null : first;
 }

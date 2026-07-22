@@ -16,11 +16,11 @@ import { configDefaults, defineConfig } from "vitest/config";
 // `vitest/config` resolves from the CONSUMER's tree (dobby lives inside the
 // consumer's node_modules); vitest is NEVER a dobby dependency (dual-Vite invariant).
 export default defineConfig({
-	test: {
-		// vitest-under-bun's module runner mangles zod v4's dual export map
-		// (z.enum → undefined); inlining lets Vite resolve it instead.
-		server: { deps: { inline: ["zod"] } },
-		// .claude/ holds full worktree copies whose tests would be double-discovered.
-		exclude: [...configDefaults.exclude, ".claude/**"],
-	},
+  test: {
+    // .claude/ holds full worktree copies whose tests would be double-discovered.
+    exclude: [...configDefaults.exclude, ".claude/**"],
+    // vitest-under-bun's module runner mangles zod v4's dual export map
+    // (z.enum → undefined); inlining lets Vite resolve it instead.
+    server: { deps: { inline: ["zod"] } },
+  },
 });
