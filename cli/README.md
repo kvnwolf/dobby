@@ -106,7 +106,7 @@ export { default } from "@kvnwolf/dobby/drizzle";
 
 ### `dobby env`
 
-Print a snapshot of the working environment — worktree root, branch, cmux workspace, detected capabilities, config presence, dev URL, and kit pane refs. Every fact is resolved locally (no network) and `env` never fails.
+Print a snapshot of the working environment — worktree root, branch, cmux workspace, detected capabilities, config presence, dev URL, **share URL** (the public ngrok tunnel, when the app is shared — see [`dobby dev`](#dobby-dev)), and kit pane refs. Every fact is resolved locally (no network — `shareUrl` is read from portless's local `routes.json`) and `env` never fails.
 
 ```sh
 dobby env             # key: value text
@@ -143,7 +143,21 @@ Run the app: the `vite dev` server wrapped in `portless run`, plus concurrent se
 
 ```sh
 dobby dev
+dobby dev --no-share      # run local-only (no public tunnel)
 dobby dev --dry-run       # print the resolved plan without spawning
+```
+
+#### Share (public URL) — on by default
+
+`dobby dev` (and the `dobby dev` that `dobby up` starts) opens a **public ngrok tunnel by default** — `portless run --ngrok …` — so your running app is reachable from your phone or a teammate for a quick look. `dobby env` reports the tunnel as `shareUrl`. Two things are worth knowing:
+
+- **Two one-time requirements.** The tunnel needs the [`ngrok` binary on your PATH](https://ngrok.com/download) and an ngrok authtoken configured once — `ngrok config add-authtoken <token>`. If the **binary is missing**, dobby doesn't fail — it **degrades**: it drops the tunnel, runs your app local-only, and prints one note (`share: off (ngrok not installed — …)`). If the binary is present but **not authenticated**, ngrok/portless surfaces its own clear error in the run log / pane (dobby doesn't pre-check auth).
+- **The URL rotates every session.** Each `dobby dev` gets a **new random** ngrok URL, and the tunnel dies when the run stops — there's no stable domain. Because it rotates, dobby **never writes the public URL into `.env.local`** (a stale public URL would poison auth/CORS the next time you run un-shared). Instead, portless injects `PORTLESS_NGROK_URL` into your app's process env when the tunnel is up — **read it as an optional env var** (present only when shared) if your app needs to know its own public origin. The local `PORTLESS_URL` is never rewritten.
+
+Pass `--no-share` to skip the tunnel entirely (no `--ngrok`, no note). On `dobby up`, `--no-share` is passed through to the `dobby dev` it starts.
+
+```sh
+dobby dev --no-share      # local-only, no tunnel
 ```
 
 ### `dobby build`
@@ -167,10 +181,13 @@ Building through dobby (rather than a raw framework CLI) means the config-less d
 
 **`dobby up` is the single lifecycle entry point — it prepares and runs the workspace, idempotently.** It runs a **setup phase** first — `bun install`, then (in a linked git worktree) re-materializing files listed in `.worktreeinclude` from the main checkout, then any `setup[]` extras (fail-fast) — and only once that succeeds does it **run** the app: provisioning an isolated Neon branch when the repo has the neon capability, starting the run (cmux panes or a detached background run), and waiting for liveness. Under cmux, `up` also renames the **cmux workspace** to the goal slug (the workspace title becomes the goal identity, distinct from the `dobby-`prefixed pane names) so you can tell at a glance which workspace belongs to which goal — this happens whenever cmux is present, even for a repo with no app to run. Because the run is liveness-first, re-running `up` on an already-live workspace is a no-op — idempotent. A repo with no app to run (no vite capability) still runs the full setup phase, then reports `no app to run` and exits 0.
 
+The app `up` starts **shares by default** (the same public ngrok tunnel as [`dobby dev`](#share-public-url--on-by-default)); pass `dobby up --no-share` to start it local-only. If the `ngrok` binary is missing, `up` degrades exactly like `dev` (local-only + the one note). If `up` finds the app **already live but with no tunnel** (you'd started it earlier with `--no-share`, say), it does **not** restart anything — it tells you to `dobby down && dobby up` to restart with the default share.
+
 `dobby down` is the counterpart teardown: it closes the panes, kills the run, deletes the Neon branch, and runs `teardown[]` extras. Both are listed only for a repo with the vite capability.
 
 ```sh
-dobby up                  # prepare (setup phase) + run the workspace
+dobby up                  # prepare (setup phase) + run the workspace (shares by default)
+dobby up --no-share       # ...but start the app local-only
 dobby up --dry-run        # print the FULL ordered plan (setup phase + run phase)
 dobby down
 dobby down --dry-run

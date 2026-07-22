@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { detectCapabilities } from "./detect.ts";
@@ -30,6 +31,9 @@ export interface EnvSnapshot {
 	config: boolean;
 	// The portless-resolved dev URL, or null (no vite capability / portless absent / errors).
 	devUrl: string | null;
+	// The public ngrok share URL for the running app, read from portless's local
+	// routes.json (network-free), or null (no tunnel / no devUrl / no routes file).
+	shareUrl: string | null;
 	// The kit run-pane surface ref (surface titled dobby-run-<slug>), or null.
 	runPane: string | null;
 	// The kit browser-pane surface ref (surface titled dobby-browser-<slug>), or null.
@@ -45,13 +49,15 @@ export function collectEnv(root: string): EnvSnapshot {
 	// dobby at its root), independent of the git top-level.
 	const capabilities = detectCapabilities(root);
 	const panes = discoverPanes(workroot, cmux);
+	const devUrl = resolveDevUrl(root, workroot, capabilities);
 	return {
 		cmux,
 		worktree: workroot,
 		branch: workroot === null ? null : gitBranch(workroot),
 		capabilities,
 		config: loadConfig(root)?.ok === true,
-		devUrl: resolveDevUrl(root, workroot, capabilities),
+		devUrl,
+		shareUrl: resolveShareUrl(devUrl),
 		runPane: panes.runPane,
 		browserPane: panes.browserPane,
 	};
@@ -113,6 +119,112 @@ export function resolveDevUrl(
 	}
 	const url = result.stdout.trim();
 	return url === "" ? null : url;
+}
+
+// ---------------------------------------------------------------------------
+// shareUrl — the public ngrok tunnel URL, read from portless's LOCAL routes.json.
+//
+// When the app runs under `portless run --ngrok` (dobby's default share), portless
+// persists the per-route public URL to `<stateDir>/routes.json` (stateDir =
+// PORTLESS_STATE_DIR, else ~/.portless) as the route's `ngrokUrl`, keyed by the
+// route's local hostname. `portless get` can NEVER return the public URL (it only
+// constructs the local hostname), so shareUrl is resolved by READING that file — a
+// local file read, network-free, keeping `env`'s network-free invariant intact.
+// The tunnel dies with the run and gets a NEW random URL each session, so shareUrl
+// is inherently ephemeral; a missing/unparseable file or an unmatched route → null.
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the public ngrok share URL for the running app from portless's local
+ * routes.json — the route whose hostname matches `devUrl`'s host, its `ngrokUrl`.
+ * Null when there is no devUrl, no routes file, an unparseable file, or no matching
+ * route with a tunnel. Network-free (a local file read, never a probe).
+ *
+ * @public — reused by `up` (lifecycle.ts) so the already-live path can tell whether
+ * the running instance already has a tunnel.
+ */
+export function resolveShareUrl(devUrl: string | null): string | null {
+	if (devUrl === null) {
+		return null;
+	}
+	let hostname: string;
+	try {
+		hostname = new URL(devUrl).hostname;
+	} catch {
+		return null;
+	}
+	if (hostname === "") {
+		return null;
+	}
+	const stateDir =
+		process.env.PORTLESS_STATE_DIR ?? join(homedir(), ".portless");
+	let data: unknown;
+	try {
+		data = JSON.parse(readFileSync(join(stateDir, "routes.json"), "utf8"));
+	} catch {
+		// Missing / unreadable / unparseable routes.json — no tunnel to report.
+		return null;
+	}
+	return findNgrokUrl(data, hostname);
+}
+
+// Extract the `ngrokUrl` for `hostname` from a parsed routes.json — tolerant of the
+// two plausible shapes (the exact schema is portless-internal): a map KEYED by
+// hostname (`{ "<host>": { ngrokUrl } }`), optionally wrapped under a `routes` key,
+// or an ARRAY of route objects each carrying its own hostname. Any other shape, or a
+// missing/blank `ngrokUrl`, yields null.
+function findNgrokUrl(data: unknown, hostname: string): string | null {
+	if (typeof data !== "object" || data === null) {
+		return null;
+	}
+	const routes =
+		"routes" in data
+			? (data as { routes?: unknown }).routes
+			: (data as unknown);
+
+	// Array of route objects: match on any hostname-ish field.
+	if (Array.isArray(routes)) {
+		for (const entry of routes) {
+			if (routeHostname(entry) === hostname) {
+				return ngrokUrlOf(entry);
+			}
+		}
+		return null;
+	}
+
+	// Map keyed by hostname: look the host up directly.
+	if (typeof routes === "object" && routes !== null) {
+		const keyed = (routes as Record<string, unknown>)[hostname];
+		if (keyed !== undefined) {
+			return ngrokUrlOf(keyed);
+		}
+	}
+	return null;
+}
+
+// The hostname a route entry declares (for the array shape), across the plausible
+// field names, or null when none is a string.
+function routeHostname(entry: unknown): string | null {
+	if (typeof entry !== "object" || entry === null) {
+		return null;
+	}
+	const record = entry as Record<string, unknown>;
+	for (const key of ["hostname", "host", "domain"]) {
+		const value = record[key];
+		if (typeof value === "string" && value !== "") {
+			return value;
+		}
+	}
+	return null;
+}
+
+// A route entry's `ngrokUrl` when it is a non-empty string, else null.
+function ngrokUrlOf(entry: unknown): string | null {
+	if (typeof entry !== "object" || entry === null) {
+		return null;
+	}
+	const url = (entry as { ngrokUrl?: unknown }).ngrokUrl;
+	return typeof url === "string" && url !== "" ? url : null;
 }
 
 interface Manifest {
