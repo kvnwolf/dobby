@@ -287,6 +287,16 @@ export function check(
 				if (tested.note !== null) {
 					notes.push(tested.note);
 				}
+				// A2 hermeticity note: the vitest step (capability present, not skipped)
+				// inherits whatever env files exist locally — CI has none. A local
+				// `.env.local` with NO committed `.env.test` means the gate validates a
+				// DIFFERENT environment than CI, so a suite that validates env at import can
+				// LOAD locally yet crash in CI. Silent when hermetic (.env.test present) or
+				// when there is no .env.local.
+				const hermeticity = hermeticityNote(root);
+				if (hermeticity !== null) {
+					notes.push({ text: hermeticity, raw: null });
+				}
 				recordDefault("vitest", vitestCfg.usedDefault);
 				fail(tested.exitCode);
 				break;
@@ -849,12 +859,24 @@ function runTest(
 	if (exitCode === 0) {
 		return { note: null, exitCode };
 	}
-	// vitest yields NO parsed findings here (we don't reduce its JSON — the exit
-	// code is the signal), so ANY nonzero exit is the findingless-failure case:
-	// carry the crashed tool's raw-output tail so a startup/config crash is
-	// diagnosable (the field bug: `test: failed (exit 1)` with no other output).
-	// Fallback runtime (no node found): name it too, so a bun-runtime failure (e.g.
-	// a mis-resolved dual export map) is distinguishable from a real test failure.
+	// A1: on a nonzero exit, PARSE vitest's --reporter=json stdout into a REAL
+	// failure summary — one line per failed test FILE (its message + the first
+	// in-repo stack frame) under a `test: N suite(s) failed` header. The old code
+	// dumped a raw TAIL of the JSON, but a suite that fails to LOAD (import-time
+	// error, 0 tests) appears EARLY in the report, so the tail truncated it out
+	// behind a wall of passing tests (the field bug); the parsed summary names it
+	// directly and stays token-lean.
+	const failures = parseVitestFailures(result.stdout, root);
+	if (failures !== null) {
+		return {
+			note: { text: vitestSummary(failures, isNode, runtime), raw: null },
+			exitCode,
+		};
+	}
+	// The RAW TAIL survives ONLY for the true findingless crash: JSON that can't be
+	// parsed at all (or carried no failed suite) — vitest died before it could
+	// report. Name the fallback runtime (no node found) so a bun-runtime failure
+	// (e.g. a mis-resolved dual export map) is distinguishable from a real one.
 	const text = isNode
 		? `test: failed (exit ${exitCode})`
 		: `test: failed (exit ${exitCode}) — ran under ${runtime} (no node found; vitest under this runtime can mis-resolve some deps)`;
@@ -875,6 +897,176 @@ function resolveTestRuntime(root: string): {
 		return { runtime: "node", isNode: true };
 	}
 	return { runtime: process.execPath, isNode: false };
+}
+
+// The advisory hermeticity note (A2): the vitest step inherits the workroot's
+// `.env.local`, which CI does NOT have. When `.env.local` exists but no `.env.test`
+// does, the local gate validates a DIFFERENT environment than CI — a field failure
+// where a suite validated env at IMPORT time, loaded fine locally (dev creds), and
+// crashed only in CI (no env). Returns the one advisory line, or null when hermetic
+// (`.env.test` committed) or when there is no `.env.local` at all.
+function hermeticityNote(root: string): string | null {
+	if (
+		!existsSync(join(root, ".env.local")) ||
+		existsSync(join(root, ".env.test"))
+	) {
+		return null;
+	}
+	return "test: vitest inherits .env.local (absent in CI) — commit a placeholder .env.test for hermetic runs";
+}
+
+// The per-file cap on the vitest failure summary: enough failed suites to orient,
+// bounded so a wholesale failure stays token-lean. Overflow collapses to `…N more`.
+const VITEST_FILE_CAP = 10;
+
+// One parsed vitest failure: the failed test FILE (repo-relative), a one-line
+// summary (its first failure message / load error), and the first in-repo stack
+// frame as `file:line` (null when the message carried no in-repo frame).
+interface VitestFailure {
+	file: string;
+	summary: string;
+	frame: string | null;
+}
+
+// The vitest --reporter=json shape (Jest-compatible), only the fields this parser
+// reads. `testResults[]` = one entry per test FILE; a file-level LOAD failure sets
+// `status: "failed"` with an EMPTY `assertionResults` and a `message`, while an
+// individual test failure lands in `assertionResults[].failureMessages`.
+interface VitestReport {
+	testResults?: VitestFileResult[];
+}
+interface VitestFileResult {
+	name?: string;
+	status?: string;
+	message?: string;
+	assertionResults?: { status?: string; failureMessages?: string[] }[];
+}
+
+// Render the parsed vitest failures (A1) as a multi-line note: the `test: N
+// suite(s) failed — <first file>` header (naming the fallback runtime when node was
+// absent), then one capped line per failed file, then a `…N more` tail. Rendered as
+// a single note block (run.ts prints `note.text` verbatim when `raw` is null).
+function vitestSummary(
+	failures: VitestFailure[],
+	isNode: boolean,
+	runtime: string,
+): string {
+	const firstFile = failures[0]?.file ?? "unknown";
+	const runtimeHint = isNode
+		? ""
+		: ` — ran under ${runtime} (no node found; vitest under this runtime can mis-resolve some deps)`;
+	const header = `test: ${failures.length} suite(s) failed — ${firstFile}${runtimeHint}`;
+	const shown = failures.slice(0, VITEST_FILE_CAP);
+	const lines = shown.map((failure) => {
+		const frame = failure.frame === null ? "" : ` (${failure.frame})`;
+		return `  ${failure.file} — ${failure.summary}${frame}`;
+	});
+	const overflow = failures.length - shown.length;
+	if (overflow > 0) {
+		lines.push(`  …${overflow} more`);
+	}
+	return [header, ...lines].join("\n");
+}
+
+// Parse vitest's --reporter=json stdout into per-file failures (A1). Returns null
+// when the JSON can't be parsed OR carries no failed suite — the caller then falls
+// back to the raw-output tail (the true findingless crash: vitest died before it
+// could report). Covers BOTH failure shapes: a file-level load error (the `message`)
+// and individual failed tests (the first `failureMessages`).
+//
+// PURE, but kept PRIVATE and NOT unit-tested directly: the only reachable caller is
+// the vitest step, which spawns real vitest — a documented non-CI boundary (the
+// task forbids spawning vitest; no run() seam reaches this without it). Same
+// precedent as `parseEtimeSeconds` in lifecycle.ts.
+function parseVitestFailures(
+	stdout: string,
+	root: string,
+): VitestFailure[] | null {
+	let report: VitestReport;
+	try {
+		report = JSON.parse(stdout) as VitestReport;
+	} catch {
+		return null;
+	}
+	if (!Array.isArray(report.testResults)) {
+		return null;
+	}
+	const failures: VitestFailure[] = [];
+	for (const file of report.testResults) {
+		if (file.status !== "failed") {
+			continue;
+		}
+		const rawName = typeof file.name === "string" ? file.name : "";
+		const relFile = rawName === "" ? "<unknown>" : relativize(root, rawName);
+		const assertions = Array.isArray(file.assertionResults)
+			? file.assertionResults
+			: [];
+		const failed = assertions.find(
+			(assertion) =>
+				assertion.status === "failed" &&
+				Array.isArray(assertion.failureMessages) &&
+				assertion.failureMessages.length > 0,
+		);
+		const detail = stripAnsi(
+			failed?.failureMessages?.[0] ??
+				(typeof file.message === "string" ? file.message : ""),
+		);
+		failures.push({
+			file: relFile,
+			summary: firstLine(detail) || "test failed",
+			frame: firstInRepoFrame(detail, root),
+		});
+	}
+	return failures.length > 0 ? failures : null;
+}
+
+// The first non-blank line of a message, whitespace-collapsed (token-lean — one
+// line per failure).
+function firstLine(text: string): string {
+	const line = text.split("\n").find((candidate) => candidate.trim() !== "");
+	return line === undefined ? "" : collapse(line);
+}
+
+// A `path:line:col` stack-frame token. The path excludes whitespace/parens/colon,
+// so a unix path qualifies (a Windows drive-letter colon is out of scope for CI).
+const FRAME_TOKEN = /([^\s():]+):(\d+):\d+/g;
+
+// The first stack frame in `text` pointing INSIDE the repo (a real file under the
+// workroot, not node_modules / node internals), rendered `file:line`. Requires a
+// `/` in the path (so bare `word:1:2` noise never matches) and that the file EXISTS
+// (filtering node internals + non-path noise). Null when no in-repo frame is found.
+function firstInRepoFrame(text: string, root: string): string | null {
+	for (const line of text.split("\n")) {
+		for (const match of line.matchAll(FRAME_TOKEN)) {
+			const rawPath = match[1];
+			const rawLine = match[2];
+			if (
+				rawPath === undefined ||
+				rawLine === undefined ||
+				!rawPath.includes("/") ||
+				rawPath.includes("node_modules")
+			) {
+				continue;
+			}
+			const absolute = isAbsolute(rawPath) ? rawPath : resolve(root, rawPath);
+			const rel = relative(root, absolute);
+			if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+				continue;
+			}
+			if (!existsSync(absolute)) {
+				continue;
+			}
+			return `${rel}:${rawLine}`;
+		}
+	}
+	return null;
+}
+
+// Strip ANSI SGR escapes (vitest colorizes error diffs even under --reporter=json).
+// Built from the ESC char code so no control character sits literally in source.
+const ANSI_SGR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+function stripAnsi(text: string): string {
+	return text.replace(ANSI_SGR, "");
 }
 
 // Run one config `checks[]` extra as a shell command, cwd pinned to the workroot

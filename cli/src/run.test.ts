@@ -1993,6 +1993,67 @@ describe("run() — check command (config checks[] extras)", () => {
 	}, 30000);
 });
 
+// --- A2: the vitest hermeticity note ------------------------------------------
+// When the vitest step RUNS (the `vitest` capability is present, so the step is NOT
+// tasks.ts-skipped) AND the workroot carries a `.env.local` with NO committed
+// `.env.test`, `check` appends ONE advisory note: the local gate inherits
+// `.env.local` (which CI lacks), so a suite that validates env at import can load
+// locally and crash in CI. Silent when hermetic (`.env.test` present) or when there
+// is no `.env.local`.
+//
+// Reached WITHOUT spawning vitest via the established declared-but-not-installed
+// path: the fixture DECLARES vitest (devDep → capability present, step runs) but
+// never installs it (no node_modules → the consumer bin is null → runTest degrades
+// without spawning), and the note is emitted from the step branch regardless. This
+// is the only run() seam that exercises the note without a real vitest run.
+describe("run() — check test step (A2 hermeticity note)", () => {
+	// vitest is DECLARED (capability present) but never installed (no node_modules),
+	// so the test step runs without spawning — the note fires from the step branch.
+	const makeVitestRepo = () =>
+		makeGateRepo({
+			src: { "src/clean.ts": CLEAN },
+			devDeps: { vitest: "^2.0.0" },
+		});
+
+	it("warns when .env.local exists but .env.test does not", async () => {
+		const repo = makeVitestRepo();
+		writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
+		try {
+			const result = await run(["check", "--test"], repo);
+			expect(
+				hasNoteLine(combined(result), [
+					/vitest inherits \.env\.local/,
+					/\.env\.test/,
+				]),
+			).toBe(true);
+		} finally {
+			rmSync(repo, { recursive: true, force: true });
+		}
+	}, 20000);
+
+	it("is silent when .env.test is present (hermetic)", async () => {
+		const repo = makeVitestRepo();
+		writeFileSync(join(repo, ".env.local"), "DATABASE_URL=postgres://local\n");
+		writeFileSync(join(repo, ".env.test"), "DATABASE_URL=postgres://test\n");
+		try {
+			const result = await run(["check", "--test"], repo);
+			expect(combined(result)).not.toMatch(/vitest inherits \.env\.local/);
+		} finally {
+			rmSync(repo, { recursive: true, force: true });
+		}
+	}, 20000);
+
+	it("is silent when there is no .env.local", async () => {
+		const repo = makeVitestRepo();
+		try {
+			const result = await run(["check", "--test"], repo);
+			expect(combined(result)).not.toMatch(/vitest inherits \.env\.local/);
+		} finally {
+			rmSync(repo, { recursive: true, force: true });
+		}
+	}, 20000);
+});
+
 // --- Slice 5 (review-added): knip's finding-PRESENT path fails the gate --------
 // Every makeGateRepo fixture is knip-CLEAN by construction (entry = ALL of src,
 // so nothing is unused), and the only prior knip assertion (--unused runs knip
