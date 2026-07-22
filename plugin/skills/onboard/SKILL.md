@@ -1,6 +1,6 @@
 ---
 name: onboard
-description: Set up a repo (greenfield or existing) for the work skills — interview, install @kvnwolf/dobby, scaffold the base files + thin tsconfig/biome, write the dobby.config.json contract. Run once.
+description: Set up a repo (greenfield or existing) for the work skills — interview, install @kvnwolf/dobby, scaffold the base files + thin tsconfig, write the dobby.config.json contract. Run once.
 disable-model-invocation: true
 argument-hint: "[project idea, if greenfield]"
 ---
@@ -29,18 +29,22 @@ bun add -d @kvnwolf/dobby
 
 `dobby` is the kit's mechanical execution layer. It owns the quality **gate** (`dobby check`, which also runs as the edit-time PostToolUse hook; `dobby check --fix` is the pre-commit gate) and the run **lifecycle** (`dobby up` / `dobby down` / `dobby dev`), where `dobby up` also brings a fresh worktree up — a setup phase (install deps + materialize the env files) before it starts the app. It **bundles the toolchain** (Biome, TypeScript, knip, taze, portless) and **infers each task from the project's detected capabilities** (zero-config à la Vercel) — so there is nothing to pin here: no dev script, no run command, no per-project task config. Skills invoke it via `bunx dobby`, which resolves the local pinned bin first (per-project version, never a global install).
 
-**Write the thin config files that extend dobby's shared presets** — no-clobber: only if the file does NOT already exist; if it does, leave the user's config and just add the `extends` if it's missing, with approval:
+**Write `tsconfig.json` — the one tool config that always stays** (no-clobber: only if it does NOT already exist; if it does, leave the user's config and just add the `extends` if it's missing, with approval):
 
-- `tsconfig.json` → `{ "extends": "@kvnwolf/dobby/tsconfig", ... }` with only the project's own `compilerOptions` / `paths` overrides on top. For a **Vite app**, extend the vite variant instead — `@kvnwolf/dobby/tsconfig/vite` (the base plus `types: ["vite/client"]`).
-- `biome.jsonc` → extends `@kvnwolf/dobby/biome/core` (or `@kvnwolf/dobby/biome/react` for a React app) — the per-capability preset variant.
+- `tsconfig.json` → `{ "extends": "@kvnwolf/dobby/tsconfig", ... }` with only the project's own `compilerOptions` / `paths` overrides on top. For a **Vite app**, extend the vite variant instead — `@kvnwolf/dobby/tsconfig/vite` (the base plus `types: ["vite/client"]`). It stays because `tsc` and vite's `resolve.tsconfigPaths` read it directly and it holds genuinely per-project `paths`.
 
-**Where the capability applies, add the matching config presets** (all are config objects you re-export/merge, not `extends` targets):
+**Every OTHER tool config is dobby-internal by default (override by presence).** For biome, vite, vitest, and drizzle-kit, dobby passes its shipped, capability-picked preset through the tool's native config flag whenever the repo has NO file of its own — so a fresh project writes NONE of them (a delta-less repo carries only `package.json`, `tsconfig.json`, and `dobby.config.json`). Create one ONLY when the project needs a real delta; a present file is a total override, and deleting it restores the default. The per-tool override file, when you DO have a delta:
 
-- **Vite app** → `vite.config.ts` merges your plugins onto the base: `import dobbyVite from "@kvnwolf/dobby/vite"; export default mergeConfig(dobbyVite, defineConfig({ plugins: [...] }))` (the base already gives native tsconfig paths + `server.allowedHosts`).
-- **Has tests (vitest)** → `vitest.config.ts` re-exports the variant — `export { default } from "@kvnwolf/dobby/vitest/react"` for a React app (react plugin + tsconfig paths + import-time env), or `@kvnwolf/dobby/vitest` (the base) for a non-React app, reaching for `mergeConfig` only on a real delta.
-- **Uses Drizzle** → `drizzle.config.ts` re-exports `export { default } from "@kvnwolf/dobby/drizzle"` when the repo matches the house convention (unpooled env-var names + co-located `src/**/schema.ts` / `schema.gen.ts` globs); spread-and-override for deviations.
+- **Biome deltas** → `biome.jsonc` extends `@kvnwolf/dobby/biome/core` (or `@kvnwolf/dobby/biome/react` for a React app).
+- **Vite deltas** → `vite.config.ts` `mergeConfig`s your extras onto `@kvnwolf/dobby/vite/tanstack-start` (a tanstack app) or `@kvnwolf/dobby/vite` (the base already gives native tsconfig paths + `server.allowedHosts`).
+- **Vitest deltas** → `vitest.config.ts` `mergeConfig`s onto `@kvnwolf/dobby/vitest/react` (React) or `@kvnwolf/dobby/vitest` (the base).
+- **Drizzle deviations** → `drizzle.config.ts` spread-overrides `@kvnwolf/dobby/drizzle` (DELETE the file entirely when the repo matches the house convention — unpooled env-var names + co-located `src/**/schema.ts` / `schema.gen.ts` globs).
 
-*Why:* dobby ships the canonical TypeScript + Biome rules AND the house Vite/Vitest/drizzle config; the consumer keeps a one-line `extends` or re-export, which gives centralized config AND native editor support (the editor resolves the preset through `node_modules`).
+The full override table and each preset's contents live in the CLI's own README (`@kvnwolf/dobby`).
+
+*Why:* dobby ships the canonical TypeScript + Biome rules AND the house Vite/Vitest/drizzle config as defaults, so a delta-less repo carries only `tsconfig.json` plus the `dobby.config.json` contract — no per-tool wiring to drift.
+
+**Deploying on Vercel?** Set the project's **Build Command** to `bunx dobby build` (in `vercel.json` or the dashboard) so external builds go through dobby too — the config-less vite default applies centrally, with no per-project buildCommand to maintain.
 
 ## Step 3: Scaffold the base files
 
@@ -109,7 +113,8 @@ Interview in the user's language. **Write all generated docs and code — CLAUDE
 
 - [ ] Interviewed: product, domain terms, stack (docs confirmed via /find-docs), issue tracker (github default / linear / local, via AskUserQuestion), greenfield-or-existing
 - [ ] `@kvnwolf/dobby` installed as the project's single dev dependency (`bun add -d @kvnwolf/dobby`) — never a global install
-- [ ] Thin config files written (no-clobber): `tsconfig.json` extends `@kvnwolf/dobby/tsconfig` (or `/tsconfig/vite` for a Vite app); `biome.jsonc` extends `@kvnwolf/dobby/biome/{core,react}`; where the capability applies — `vite.config.ts` merges onto `@kvnwolf/dobby/vite`, `vitest.config.ts` re-exports `@kvnwolf/dobby/vitest{,/react}`, `drizzle.config.ts` re-exports `@kvnwolf/dobby/drizzle`
+- [ ] `tsconfig.json` written thin (no-clobber; the one tool config that always stays): extends `@kvnwolf/dobby/tsconfig` (or `/tsconfig/vite` for a Vite app), only project deltas on top
+- [ ] Override-by-presence respected: NO `biome.jsonc` / `vite.config.ts` / `vitest.config.ts` / `drizzle.config.ts` written for a delta-less repo (dobby's capability-picked default governs) — a per-tool config created only for a real delta (biome→extends the preset; vite/vitest→`mergeConfig` onto the preset; drizzle→spread-override, else deleted); Vercel Build Command set to `bunx dobby build` if deploying there
 - [ ] No-clobber respected: existing `CONTEXT.md` / `CLAUDE.md` / `AGENTS.md` / `.gitignore` / `dobby.config.json` / `.worktreeinclude` were NOT overwritten — merged additively with user approval; an existing `AGENTS.md` was extended, not shadowed by a new `CLAUDE.md`
 - [ ] CONTEXT.md scaffolded (initial glossary) — in English; domain terms keep their real-world form
 - [ ] CLAUDE.md scaffolded (product, stack, module map, deep-module conventions, workflow config) — in English; each scaffolded choice explained in plain language; Dev/Workflow note says the app runs via `dobby up`/`dobby dev` (inferred, portless-wrapped) and the verifier obtains the dev URL via `bunx dobby env` (no hardcoded URL)

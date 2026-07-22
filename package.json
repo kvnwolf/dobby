@@ -13,12 +13,17 @@
 	"knip": {
 		"ignoreDependencies": [
 			"@biomejs/biome",
+			"@tailwindcss/vite",
+			"@tanstack/devtools-vite",
+			"@tanstack/react-start",
 			"@vitejs/plugin-react",
 			"drizzle-kit",
+			"nitro",
 			"portless",
 			"taze",
 			"ultracite",
-			"vite"
+			"vite",
+			"vitest"
 		]
 	}
 }

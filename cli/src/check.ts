@@ -9,9 +9,23 @@ import {
 	resolve,
 } from "node:path";
 import { loadConfig } from "./config.ts";
-import { detectCapabilities } from "./detect.ts";
-import { type RunResult, resolveWorkroot, runCapture } from "./runner.ts";
-import { type CheckFlags, checkPipeline } from "./tasks.ts";
+import { detectCapabilities, scanCapabilities } from "./detect.ts";
+import {
+	configArgs,
+	type RunResult,
+	resolveViteConfig,
+	resolveWorkroot,
+	runCapture,
+} from "./runner.ts";
+import {
+	biomeConfigSpec,
+	type CheckFlags,
+	checkPipeline,
+	knipConfigSpec,
+	viteBlockedMessage,
+	viteConfigSpec,
+	vitestConfigSpec,
+} from "./tasks.ts";
 
 // The quality-gate executor. `dobby check` orchestrates the bundled tools by
 // SHELLING OUT and parsing their machine reporters — never an in-process/WASM
@@ -107,17 +121,29 @@ export function check(
 		};
 	}
 
+	// Config-less defaults (ADR-0015): resolve biome's config args ONCE — the
+	// default preset (react vs core, capability-driven) via `--config-path` +
+	// `--vcs-root` when the consumer ships no biome.json/jsonc, else NO args (bare
+	// spawn, native discovery of the consumer's file — a total override). Scan ONCE
+	// for both the capabilities (preset choice) AND the raw dependency set — the
+	// vite/vitest specs need it for the require-all-imports guard (a multi-import
+	// preset is chosen only when every package it imports is declared).
+	const { capabilities, dependencies } = scanCapabilities(root);
+	const biomeCfg = configArgs(root, biomeConfigSpec(capabilities));
+
 	// Per-file fast path: biome ONLY over the named files (resolved against the
 	// CALLER's cwd so a relative arg from a subdirectory still points at the right
 	// file). No pipeline, no tsc/knip/build/test, no extras — the edit-adjacent
 	// quick check where a whole-project gate would defeat the point. With `--fix`,
 	// biome's SAFE fixes are written to just those files (`--write`) and the
-	// remaining findings are reported.
+	// remaining findings are reported. (The `configs:` note is a project-wide-gate
+	// concern; the edit-adjacent path stays note-free but still uses the default.)
 	if (files.length > 0) {
 		const biome = runBiome(
 			root,
 			files.map((file) => resolve(cwd, file)),
 			biomeBin,
+			biomeCfg.args,
 			fix,
 		);
 		if ("error" in biome) {
@@ -127,23 +153,40 @@ export function check(
 		return { ok: true, groups: [biome.group], notes: [], exitCode };
 	}
 
+	// The tool spawns that used a dobby DEFAULT config (ADR-0015 observability):
+	// collected in pipeline order (biome, knip, vite, vitest), rendered as ONE
+	// token-lean `configs:` note after the pipeline runs, omitted when every tool
+	// used a consumer config.
+	const configDefaults: string[] = [];
+	const recordDefault = (tool: string, label: string | null) => {
+		if (label !== null) {
+			configDefaults.push(`${tool}=${label}`);
+		}
+	};
+
+	// Project-wide: infer the plan from capabilities + config + flags, then run it.
+	const configLoad = loadConfig(root);
+	const config = configLoad?.ok ? configLoad.config : null;
+	const plan = checkPipeline(capabilities, config, flags);
+	const planHasBiome = plan.some((step) => step.kind === "biome");
+
 	// Project-wide `--fix`: apply biome's SAFE fixes across the WHOLE tree FIRST
 	// (`biome check --write .`), independent of the pipeline's own biome step — so
 	// `--fix --types` still formats before the tsc-only report, and the fix reaches
 	// the config files too, not just `src/`. The result is discarded here; whatever
-	// biome could not safely fix is surfaced by the pipeline's biome step below.
+	// biome could not safely fix is surfaced by the pipeline's biome step below. It
+	// uses the SAME biome config args, so a biome-default `--fix` still formats. Only
+	// record the biome default HERE when the biome step won't run (e.g. `--fix
+	// --types`) — otherwise the biome step records it (no double entry).
 	if (fix) {
-		const fixed = runBiome(root, ["."], biomeBin, true);
+		const fixed = runBiome(root, ["."], biomeBin, biomeCfg.args, true);
 		if ("error" in fixed) {
 			return { ok: false, error: fixed.error };
 		}
+		if (!planHasBiome) {
+			recordDefault("biome", biomeCfg.usedDefault);
+		}
 	}
-
-	// Project-wide: infer the plan from capabilities + config + flags, then run it.
-	const capabilities = detectCapabilities(root);
-	const configLoad = loadConfig(root);
-	const config = configLoad?.ok ? configLoad.config : null;
-	const plan = checkPipeline(capabilities, config, flags);
 
 	const groups: CheckGroup[] = [];
 	const notes: CheckNote[] = [];
@@ -161,11 +204,12 @@ export function check(
 	for (const step of plan) {
 		switch (step.kind) {
 			case "biome": {
-				const biome = runBiome(root, ["."], biomeBin);
+				const biome = runBiome(root, ["."], biomeBin, biomeCfg.args);
 				if ("error" in biome) {
 					return { ok: false, error: biome.error };
 				}
 				groups.push(biome.group);
+				recordDefault("biome", biomeCfg.usedDefault);
 				fail(findingsStepCode("biome", biome.group, biome.result, notes));
 				break;
 			}
@@ -193,8 +237,10 @@ export function check(
 						error: "could not resolve the bundled knip binary from dobby",
 					};
 				}
-				const knip = runKnip(root, knipBin);
+				const knipCfg = configArgs(root, knipConfigSpec());
+				const knip = runKnip(root, knipBin, knipCfg.args);
 				groups.push(knip.group);
+				recordDefault("knip", knipCfg.usedDefault);
 				if (knip.group.findings.length > 0) {
 					fail(1);
 				}
@@ -205,10 +251,26 @@ export function check(
 					notes.push({ text: step.skipNote, raw: null });
 					break;
 				}
-				const built = runBuild(root);
+				const viteCfg = resolveViteConfig(
+					root,
+					viteConfigSpec(capabilities, dependencies),
+				);
+				// BLOCKED (ADR-0015): a config-less tanstack app missing packages the
+				// tanstack default imports has NO import-safe fallback that still serves —
+				// fail loud through the step-failure channel (never a silent base build).
+				if (viteCfg.blocked) {
+					notes.push({
+						text: viteBlockedMessage(viteCfg.missing),
+						raw: null,
+					});
+					fail(1);
+					break;
+				}
+				const built = runBuild(root, viteCfg.args);
 				if (built.note !== null) {
 					notes.push(built.note);
 				}
+				recordDefault("vite", viteCfg.usedDefault);
 				fail(built.exitCode);
 				break;
 			}
@@ -217,10 +279,15 @@ export function check(
 					notes.push({ text: step.skipNote, raw: null });
 					break;
 				}
-				const tested = runTest(root);
+				const vitestCfg = configArgs(
+					root,
+					vitestConfigSpec(capabilities, dependencies),
+				);
+				const tested = runTest(root, vitestCfg.args);
 				if (tested.note !== null) {
 					notes.push(tested.note);
 				}
+				recordDefault("vitest", vitestCfg.usedDefault);
 				fail(tested.exitCode);
 				break;
 			}
@@ -245,6 +312,13 @@ export function check(
 				return _never;
 			}
 		}
+	}
+
+	// ADR-0015 observability: ONE token-lean note naming every tool that ran on a
+	// dobby DEFAULT config (override-by-presence made visible). Omitted entirely
+	// when every tool used a consumer config (configDefaults empty).
+	if (configDefaults.length > 0) {
+		notes.push({ text: `configs: ${configDefaults.join(" · ")}`, raw: null });
 	}
 
 	return { ok: true, groups, notes, exitCode };
@@ -396,7 +470,11 @@ export function checkHook(stdin: string | undefined, cwd: string): HookResult {
 		return { surface: false };
 	}
 
-	const biome = runBiome(root, [absolute], biomeBin, true);
+	// Config-less default (ADR-0015): a consumer without biome.json/jsonc still gets
+	// linted+autofixed via dobby's shipped preset (react vs core, capability-driven);
+	// a consumer WITH one keeps native discovery (bare spawn — a total override).
+	const biomeCfg = configArgs(root, biomeConfigSpec(detectCapabilities(root)));
+	const biome = runBiome(root, [absolute], biomeBin, biomeCfg.args, true);
 	if ("error" in biome) {
 		// biome could not spawn / emitted no JSON — never block an edit on harness noise.
 		return { surface: false };
@@ -516,16 +594,25 @@ interface BiomeDiagnostic {
 // ONLY error/warning severities count — biome also emits info/hint diagnostics
 // (e.g. a config-deprecation notice) that must not fail the gate. `write` adds
 // `--write` (SAFE fixes only): the edit-time hook mutates the file in place, then
-// the parsed diagnostics are whatever biome could NOT auto-fix.
+// the parsed diagnostics are whatever biome could NOT auto-fix. `configArgs`
+// carries the config-less default flags (`--config-path=<preset> --vcs-root=…`)
+// when the consumer ships no biome config, else empty (bare spawn — native
+// discovery of the consumer's file, a total override).
 function runBiome(
 	root: string,
 	paths: string[],
 	biomeBin: string,
+	cfgArgs: string[],
 	write = false,
 ): { group: CheckGroup; result: RunResult } | { error: string } {
-	const args = write
-		? [biomeBin, "check", "--write", "--reporter=json", ...paths]
-		: [biomeBin, "check", "--reporter=json", ...paths];
+	const args = [
+		biomeBin,
+		"check",
+		...(write ? ["--write"] : []),
+		"--reporter=json",
+		...cfgArgs,
+		...paths,
+	];
 	const result = runCapture(process.execPath, args, {
 		root,
 	});
@@ -603,11 +690,23 @@ interface KnipIssue {
 // if knip cannot run (no package.json in a synthetic repo → it errors with
 // non-JSON output) the step folds to ZERO findings and does NOT fail the gate —
 // a knip that could not run must neither block the gate nor contaminate output.
-// Real issues (parseable JSON) DO become findings and fail the gate.
-function runKnip(root: string, knipBin: string): { group: CheckGroup } {
-	const result = runCapture(process.execPath, [knipBin, "--reporter", "json"], {
-		root,
-	});
+// Real issues (parseable JSON) DO become findings and fail the gate. `cfgArgs`
+// carries `--config <preset>` (the config-less default: knip's vitest plugin
+// can't see test globs through a consumer's .mjs re-export, so the default keeps
+// test files from being flagged unused) when the consumer ships no knip config,
+// else empty (bare — native discovery of knip.json/jsonc/ts or package.json#knip).
+function runKnip(
+	root: string,
+	knipBin: string,
+	cfgArgs: string[],
+): { group: CheckGroup } {
+	const result = runCapture(
+		process.execPath,
+		[knipBin, "--reporter", "json", ...cfgArgs],
+		{
+			root,
+		},
+	);
 	if (result.error) {
 		return { group: { tool: "knip", findings: [] } };
 	}
@@ -680,7 +779,12 @@ function knipItem(item: unknown): { label: string; line: number } {
 // degrades to a note without failing the gate — `dobby up` is the fix (it runs the
 // install), not a gate failure. NOT run in the real-tool suite except via the
 // broken-bin fixture; the verifier's live recipe covers the real run path.
-function runBuild(root: string): { note: CheckNote | null; exitCode: number } {
+// `cfgArgs` carries `--config <preset>` when the consumer ships no vite config
+// (config-less default, ADR-0015), else empty (bare — native discovery).
+function runBuild(
+	root: string,
+	cfgArgs: string[],
+): { note: CheckNote | null; exitCode: number } {
 	const bin = resolveConsumerBin(root, "vite", "vite");
 	if (bin === null) {
 		return {
@@ -691,7 +795,9 @@ function runBuild(root: string): { note: CheckNote | null; exitCode: number } {
 			exitCode: 0,
 		};
 	}
-	const result = runCapture(process.execPath, [bin, "build"], { root });
+	const result = runCapture(process.execPath, [bin, "build", ...cfgArgs], {
+		root,
+	});
 	const exitCode = result.error ? 1 : (result.status ?? 1);
 	return {
 		note: exitCode === 0 ? null : crashNote("build", exitCode, result),
@@ -701,7 +807,12 @@ function runBuild(root: string): { note: CheckNote | null; exitCode: number } {
 
 // Run the capability-gated test step: `vitest run --reporter=json` via the
 // CONSUMER's OWN vitest binary. Same silent-on-pass / note-on-fail / degrade-on-
-// missing-bin contract as runBuild. NOT run in tests (fixtures carry no vitest).
+// missing-bin contract as runBuild. `cfgArgs` carries `--config <preset>` when the
+// consumer ships no vitest config (config-less default, ADR-0015; vitest keeps
+// root = cwd, so discovery is unchanged), else empty (bare — native discovery).
+// NOT run in tests (fixtures carry no vitest — the real vitest spawn is a documented
+// non-CI boundary; its config resolution rides the same configArgs seam biome/knip
+// assert).
 //
 // The vitest step runs under NODE when a usable node is on the machine, falling
 // back to the CURRENT runtime (`process.execPath`) otherwise. Rationale: under
@@ -712,7 +823,10 @@ function runBuild(root: string): { note: CheckNote | null; exitCode: number } {
 // resolver invariant) — via a cheap `node --version` probe. When the fallback
 // runtime is used and vitest fails, the note names the runtime so a bun-runtime
 // failure is diagnosable rather than looking like a genuine test failure.
-function runTest(root: string): { note: CheckNote | null; exitCode: number } {
+function runTest(
+	root: string,
+	cfgArgs: string[],
+): { note: CheckNote | null; exitCode: number } {
 	const bin = resolveConsumerBin(root, "vitest", "vitest");
 	if (bin === null) {
 		return {
@@ -724,9 +838,13 @@ function runTest(root: string): { note: CheckNote | null; exitCode: number } {
 		};
 	}
 	const { runtime, isNode } = resolveTestRuntime(root);
-	const result = runCapture(runtime, [bin, "run", "--reporter=json"], {
-		root,
-	});
+	const result = runCapture(
+		runtime,
+		[bin, "run", "--reporter=json", ...cfgArgs],
+		{
+			root,
+		},
+	);
 	const exitCode = result.error ? 1 : (result.status ?? 1);
 	if (exitCode === 0) {
 		return { note: null, exitCode };

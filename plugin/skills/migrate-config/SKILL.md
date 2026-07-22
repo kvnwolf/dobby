@@ -1,6 +1,6 @@
 ---
 name: migrate-config
-description: One-pass migration of a consumer repo off vite-plus onto @kvnwolf/dobby — swap deps, thin the tsconfig/biome configs, strip vite.config.ts, move files to canonical paths, regenerate dobby.config.json, drop .conductor, rewire CI, verify with `dobby check`. Run in a consumer repo, once, after updating the dobby plugin.
+description: One-pass migration of a consumer repo off vite-plus onto @kvnwolf/dobby — swap deps, thin `tsconfig.json` and delete the now-default tool configs (biome/vite/vitest/drizzle, kept only for real deltas), move files to canonical paths, regenerate dobby.config.json, drop .conductor, rewire CI + Vercel build, verify with `dobby check`. Run in a consumer repo, once, after updating the dobby plugin.
 ---
 
 The one-pass migration from the **vite-plus world** to the **dobby world**. The kit used to lean on `vite-plus` (`vp`/`vpr`) for the toolchain and run lifecycle, keep its commit contract at `.claude/commit.config.yml`, and rely on Conductor glue (`.conductor/`). All of that is gone: the toolchain (Biome, TypeScript, knip, taze, portless) is now **bundled inside `@kvnwolf/dobby`** and inferred from the repo's detected capabilities (zero-config à la Vercel); the run lifecycle lives in `dobby up`/`down`/`dev`; the per-project contract shrank to a thin `dobby.config.json`; and Conductor support was removed. Run this **manually, once per consumer repo**, after updating the dobby plugin.
@@ -29,7 +29,7 @@ Snapshot what you're migrating from, and decide whether there's anything to do. 
 
 **Branch on what you find:**
 
-- **No vite-plus signal AND `dobby.config.json` is already new-schema** (no `run` key, configs already `extends` `@kvnwolf/dobby/*`) → the repo is **already migrated**. Say so plainly and **stop** — do not touch anything.
+- **No vite-plus signal AND `dobby.config.json` is already new-schema** (no `run` key, and the always-present `tsconfig.json` already `extends` `@kvnwolf/dobby/*`) → the repo is **already migrated**. Say so plainly and **stop** — do not touch anything.
 - **Any legacy signal present** → this is a real migration. Record the starting state (which deps, which config source, which files) so Step 10 can report the diff, and continue.
 
 Announce the plan (the ordered steps below, flagging the two human gates) before you start executing.
@@ -46,7 +46,7 @@ The toolchain is now bundled inside dobby; the consumer keeps only real build-ti
 
 ## Step 2: Thin the config files
 
-Two small files `extends` dobby's shared presets, giving centralized rules plus native editor support.
+The migration WRITES exactly one config file — a thin `tsconfig.json`. Every other tool config (`biome.jsonc`, `vite.config.ts`, `vitest.config.ts`, `drizzle.config.ts`) is now **dobby-internal by default**: dobby passes its shipped, capability-picked preset through the tool's native config flag whenever the consumer has NO file of its own, so you author (or keep) one of those files ONLY to carry a real delta — creating it is a **total override**, deleting it restores the default (**override by presence**, ADR-0015). `tsconfig.json` is the one that always stays, because `tsc` and vite's `resolve.tsconfigPaths` read it directly and it holds genuinely per-project `paths`.
 
 **`tsconfig.json`** → extend the base (the **vite variant** for a Vite app), preserving only the project's own fields:
 
@@ -58,13 +58,13 @@ A **Vite app** extends `@kvnwolf/dobby/tsconfig/vite` (the base plus `types: ["v
 
 **Mid-migration escape hatch.** Unlike Biome, `tsc` has NO per-path allowlist — it checks the whole import graph, so base strictness like `noUnusedLocals`/`noUnusedParameters` fires on legacy/unmigrated paths the lint allowlist deliberately skips. A progressively-migrating repo MAY set them `false` in its thin file — a DELIBERATE deviation, not preset noise — with a rationale comment and a "revisit when fully migrated" flag; Step 10's summary must list any such deviation as debt.
 
-**`biome.jsonc`** → extend the per-capability preset — `@kvnwolf/dobby/biome/react` for a React app, `@kvnwolf/dobby/biome/core` otherwise:
+**`biome.jsonc`** → create it **ONLY when the repo carries real lint/format deltas**. A repo whose style already matches the house rules writes NO `biome.jsonc` at all — dobby's capability-picked preset (`@kvnwolf/dobby/biome/react` for a React app, `@kvnwolf/dobby/biome/core` otherwise) governs BOTH the gate and the edit hook by default. When you DO have deltas, the file `extends` that preset and carries only the deltas:
 
 ```jsonc
 { "extends": ["@kvnwolf/dobby/biome/react"] }
 ```
 
-Then migrate the load-bearing bits of the OLD `vite.config.ts` `fmt`/`lint` blocks into Biome form (Biome 2 syntax):
+The deltas a migration typically carries are the load-bearing bits of the OLD `vite.config.ts` `fmt`/`lint` blocks, translated into Biome form (Biome 2 syntax):
 
 - **Old `ignorePatterns` → `files.includes` with `!` negation.** In Biome 2 the include list **must start with `"**"`** (include everything) and then negate; `"!path"` force-ignores from linting (still indexed — use for generated dirs), `"!!path"` force-excludes from indexing too (use for build output like `dist/`). Example — old `ignorePatterns: ["src/routeTree.gen.ts", "dist"]` becomes:
 
@@ -72,7 +72,7 @@ Then migrate the load-bearing bits of the OLD `vite.config.ts` `fmt`/`lint` bloc
   { "extends": ["@kvnwolf/dobby/biome/react"], "files": { "includes": ["**", "!src/routeTree.gen.ts", "!!dist"] } }
   ```
 
-- **Allowlist (progressive migration) `ignorePatterns` → POSITIVE `files.includes`.** A vite-plus `ignorePatterns` of the shape `["**/*.*", "!pathA", "!pathB", …]` is not a denylist but a progressive-migration ALLOWLIST — ignore everything, re-include only the migrated paths. It inverts to a POSITIVE include list: list exactly the previously-negated paths with the `!` prefixes dropped, and NO leading `"**"` (a positive include list = Biome handles ONLY matching paths). Example — old `ignorePatterns: ["**/*.*", "!src/lib", "!src/routes"]` becomes:
+- **Allowlist (progressive migration) `ignorePatterns` → POSITIVE `files.includes`.** This IS a real delta, so a progressively-migrating repo always writes its own `biome.jsonc` for it. A vite-plus `ignorePatterns` of the shape `["**/*.*", "!pathA", "!pathB", …]` is not a denylist but a progressive-migration ALLOWLIST — ignore everything, re-include only the migrated paths. It inverts to a POSITIVE include list: list exactly the previously-negated paths with the `!` prefixes dropped, and NO leading `"**"` (a positive include list = Biome handles ONLY matching paths). Example — old `ignorePatterns: ["**/*.*", "!src/lib", "!src/routes"]` becomes:
 
   ```jsonc
   { "extends": ["@kvnwolf/dobby/biome/react"], "files": { "includes": ["src/lib", "src/routes"] } }
@@ -88,36 +88,32 @@ Then migrate the load-bearing bits of the OLD `vite.config.ts` `fmt`/`lint` bloc
 
 Only carry the rules the project genuinely deviates on — the preset already sets the house style; a rule that merely re-states a preset default is noise.
 
-- **The swap is a re-lint, not a rename.** Files that were clean under oxlint surface NEW findings under the dobby preset (field case: 16 findings from 4 rules — `complexity/useOptionalChain`, `suspicious/noArrayIndexKey`, `correctness/useExhaustiveDependencies`, `a11y/noStaticElementInteractions` — on already-migrated files). Each is a human fix-vs-suppress call: fix what's cheap (optional chains), suppress the deliberate ones with `// biome-ignore lint/<group>/<rule>: <reason>` (JSX form `{/* biome-ignore … */}` inside markup), folding any existing prose justification into the reason string. Also remove DEAD suppressions Biome reports as "Suppression comment has no effect".
+- **The swap is a re-lint, not a rename.** The gate now lints the whole tree under the dobby preset — whether that's dobby's default or your delta `biome.jsonc` — so files that were clean under oxlint surface NEW findings (field case: findings from rules like `complexity/useOptionalChain`, `correctness/useExhaustiveDependencies`, `a11y/noStaticElementInteractions` on already-migrated files; note the house preset now turns `suspicious/noArrayIndexKey` OFF, so it never fires). Each is a human fix-vs-suppress call: fix what's cheap (optional chains), suppress the deliberate ones with `// biome-ignore lint/<group>/<rule>: <reason>` (JSX form `{/* biome-ignore … */}` inside markup), folding any existing prose justification into the reason string. Also remove DEAD suppressions Biome reports as "Suppression comment has no effect".
 
-**`drizzle.config.ts`** (when the repo uses Drizzle) → replace with the dobby re-export **when the repo matches the house convention** — unpooled env-var names (`DATABASE_URL_UNPOOLED` / `POSTGRES_URL_NON_POOLING`) and co-located schema globs (`src/**/schema.ts` + `schema.gen.ts`):
+**`drizzle.config.ts`** (when the repo uses Drizzle) → **DELETE it when the repo matches the house convention** — unpooled env-var names (`DATABASE_URL_UNPOOLED` / `POSTGRES_URL_NON_POOLING`) and co-located schema globs (`src/**/schema.ts` + `schema.gen.ts`): dobby's default IS that config (passed to drizzle-kit through its `--config` flag), so a matching file is dead weight. Keep a file ONLY if the repo genuinely deviates (different env-var names, a single-file schema, another dialect), and make it a **spread-and-override** onto the base, carrying only the differing keys:
 
 ```ts
-export { default } from "@kvnwolf/dobby/drizzle";
+import dobbyDrizzle from "@kvnwolf/dobby/drizzle";
+
+export default { ...dobbyDrizzle, /* only the differing keys */ };
 ```
 
-The preset carries the whole house config — the unpooled URL resolution (DDL must NOT go through PgBouncer), the guarded `.env.local` load, the CI-safe missing-URL guard, `dialect: "postgresql"`, `out: "./drizzle"`, and the co-located schema globs. If the repo deviates (different env-var names, a single-file schema, another dialect), keep a **spread-and-override** instead — re-export the base and override only the differing keys — rather than the bare one-liner.
+The preset carries the whole house config — the unpooled URL resolution (DDL must NOT go through PgBouncer), the guarded `.env.local` load, the CI-safe missing-URL guard, `dialect: "postgresql"`, `out: "./drizzle"`, and the co-located schema globs — so a house-convention repo needs none of it on disk.
 
-## Step 3: Strip `vite.config.ts` to real vite config only
+## Step 3: Delete `vite.config.ts` and `vitest.config.ts` when delta-less
 
-The vite-plus task machinery is gone — dobby infers those tasks now. Reduce `vite.config.ts` to what actual Vite needs:
+The vite-plus task machinery is gone, and dobby now supplies the vite AND vitest configs by default (override by presence), so the target state is usually **no `vite.config.ts` and no `vitest.config.ts` at all**:
 
-- **KEEP:** `plugins` and any genuine per-project `build`/`server`/`resolve` deltas. The dobby vite preset (`@kvnwolf/dobby/vite`) already provides `resolve.tsconfigPaths: true` (vite@8 native path aliases — do NOT add the `vite-tsconfig-paths` plugin; vitest itself warns to remove it, field case: added then reverted) AND `server.allowedHosts: true` (portless's per-worktree hostnames), so DROP any hand-rolled versions of those and merge only what's left onto the preset.
-- **DELETE:** the vite-plus additions — the `run`/`tasks` table, the `fmt` and `lint` blocks (their content moved to `biome.jsonc` in Step 2), and any `staged` block. The goal is a thin config that merges your plugins onto the dobby base:
+- **`vite.config.ts` — DELETE it when the app has zero deltas beyond the house tanstack-start stack.** `dobby dev` / `build` / `check` pass `@kvnwolf/dobby/vite/tanstack-start` automatically — the tanstack-start plugin stack plus `resolve.tsconfigPaths: true` (vite@8 native path aliases — do NOT add the `vite-tsconfig-paths` plugin; vitest itself warns to remove it, field case: added then reverted) AND `server.allowedHosts: true` (portless's per-worktree hostnames) — so a delta-less app carries nothing. Definitely delete the vite-plus additions — the `run`/`tasks` table, the `fmt`/`lint` blocks (their content moved to `biome.jsonc` in Step 2 IF it was a real delta), and any `staged` block. Keep a `vite.config.ts` ONLY for a genuine per-project delta (e.g. an `ssr.noExternal` entry, an extra plugin) — and because a present file is a TOTAL override, it must reconstruct the full stack by `mergeConfig`-ing onto the tanstack-start preset, not the bare base:
 
   ```ts
   import { defineConfig, mergeConfig } from "vite";
-  import dobbyVite from "@kvnwolf/dobby/vite";
+  import dobbyVite from "@kvnwolf/dobby/vite/tanstack-start";
 
-  export default mergeConfig(dobbyVite, defineConfig({ plugins: [/* app plugins */] }));
-  ```
-- **An SSR-plugin app needs its own `vitest.config.ts`.** For a tanstack-start/nitro app, reusing the app's vite config hangs the process — the SSR plugins start servers that never tear down, so vitest exits nonzero even with every test green. The react-app wiring (react plugin + native tsconfig paths + import-time `loadEnv`) now ships as `@kvnwolf/dobby/vitest/react`, so a React app with no extra deltas writes ONE line:
-
-  ```ts
-  export { default } from "@kvnwolf/dobby/vitest/react";
+  export default mergeConfig(dobbyVite, defineConfig({ ssr: { noExternal: ["some-dep"] } }));
   ```
 
-  Reach for `mergeConfig` ONLY when the repo has a real delta (e.g. a mid-migration `server.deps.inline` addition):
+- **`vitest.config.ts` — DELETE it when delta-less.** dobby's capability-picked default (`@kvnwolf/dobby/vitest/react` for a React app, `@kvnwolf/dobby/vitest` otherwise) is passed to vitest via `--config`, so the test step runs the preset directly. This ALSO defuses the old SSR-hang trap by construction: a tanstack-start/nitro app must never let vitest auto-discover the app's `vite.config.ts` — its SSR plugins start servers that never tear down, so vitest exits nonzero even with every test green — and the passed `--config` means vitest never discovers it. If the OLD `vite.config.ts` carried an embedded `test` block (vite-plus era), MOVE that block into a dedicated `vitest.config.ts` (`mergeConfig` on the preset) or drop it when the defaults already cover it — override-by-presence counts ONLY a dedicated `vitest.config.*` as the vitest override, so a `test` block left inside a kept-for-deltas `vite.config.ts` is silently ignored in favor of dobby's default (the deliberate stance, ADR-0015). Keep a `vitest.config.ts` ONLY for a real delta (e.g. a mid-migration `server.deps.inline` addition), and then `mergeConfig` onto the preset:
 
   ```ts
   import { defineConfig, mergeConfig } from "vitest/config";
@@ -126,7 +122,7 @@ The vite-plus task machinery is gone — dobby infers those tasks now. Reduce `v
   export default mergeConfig(dobbyVitestReact, defineConfig({ test: { server: { deps: { inline: ["some-esm-only-dep"] } } } }));
   ```
 
-  The `vitest/react` variant already carries both the base universal wiring (`server.deps.inline: ["zod"]` — vitest-under-bun mangles zod v4's dual export map — and excluding `.claude/**` from discovery) AND the react layer (`@vitejs/plugin-react`, `resolve.tsconfigPaths`, `test.env: loadEnv("test", cwd, "")` — the `""` prefix loads EVERY var for import-time env validation). A non-React SSR app merges onto the base `@kvnwolf/dobby/vitest` instead and adds its own plugin.
+  The `vitest/react` variant already carries both the base universal wiring (`server.deps.inline: ["zod"]` — vitest-under-bun mangles zod v4's dual export map — and excluding `.claude/**` from discovery) AND the react layer (`@vitejs/plugin-react`, `resolve.tsconfigPaths`, `test.env: loadEnv("test", cwd, "")` — the `""` prefix loads EVERY var for import-time env validation), so a delta-less repo inherits all of it with no file. A non-React SSR app's delta file merges onto the base `@kvnwolf/dobby/vitest` instead and adds its own plugin.
 
 ## Step 4: Remove the dead hook + script machinery
 
@@ -171,6 +167,7 @@ In the repo's CI (`.github/workflows/*`), replace the vite-plus install + gate w
 
 - `vp install` (or a vite-plus setup action) → `bun install`.
 - `vpr validate` / `vp check` (and any separate `vp build`/`vp test` gate step) → **`bunx dobby check`** — the single full gate (biome, tsc, knip, capability-gated build + vitest, plus any `checks[]` extras).
+- **Vercel (or any external builder) — point the build at dobby.** If the repo deploys on Vercel, set the **Build Command** to `bunx dobby build` (in `vercel.json`'s `buildCommand`, or the project dashboard) so external builds go THROUGH dobby too — the config-less vite default (and any future build-time niceties) apply centrally, with no per-project buildCommand drift.
 
 Leave the rest of the workflow (checkout, Bun setup, caching, deploy) as it is.
 
@@ -184,10 +181,10 @@ Prove the migration landed, one pass:
 Then report the **migration summary** in plain buckets:
 
 - **Swapped** — dobby added; which toolchain deps removed; vite/vitest de-aliased and restored real; which `package.json` keys preserved (e.g. the portless key).
-- **Thinned** — `tsconfig.json`/`biome.jsonc` now `extends` the presets; which lint rules/`ignorePatterns` migrated to Biome `overrides`/`files.includes`; `vite.config.ts` stripped to real config.
+- **Config surface** — `tsconfig.json` written thin (`extends` the base, only project deltas kept). Then, for each of `biome.jsonc` / `vite.config.ts` / `vitest.config.ts` / `drizzle.config.ts`, report whether it was **DELETED as now-default** (dobby's capability-picked preset governs via override-by-presence) or **KEPT for a real delta** — naming the delta (a progressive-migration allowlist in `biome.jsonc`, an `ssr.noExternal` in `vite.config.ts`, a spread-override in `drizzle.config.ts`, …).
 - **Removed** — `.vite-hooks/`, `prepare` + scripts, `.claude/commit.config.yml`, `.conductor/`.
 - **Moved** — which files went to `src/emails/` and how many imports were rewritten (or "none applied").
-- **Config** — the new `dobby.config.json` (`files` count; any extras kept and why); `.worktreeinclude` created or already present; CI rewired.
+- **Config** — the new `dobby.config.json` (`files` count; any extras kept and why); `.worktreeinclude` created or already present; CI rewired (and, if the repo deploys on Vercel, the buildCommand pointed at `bunx dobby build`).
 
 Flag any follow-ups the migration surfaced — e.g. a `setup[]`/`teardown[]`/`checks[]` extra the inference doesn't cover, or a stale README the swap left behind. Run `bunx dobby env` to confirm the resolved capabilities and the inferred `db:*` task names. **Also flag a deferred/incomplete `tracker`** — if Step 7 mechanized an issue-tracker line whose value wasn't fully specified (a Linear line without a trivially-derivable `team`, or any tracker not fully pinned), say so and tell the user to run `/dobby:onboard` to complete the `tracker` key (especially the Linear `team`) **before using the work skills** — otherwise the project has no usable tracker selection and new work would be recorded against the default GitHub backend.
 
@@ -195,7 +192,7 @@ Flag any follow-ups the migration surfaced — e.g. a `setup[]`/`teardown[]`/`ch
 
 The migration is done. End by presenting an **AskUserQuestion** (one question) that restates the cutover to the dobby world is complete and offers:
 
-- `/dobby:commit` *(Recommended)* — commit the migration (added dep, thinned configs, stripped `vite.config.ts`, removed machinery, deleted `.conductor/` + legacy YAML, moved files, new `dobby.config.json`, CI rewire); its `bunx dobby check --fix` gate runs green, proving the move end-to-end.
+- `/dobby:commit` *(Recommended)* — commit the migration (added dep, thin `tsconfig.json`, the now-default tool configs deleted/kept-for-deltas, removed machinery, deleted `.conductor/` + legacy YAML, moved files, new `dobby.config.json`, CI rewire); its `bunx dobby check --fix` gate runs green, proving the move end-to-end.
 - `/dobby:onboard` — first, if Step 10 flagged an incomplete `tracker` (e.g. a Linear line whose `team` was deferred) to complete before using the work skills.
 - **Stop here** — end the turn (e.g. to eyeball the moved files or the CI diff first).
 
@@ -209,14 +206,14 @@ Interact with the user in their language. Write the migrated `dobby.config.json`
 
 - [ ] Preflight ran first: legacy signals detected (`.claude/commit.config.yml`, old-era `dobby.config.json` with `run`, vite-plus/aliases, `.vite-hooks`/`.conductor`); an already-migrated repo was reported and left untouched; the plan (with the two gates flagged) was announced
 - [ ] Deps swapped: `@kvnwolf/dobby` added; present toolchain deps removed (`vite-plus`/`ultracite`/`knip`/`taze`/`oxlint`/`portless`); vite/vitest aliases dropped; real `vite` (and `vitest` if tests) restored; project keys preserved (portless key, `trustedDependencies`)
-- [ ] Thin configs written: `tsconfig.json` `extends @kvnwolf/dobby/tsconfig` (or `/tsconfig/vite` for a Vite app) keeping only project deltas (paths/include/types), absorbed options dropped (`allowImportingTsExtensions`/`noUncheckedSideEffectImports`); `biome.jsonc` `extends @kvnwolf/dobby/biome/{react|core}` with old `ignorePatterns`→`files.includes` (`**` first, `!`/`!!` negation) and old rules→`overrides`; `drizzle.config.ts` re-exports `@kvnwolf/dobby/drizzle` when the repo matches the house convention (spread-override otherwise)
-- [ ] `vite.config.ts` stripped to a `mergeConfig` onto `@kvnwolf/dobby/vite` (plugins/genuine deltas kept, native tsconfig paths + `server.allowedHosts` inherited; `run`/`tasks`/`fmt`/`lint`/`staged` blocks deleted); an SSR app's `vitest.config.ts` is the `@kvnwolf/dobby/vitest/react` one-liner (mergeConfig only for real deltas)
+- [ ] `tsconfig.json` written thin (the one config file that ALWAYS stays): `extends @kvnwolf/dobby/tsconfig` (or `/tsconfig/vite` for a Vite app) keeping only project deltas (paths/include/types), absorbed options dropped (`allowImportingTsExtensions`/`noUncheckedSideEffectImports`)
+- [ ] Override-by-presence honored on the other tool configs: `biome.jsonc` / `vite.config.ts` / `vitest.config.ts` / `drizzle.config.ts` DELETED when delta-less (dobby's capability-picked default governs the gate + edit hook); a file KEPT only for a real delta — `biome.jsonc` `extends @kvnwolf/dobby/biome/{react|core}` carrying the allowlist/`overrides` (old `ignorePatterns`→`files.includes`, `**` first + `!`/`!!` negation; old rules→`overrides`); `vite.config.ts` a `mergeConfig` onto `@kvnwolf/dobby/vite/tanstack-start` (e.g. `ssr.noExternal`); `vitest.config.ts` a `mergeConfig` onto `@kvnwolf/dobby/vitest/react` (real delta only); `drizzle.config.ts` a spread-override onto `@kvnwolf/dobby/drizzle`
 - [ ] `.vite-hooks/` removed; `prepare` + every `package.json#scripts` entry removed
 - [ ] HUMAN GATE honored before file moves; the canonical-path move done with all imports rewritten atomically (react-email → `src/emails/`); skipped cleanly when N/A
 - [ ] `.worktreeinclude` created (at least `.env.local`) if missing; left as-is if present
 - [ ] `dobby.config.json` regenerated to the shrunken schema: `files[]` preserved/converted verbatim; `run` and inferred `setup`/`teardown`/`checks` dropped; only truly-custom extras kept; no-clobber on an existing hand-authored config; `.claude/commit.config.yml` deleted, rest of `.claude/` untouched
 - [ ] Legacy issue-tracker line (naming Linear/local/github, from `.claude/commit.config.yml` or CLAUDE.md) MECHANIZED into `dobby.config.json`'s top-level `tracker` key (`{ "type": ... }`), NOT deleted — Linear `team` key deferred to `/dobby:onboard` when not trivially derivable, never fabricated; an incomplete `tracker` flagged in the summary
 - [ ] HUMAN GATE honored before deleting `.conductor/`; ADR rationale (Conductor removal, supersedes ADR-0005) noted
-- [ ] CI rewired: `vp install`→`bun install`, `vpr validate`/`vp check`→`bunx dobby check`; rest of the workflow left intact
-- [ ] Verified: `bunx dobby check` green + `bunx dobby env` sane; migration summary reported (swapped/thinned/removed/moved/config)
+- [ ] CI rewired: `vp install`→`bun install`, `vpr validate`/`vp check`→`bunx dobby check`; Vercel buildCommand pointed at `bunx dobby build` if the repo deploys there; rest of the workflow left intact
+- [ ] Verified: `bunx dobby check` green + `bunx dobby env` sane; migration summary reported (swapped / config surface [deleted-as-default vs kept-for-deltas] / removed / moved / config)
 - [ ] Ended with the AskUserQuestion gate (`/dobby:commit` recommended, `/dobby:onboard` first if `tracker` incomplete, or stop here); the chosen `/dobby:<skill>` invoked through the Skill tool

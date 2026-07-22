@@ -1,12 +1,12 @@
 ---
 name: commit
-description: Syncs documentation, authors the commit message + PR body, then runs the gate and performs the git/gh ceremony directly (stage → `dobby check --fix` → commit → push → PR). Use when committing code, finishing a task, pushing changes, or creating a PR.
-allowed-tools: Bash(git *), Bash(gh pr *), Bash(bunx dobby check *), Write
+description: Syncs documentation, authors the commit message + PR body, runs the gate and performs the git/gh ceremony directly (stage → `dobby check --fix` → commit → push → PR), then monitors the PR to a verdict. Use when committing code, finishing a task, pushing changes, or creating a PR.
+allowed-tools: Bash(git *), Bash(gh *), Bash(bunx dobby check *), Write
 ---
 
 # Commit
 
-The skill owns **judgment** — which docs to sync, what the message says, whether a PR is opened — AND performs the git/gh **mechanics** directly: stage, run the gate, commit, push, and open the PR. `bunx dobby check --fix` is the standardized pre-commit gate (project-wide safe fixes first, then the full quality gate); everything around it is plain `git`/`gh`.
+The skill owns **judgment** — which docs to sync, what the message says, whether a PR is opened — AND performs the git/gh **mechanics** directly: stage, run the gate, commit, push, and open the PR. `bunx dobby check --fix` is the standardized pre-commit gate (project-wide safe fixes first, then the full quality gate); everything around it is plain `git`/`gh`. Opening the PR is **not** the finish line: the skill then stays on watch — CI to green, review to a verdict — and only hands off once the PR is merge-ready (it never merges).
 
 ## Step 1: Require the commit config
 
@@ -77,12 +77,21 @@ Perform the ceremony directly, in order. `bunx dobby check --fix` is the ONE gat
 
    If a PR already exists on the branch, the push in step 5 already updated it — note that and finish (don't try to re-create it).
 
+## Step 6: Monitor the PR to a verdict
+
+Opening the PR is not the finish line — stay on watch until it reaches a verdict. **Skip this whole step when you committed on `main`** (no PR was opened): go straight to the Next step.
+
+1. **Watch CI to green.** Watch the newest run on the PR branch to completion — `gh pr checks --watch` (or `gh run watch` on the branch's latest run id). On **CI failure**, diagnose from the failing step's log — `bunx dobby check` now prints a raw stderr tail when a tool fails without producing findings, so read that tail — and route the fix through the normal delegation rules: a worker, **never** an inline edit. Push the fix and re-watch. Loop until CI is green.
+2. **Wait for the review round — only when a review bot is configured.** A few minutes after CI lands, detect a bot by fetching the PR's review threads + the edited-in-place bot summary comment. Don't duplicate those mechanics here — they live in `/dobby:address-review`'s references: the thread fetch + summary read in [`../address-review/references/github-api.md`](../address-review/references/github-api.md), the bot registry in [`../address-review/references/adapters.md`](../address-review/references/adapters.md). **Bound the wait:** if nothing is posted ~5 min after CI goes green, report the PR as **open + unreviewed** and end — never poll forever.
+3. **Feedback present → hand to `/dobby:address-review`.** Unresolved threads or a below-gate confidence → invoke **`/dobby:address-review`** via the Skill tool. It owns triage (with its human gate), the fixes, thread resolution, and the re-trigger; don't reimplement any of that here.
+4. **Clean → report MERGE-READY.** CI green and no unresolved feedback → state plainly that the PR is merge-ready. **NEVER merge it yourself — merging is always the user's call.**
+
 ## Next step
 
-The commit landed (and the PR is open, if off `main`). Present the next stage as an **AskUserQuestion** — one question that restates commit just finished (the PR is open, waiting on merge) — with the options below (recommended first, then Stop here). On the user's selection, invoke the chosen `/dobby:<skill>` via the Skill tool; "Stop here" ends the turn.
+The commit landed, and — off `main` — the monitor has run to its verdict (CI watched to green, feedback routed to `/dobby:address-review`, or the PR reported merge-ready / open + unreviewed). Present the next stage as an **AskUserQuestion** — one question that restates where things landed (the PR is monitored and waiting on **your** merge; the skill never merges) — with the options below (recommended first, then Stop here). On the user's selection, invoke the chosen `/dobby:<skill>` via the Skill tool; "Stop here" ends the turn.
 
-- **`/dobby:finish`** *(Recommended, after the PR is merged)* — the kit created a worktree for this goal at `/dobby:scope`; tear down the worktree: close the dev server, remove the worktree + branch, and pull main up to date.
-- **Stop here** — the PR still needs to merge first; come back to `/dobby:finish` once it's merged.
+- **`/dobby:finish`** *(Recommended, after you merge the PR)* — the kit created a worktree for this goal at `/dobby:scope`; tear down the worktree: close the dev server, remove the worktree + branch, and pull main up to date.
+- **Stop here** — the PR still needs your merge first (or is waiting on review); come back to `/dobby:finish` once it's merged.
 
 ## Acceptance checklist
 
@@ -91,3 +100,4 @@ The commit landed (and the PR is open, if off `main`). Present the next stage as
 - [ ] Commit message authored in semantic format with a why-body; the tracker's lifecycle-link magic word in the commit body/PR body per [`../backlog/references/trackers.md`](../backlog/references/trackers.md) — `Closes #<n>` (github) / `Fixes VON-123` (linear) / nothing (local), and no MCP call — when the session traces to a tracked goal
 - [ ] Branch guard applied: on `main` → no PR; off `main` → `gh pr create --body-file` with the authored PR body
 - [ ] Ceremony performed directly in order: staged (`git add -A` if nothing staged) → `bunx dobby check --fix` gate → re-stage mutated files → `git commit` → `git push` (`-u origin HEAD` if no upstream) → PR; the gate is `dobby check --fix` alone (never the individual checks); gate failure reported verbatim and commit aborted
+- [ ] Off `main`: PR monitored to a verdict — CI watched to green (any failure diagnosed from the log's raw stderr tail and fixed via a worker, never inline, then re-watched); a configured review bot's feedback routed to `/dobby:address-review` (detection pointed at that skill's references, not duplicated), or the PR reported merge-ready / open + unreviewed after a bounded ~5-min wait; the skill NEVER merged the PR (merging is the user's call)

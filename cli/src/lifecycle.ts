@@ -13,11 +13,13 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { loadConfig } from "./config.ts";
-import { detectCapabilities } from "./detect.ts";
-import { discoverPanes, resolveDevUrl } from "./envinfo.ts";
+import { detectCapabilities, scanCapabilities } from "./detect.ts";
+import { discoverPanes, resolveDevUrl, resolveShareUrl } from "./envinfo.ts";
 import {
+	configArgs,
 	requireWorkroot,
 	resolveBin,
+	resolveViteConfig,
 	resolveWorkroot,
 	runCapture,
 	runInherit,
@@ -31,7 +33,12 @@ import {
 	type DevPlan,
 	dbTasks,
 	devPlan,
+	drizzleConfigSpec,
+	type ShareDecision,
+	shareDecision,
 	UPDATE_ARGS,
+	viteBlockedMessage,
+	viteConfigSpec,
 } from "./tasks.ts";
 
 // The action-command executors (the inferred `db:*` tasks, `update`, and
@@ -343,14 +350,24 @@ export function runDbTask(
 		};
 	}
 
+	// Config-less default (ADR-0015): drizzle-kit gains `--config=<preset>` when the
+	// consumer ships no drizzle.config.* — the SAME augmented args feed the dry-run
+	// plan and the real spawn, so the plan never lies. A consumer file → NO extra
+	// args (bare — native discovery, a total override).
+	const cfgArgs = configArgs(root, drizzleConfigSpec()).args;
+	const augmented: DbCommand = {
+		tool: command.tool,
+		args: [...command.args, ...cfgArgs],
+	};
+
 	if (opts.dryRun) {
 		// Resolve the tool bin CONSUMER-local (part c: the dry-run plan renders the
 		// RESOLVED path so the resolution is observable) — bare fallback when absent.
 		const bin = resolveBin(command.tool, { scope: "consumer", root });
-		return { ok: true, kind: "plan", bin, command, cwd: root };
+		return { ok: true, kind: "plan", bin, command: augmented, cwd: root };
 	}
 
-	return { ok: true, kind: "ran", ...executeDbCommand(command, root) };
+	return { ok: true, kind: "ran", ...executeDbCommand(augmented, root) };
 }
 
 // Build the error for an unresolved db name, listing the available (short) drizzle
@@ -387,6 +404,48 @@ function executeDbCommand(
 }
 
 // ---------------------------------------------------------------------------
+// Share (ngrok tunnel) preflight — the IMPURE ngrok-presence probe.
+//
+// Share is ON BY DEFAULT (the tunnel makes the dev app reachable from a phone);
+// `--no-share` opts out. Because it is the default, a machine without the `ngrok`
+// binary must DEGRADE (drop the tunnel + one note), never fail the bring-up. The
+// pure DECISION lives in tasks.ts (`shareDecision`); the PRESENCE fact is discovered
+// HERE by a cheap `ngrok version` probe (a bare system tool, workroot-pinned) — kept
+// out of the pure planners. The result is threaded as DATA into `shareDecision` so
+// both branches stay deterministic; `DOBBY_NGROK` is the documented test seam.
+// ---------------------------------------------------------------------------
+
+// The documented test seam (never set in production): force the ngrok-presence probe
+// deterministically so tests can assert BOTH the tunnel-on and the degrade branch
+// regardless of whether the runner happens to have ngrok installed. "1" → present,
+// "0" → absent, unset → the real `ngrok version` probe.
+const NGROK_FORCE_ENV = "DOBBY_NGROK";
+
+// Whether the `ngrok` binary is available on this machine. `ngrok version` exits 0
+// when installed; a missing binary makes the spawn error (folded to false). System
+// tool → BARE (never resolveBin), pinned to the workroot like every other spawn.
+function ngrokAvailable(root: string): boolean {
+	const forced = process.env[NGROK_FORCE_ENV];
+	if (forced === "0") {
+		return false;
+	}
+	if (forced === "1") {
+		return true;
+	}
+	const result = runCapture("ngrok", ["version"], { root });
+	return !result.error && result.status === 0;
+}
+
+// Resolve the share outcome (whether `--ngrok` applies + the degrade note) for a
+// requested-share flag against `root`: probe ngrok ONLY when share is requested (no
+// point probing when opted out), then let the pure `shareDecision` decide. A null
+// root (a dev dry-run outside a git repo) cannot probe → treated as absent (degrade).
+function resolveShare(share: boolean, root: string | null): ShareDecision {
+	const ngrokPresent = share && root !== null && ngrokAvailable(root);
+	return shareDecision(share, ngrokPresent);
+}
+
+// ---------------------------------------------------------------------------
 // `dobby dev` — the run composition (streaming split, part c)
 //
 // The pure ordered plan lives in `tasks.ts` (`devPlan`); this executor has two
@@ -414,12 +473,19 @@ export interface ResolvedDevCommand {
 
 // The `dobby dev` plan with every bin resolved (part c: the dry-run render shows
 // resolved paths). `secondaries` are CONSUMER-local; the main app command is
-// wrapped by the BUNDLED portless (also resolved from dobby's tree). `cacheClears`
-// stay logical (a native `rm`, never spawned).
+// wrapped by the BUNDLED portless (also resolved from dobby's tree), with `ngrok`
+// telling the renderer/executor whether to insert `--ngrok` (the share tunnel).
+// `cacheClears` stay logical (a native `rm`, never spawned). `shareNote` carries the
+// degrade note when share was requested but ngrok is missing (else null).
 export interface ResolvedDevPlan {
 	cacheClears: DevCommand[];
-	main: { portless: string; command: ResolvedDevCommand } | null;
+	main: {
+		portless: string;
+		ngrok: boolean;
+		command: ResolvedDevCommand;
+	} | null;
 	secondaries: ResolvedDevCommand[];
+	shareNote: string | null;
 }
 
 // The outcome of planning `dobby dev`:
@@ -434,9 +500,14 @@ export type DevReport =
 // spawn). Capabilities are detected from `cwd` (a single-package project runs
 // dobby at its root); `config` is threaded for signature-completeness (v1 has no
 // config-driven dev behavior). No vite app → the "nothing to run" gate (exit 1);
-// `up` is the graceful path for a project with nothing to serve.
-export function planDev(cwd: string): DevReport {
-	const capabilities = detectCapabilities(cwd);
+// `up` is the graceful path for a project with nothing to serve. `share` (ON BY
+// DEFAULT; `--no-share` opts out) decides the ngrok tunnel — resolved here so the
+// dry-run plan reflects the real ngrok-presence probe (degrade note when missing).
+export function planDev(cwd: string, opts: { share: boolean }): DevReport {
+	// Scan ONCE for both the capabilities AND the raw dependency set — the latter
+	// feeds `viteConfigSpec`'s require-all-imports guard (the tanstack preset is
+	// picked only when every package it imports is declared).
+	const { capabilities, dependencies } = scanCapabilities(cwd);
 	const loaded = loadConfig(cwd);
 	const config = loaded?.ok ? loaded.config : null;
 	const plan = devPlan(capabilities, config);
@@ -451,14 +522,42 @@ export function planDev(cwd: string): DevReport {
 	// Resolve every bin now (SOFT workroot — the dry-run capture path must not fail
 	// hard outside a git repo; a null root leaves consumer bins as bare names, the
 	// documented fallback). The real streaming path re-asserts a hard workroot.
-	return { ok: true, plan: resolveDevPlan(plan, resolveWorkroot(cwd)) };
+	const root = resolveWorkroot(cwd);
+	// The vite default (ADR-0015): BLOCKED for a config-less tanstack app missing an
+	// imported package — no import-safe fallback serves the app, so it is a HARD ERROR
+	// through the plan/run error path (dev's 'nothing to run' twin), not a silent base.
+	const viteCfg = resolveViteConfig(
+		root,
+		viteConfigSpec(capabilities, dependencies),
+	);
+	if (viteCfg.blocked) {
+		return { ok: false, error: viteBlockedMessage(viteCfg.missing) };
+	}
+	return {
+		ok: true,
+		plan: resolveDevPlan(
+			plan,
+			root,
+			viteCfg.args,
+			resolveShare(opts.share, root),
+		),
+	};
 }
 
 // Resolve the logical dev plan's bins to spawnable paths: consumer-local for the
 // app/email tools (`<root>/node_modules/.bin/<tool>`, bare fallback), BUNDLED for
 // the portless wrapper (dobby's own tree). The SAME resolution feeds the dry-run
-// render and the real spawn, so the plan never lies about what runs.
-function resolveDevPlan(plan: DevPlan, root: string | null): ResolvedDevPlan {
+// render and the real spawn, so the plan never lies about what runs. `viteConfigArgs`
+// are the config-less default `--config <preset>` args (ADR-0015) the caller already
+// resolved from the workroot (empty when the consumer ships its own vite config) —
+// appended so both the dry-run render and the real spawn read the identical path.
+// A BLOCKED tanstack default is handled by the caller (`planDev`) BEFORE this point.
+function resolveDevPlan(
+	plan: DevPlan,
+	root: string | null,
+	viteConfigArgs: string[],
+	share: ShareDecision,
+): ResolvedDevPlan {
 	const consumer = (command: DevCommand): ResolvedDevCommand => ({
 		bin: resolveBin(command.tool, {
 			scope: "consumer",
@@ -466,24 +565,41 @@ function resolveDevPlan(plan: DevPlan, root: string | null): ResolvedDevPlan {
 		}),
 		args: command.args,
 	});
+	// The vite dev command (the main) gains `--config <preset>` when absent — the
+	// caller-resolved `viteConfigArgs` (empty when the consumer ships its own config).
+	const main = ((): ResolvedDevPlan["main"] => {
+		if (plan.main === null) {
+			return null;
+		}
+		const command = consumer(plan.main.command);
+		return {
+			portless: resolveBin("portless", { scope: "bundled" }),
+			// `--ngrok` (the share tunnel) is applied when share is on AND ngrok is present.
+			ngrok: share.ngrok,
+			command: {
+				bin: command.bin,
+				args: [...command.args, ...viteConfigArgs],
+			},
+		};
+	})();
 	return {
 		cacheClears: plan.main?.cacheClears ?? [],
-		main:
-			plan.main === null
-				? null
-				: {
-						portless: resolveBin("portless", { scope: "bundled" }),
-						command: consumer(plan.main.command),
-					},
+		main,
 		secondaries: plan.secondaries.map(consumer),
+		shareNote: share.note,
 	};
 }
 
 // Execute a live `dobby dev` (the STREAMING path). Returns the process exit code
 // once the managed group tears down. The bin (index.ts) is the ONLY caller — it
-// installs no output capture, so children stream straight to the terminal.
-export async function runDev(cwd: string): Promise<number> {
-	const report = planDev(cwd);
+// installs no output capture, so children stream straight to the terminal. `share`
+// (ON BY DEFAULT; `--no-share` opts out) drives the ngrok tunnel — resolved inside
+// `planDev` (the same probe the dry-run uses), so the degrade note prints once here.
+export async function runDev(
+	cwd: string,
+	opts: { share: boolean },
+): Promise<number> {
+	const report = planDev(cwd, { share: opts.share });
 	if (!report.ok) {
 		process.stderr.write(`${report.error}\n`);
 		return 1;
@@ -499,10 +615,16 @@ export async function runDev(cwd: string): Promise<number> {
 		return 1;
 	}
 
-	const { cacheClears, main, secondaries } = report.plan;
+	const { cacheClears, main, secondaries, shareNote } = report.plan;
 	if (main === null) {
 		// Unreachable: planDev returns ok only when the app main exists.
 		return 1;
+	}
+
+	// Surface the degrade note (share requested but ngrok missing) before the group
+	// starts, so the user knows the app is local-only this session.
+	if (shareNote !== null) {
+		process.stderr.write(`${shareNote}\n`);
 	}
 
 	// (1) Cache-clear (`rm -rf node_modules/.vite`) — done natively, before spawning.
@@ -525,7 +647,14 @@ export async function runDev(cwd: string): Promise<number> {
 	}
 	const mainSpawn = {
 		bin: process.execPath,
-		args: [main.portless, "run", main.command.bin, ...main.command.args],
+		args: [
+			main.portless,
+			"run",
+			// `--ngrok` opens the share tunnel; omitted when share is off or ngrok is absent.
+			...(main.ngrok ? ["--ngrok"] : []),
+			main.command.bin,
+			...main.command.args,
+		],
 	};
 	const secondarySpawns = secondaries.map((secondary) => ({
 		bin: secondary.bin,
@@ -592,6 +721,100 @@ function killGroup(child: ChildProcess): void {
 	} catch {
 		// Already dead or no such group — nothing to tear down.
 	}
+}
+
+// ---------------------------------------------------------------------------
+// `dobby build` — the inferred mechanical build (ADR-0015)
+//
+// External builders build THROUGH dobby: a consumer's Vercel `buildCommand` is
+// `bunx dobby build`, so dobby (not the raw framework CLI) owns the build spawn —
+// which lets future niceties (env checks, cache warmup, telemetry) land CENTRALLY
+// without every consumer editing its buildCommand. The real run is the consumer's
+// OWN `vite build` (never dobby's — the dual-Vite invariant) + the config-less
+// default `--config <preset>` (ADR-0015) when the consumer ships no vite config.
+//
+// Capability-gated on `vite` (mirroring `dev`'s gate): no vite → exit 1 'nothing to
+// build'. FINITE (not the streaming split) — it is dispatched inside run() and
+// inherits stdio through the runner (the `db:*` pattern), so run() renders the
+// outcome. `--dry-run` renders the plan (bin + args + pinned cwd), no spawn.
+// `check --build` reuses the SAME config resolution (viteConfigSpec).
+// ---------------------------------------------------------------------------
+
+// The outcome of `dobby build`:
+//   - `{ ok: false, error }` — no vite capability ('nothing to build'), or outside
+//     a git repo. `run.ts` prints `error` on stderr with exit 1.
+//   - `{ ok: true, kind: "plan", bin, args, cwd }` — `--dry-run`: the RESOLVED
+//     consumer vite bin + args (incl. the `--config` default when absent) + the
+//     pinned workroot, rendered by `run.ts`, nothing spawned.
+//   - `{ ok: true, kind: "ran", exitCode, failure }` — a real run: the child's exit
+//     code plus an optional failure note (vite not installed, nonzero exit).
+export type BuildReport =
+	| { ok: false; error: string }
+	| { ok: true; kind: "plan"; bin: string; args: string[]; cwd: string }
+	| { ok: true; kind: "ran"; exitCode: number; failure: string | null };
+
+// Resolve and (unless dry-run) run `vite build` for the project at `cwd`.
+// Capabilities are detected from `cwd` (a single-package project runs dobby at its
+// root); no vite → the hard 'nothing to build' gate (dev's gate's twin). The
+// workroot is resolved for the pinned spawn cwd, so a real run fails hard outside a
+// git repo.
+export function runBuild(cwd: string, opts: { dryRun: boolean }): BuildReport {
+	// Scan ONCE — capabilities gate the build, the dependency set feeds
+	// `viteConfigSpec`'s require-all-imports guard (tanstack preset vs vite base).
+	const { capabilities, dependencies } = scanCapabilities(cwd);
+	if (!capabilities.includes("vite")) {
+		return {
+			ok: false,
+			error:
+				"nothing to build — no app capability (no vite) detected; `dobby build` is the inferred build for vite apps",
+		};
+	}
+
+	let root: string;
+	try {
+		root = requireWorkroot(cwd);
+	} catch (error) {
+		return {
+			ok: false,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
+
+	const bin = resolveBin("vite", { scope: "consumer", root });
+	const viteCfg = resolveViteConfig(
+		root,
+		viteConfigSpec(capabilities, dependencies),
+	);
+	// BLOCKED (ADR-0015): a config-less tanstack app missing an imported package has no
+	// import-safe fallback that serves — fail loud (exit 1) via the run error path (the
+	// 'nothing to build' twin) in BOTH dry-run and a real build. Never a silent base.
+	if (viteCfg.blocked) {
+		return { ok: false, error: viteBlockedMessage(viteCfg.missing) };
+	}
+	const args = ["build", ...viteCfg.args];
+
+	if (opts.dryRun) {
+		return { ok: true, kind: "plan", bin, args, cwd: root };
+	}
+
+	// A bare-name fallback (bin === "vite") means it is not installed in the
+	// consumer's node_modules/.bin — a setup gap, surfaced actionably (mirrors db:*).
+	if (bin === "vite") {
+		return {
+			ok: true,
+			kind: "ran",
+			exitCode: 127,
+			failure: "vite not found — run `dobby up` to install it",
+		};
+	}
+
+	const code = runInherit(bin, args, { root });
+	return {
+		ok: true,
+		kind: "ran",
+		exitCode: code,
+		failure: code === 0 ? null : `vite build exited ${code}`,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -706,6 +929,9 @@ export interface UpPlan {
 	renameWorkspace: { workspace: string; title: string } | null;
 	actions: UpAction[];
 	runSkipped: string | null;
+	// The share degrade note (share on by default, but ngrok is missing) — surfaced in
+	// the plan just like the dev plan's, or null (share off, ngrok present, or no app).
+	shareNote: string | null;
 }
 
 // The outcome of `dobby up`:
@@ -716,22 +942,34 @@ export interface UpPlan {
 //     vite capability has nothing to serve ('no app to run', exit 0) — the graceful
 //     counterpart to `dev`'s hard 'nothing to run'.
 //   - `{ ok: true, kind: "plan", plan }` — `--dry-run`: the ordered plan to render.
-//   - `{ ok: true, kind: "ran", exitCode, failure }` — a real run executed.
+//   - `{ ok: true, kind: "ran", exitCode, failure, note }` — a real run executed;
+//     `note` carries any advisory (the share degrade note, or the already-live
+//     no-tunnel restart hint), rendered on stdout, distinct from a `failure`.
 export type UpReport =
 	| { ok: false; error: string }
 	| { ok: true; kind: "noop"; message: string }
 	| { ok: true; kind: "plan"; plan: UpPlan }
-	| { ok: true; kind: "ran"; exitCode: number; failure: string | null };
+	| {
+			ok: true;
+			kind: "ran";
+			exitCode: number;
+			failure: string | null;
+			note: string | null;
+	  };
 
 // The decisions `up` resolves ONCE (git precondition, capabilities, devUrl, cmux,
-// neon creds) — the single source both the plan and the imperative execution
-// derive from, so `--dry-run` never lies about what a real run would do.
+// neon creds, share intent) — the single source both the plan and the imperative
+// execution derive from, so `--dry-run` never lies about what a real run would do.
 interface UpContext {
 	workroot: string;
 	slug: string;
 	devUrl: string | null;
 	cmux: string | null;
 	neon: { apiKey: string; projectId: string } | null;
+	// The requested share intent (true by default; false with `--no-share`). Drives
+	// whether the started `dobby dev` carries `--no-share`, and whether the already-live
+	// path hints at restarting for a tunnel.
+	share: boolean;
 }
 
 // Resolve `up` for the git worktree enclosing `cwd`, then either PLAN (`--dry-run`)
@@ -746,7 +984,10 @@ interface UpContext {
 //       creds fails hard (guaranteed branch isolation, no main-DB fallback).
 // `--dry-run` prints the FULL ordered plan (setup phase + run phase, or the skip
 // reason) without executing anything.
-export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
+export function runUp(
+	cwd: string,
+	opts: { dryRun: boolean; share: boolean },
+): UpReport {
 	let workroot: string;
 	try {
 		workroot = requireWorkroot(cwd);
@@ -774,6 +1015,12 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
 	const cmux = process.env.CMUX_WORKSPACE_ID || null;
 	const renameWorkspace =
 		cmux === null ? null : { workspace: cmux, title: slug };
+	// Share is resolved (ngrok probe) ONLY for a project that actually starts an app —
+	// a no-app project has nothing to tunnel, so no degrade note. The started `dobby dev`
+	// re-probes and applies `--ngrok` itself; `up` surfaces the degrade note as a preview.
+	const share: ShareDecision = hasApp
+		? resolveShare(opts.share, workroot)
+		: { ngrok: false, note: null };
 
 	if (opts.dryRun) {
 		// No app → the run phase is skipped, but the FULL plan still shows the setup
@@ -790,10 +1037,17 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
 					renameWorkspace,
 					actions: [],
 					runSkipped: "no app to run",
+					shareNote: share.note,
 				},
 			};
 		}
-		const resolved = resolveUpContext(cwd, workroot, slug, capabilities);
+		const resolved = resolveUpContext(
+			cwd,
+			workroot,
+			slug,
+			capabilities,
+			opts.share,
+		);
 		if (!resolved.ok) {
 			return { ok: false, error: resolved.error };
 		}
@@ -807,6 +1061,7 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
 				renameWorkspace,
 				actions: buildUpActions(resolved.context),
 				runSkipped: null,
+				shareNote: share.note,
 			},
 		};
 	}
@@ -820,6 +1075,7 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
 			kind: "ran",
 			exitCode: setupOutcome.exitCode,
 			failure: setupOutcome.failure,
+			note: null,
 		};
 	}
 
@@ -836,11 +1092,34 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
 	}
 
 	// (3) The run phase (a neon project with missing creds fails hard).
-	const resolved = resolveUpContext(cwd, workroot, slug, capabilities);
+	const resolved = resolveUpContext(
+		cwd,
+		workroot,
+		slug,
+		capabilities,
+		opts.share,
+	);
 	if (!resolved.ok) {
 		return { ok: false, error: resolved.error };
 	}
-	return { ok: true, kind: "ran", ...executeUp(resolved.context) };
+	const outcome = executeUp(resolved.context);
+	// The degrade note (share requested but ngrok missing) and any already-live
+	// restart hint from execution both surface as advisories on the ran report.
+	const note = joinNotes(share.note, outcome.note);
+	return {
+		ok: true,
+		kind: "ran",
+		exitCode: outcome.exitCode,
+		failure: outcome.failure,
+		note,
+	};
+}
+
+// Join up to two advisory notes into one block (dropping nulls), or null when both
+// are absent — so a real `up` can carry the degrade note AND the already-live hint.
+function joinNotes(a: string | null, b: string | null): string | null {
+	const notes = [a, b].filter((n): n is string => n !== null);
+	return notes.length === 0 ? null : notes.join("\n");
 }
 
 // Resolve the run-phase decisions (devUrl, cmux, neon creds) for a vite app into an
@@ -852,6 +1131,7 @@ function resolveUpContext(
 	workroot: string,
 	slug: string,
 	capabilities: string[],
+	share: boolean,
 ): { ok: false; error: string } | { ok: true; context: UpContext } {
 	const devUrl = resolveDevUrl(cwd, workroot, capabilities);
 	const cmux = process.env.CMUX_WORKSPACE_ID || null;
@@ -871,7 +1151,14 @@ function resolveUpContext(
 		neon = { apiKey: creds.apiKey, projectId: creds.projectId };
 	}
 
-	return { ok: true, context: { workroot, slug, devUrl, cmux, neon } };
+	return { ok: true, context: { workroot, slug, devUrl, cmux, neon, share } };
+}
+
+// The `bunx dobby dev` command `up` starts (via a cmux pane or a detached spawn),
+// carrying `--no-share` ONLY when the user opted out — so the inner dev tunnels by
+// default. The degrade-on-missing-ngrok is the inner dev's own concern (it re-probes).
+function devStartCommand(context: UpContext): string {
+	return context.share ? "bunx dobby dev" : "bunx dobby dev --no-share";
 }
 
 // The ordered `up` plan derived from the resolved decisions: probe → neon branch
@@ -894,12 +1181,12 @@ function buildUpActions(context: UpContext): UpAction[] {
 			devUrl: context.devUrl,
 			browserName: `dobby-browser-${context.slug}`,
 			runName: `dobby-run-${context.slug}`,
-			sendLine: `cd ${context.workroot} && bunx dobby dev`,
+			sendLine: `cd ${context.workroot} && ${devStartCommand(context)}`,
 		});
 	} else {
 		actions.push({
 			kind: "detached",
-			command: "bunx dobby dev",
+			command: devStartCommand(context),
 			pidRel: ".dobby/dev.pid",
 			logRel: ".dobby/dev.log",
 		});
@@ -919,9 +1206,12 @@ function buildUpActions(context: UpContext): UpAction[] {
 function executeUp(context: UpContext): {
 	exitCode: number;
 	failure: string | null;
+	note: string | null;
 } {
 	// (1) Already up? A single probe short-circuits — ensure the kit panes exist
-	// (idempotent) under cmux, then done.
+	// (idempotent) under cmux, then done. If share was requested but the RUNNING
+	// instance has no ngrok tunnel (shareUrl null in portless's routes.json), we do
+	// NOT restart automatically — we just note that a restart would add the tunnel.
 	if (
 		context.devUrl !== null &&
 		probeLiveness(context.workroot, context.devUrl)
@@ -929,14 +1219,18 @@ function executeUp(context: UpContext): {
 		if (context.cmux !== null) {
 			createPanes(context, context.cmux);
 		}
-		return { exitCode: 0, failure: null };
+		const note =
+			context.share && resolveShareUrl(context.devUrl) === null
+				? "the running app has no share tunnel — `bunx dobby down && bunx dobby up` to restart with the default share"
+				: null;
+		return { exitCode: 0, failure: null, note };
 	}
 
 	// (2) Neon branch — create idempotently and rewrite the worktree's .env.local.
 	if (context.neon !== null) {
 		const failure = provisionNeonBranch(context);
 		if (failure !== null) {
-			return { exitCode: 1, failure };
+			return { exitCode: 1, failure, note: null };
 		}
 	}
 
@@ -949,6 +1243,7 @@ function executeUp(context: UpContext): {
 		return {
 			exitCode: 1,
 			failure: "could not start `bunx dobby dev` — see .dobby/dev.log",
+			note: null,
 		};
 	}
 
@@ -961,9 +1256,10 @@ function executeUp(context: UpContext): {
 			exitCode: 1,
 			failure:
 				"the app never became reachable — check that the portless daemon is running and the local CA is trusted (`portless trust`)",
+			note: null,
 		};
 	}
-	return { exitCode: 0, failure: null };
+	return { exitCode: 0, failure: null, note: null };
 }
 
 // A single liveness probe: `curl -sf --max-time 5 <url>` (HTTP 200 → alive).
@@ -1229,7 +1525,12 @@ function createRunPane(
 	);
 	runCapture(
 		"cmux",
-		["send", "--surface", runRef, `cd ${context.workroot} && bunx dobby dev\n`],
+		[
+			"send",
+			"--surface",
+			runRef,
+			`cd ${context.workroot} && ${devStartCommand(context)}\n`,
+		],
 		{
 			root: context.workroot,
 		},
@@ -1300,7 +1601,11 @@ function startDetached(context: UpContext): boolean {
 	const dobbyDir = join(context.workroot, ".dobby");
 	mkdirSync(dobbyDir, { recursive: true });
 	ensureGitignored(context.workroot, ".dobby/");
-	const pid = spawnBackground("bunx", ["dobby", "dev"], {
+	// `--no-share` only when the user opted out; the default shares (inner dev re-probes).
+	const devArgs = context.share
+		? ["dobby", "dev"]
+		: ["dobby", "dev", "--no-share"];
+	const pid = spawnBackground("bunx", devArgs, {
 		root: context.workroot,
 		logPath: join(dobbyDir, "dev.log"),
 	});

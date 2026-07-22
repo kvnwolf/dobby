@@ -739,6 +739,115 @@ describe("run() — env command (devUrl resolution)", () => {
 	}, 20000);
 });
 
+// run(["env"], cwd) — shareUrl (the public ngrok tunnel URL) resolution.
+//
+// shareUrl is read from portless's LOCAL routes.json (network-free): the route whose
+// hostname matches the app's devUrl host, its `ngrokUrl`. `portless get` can never
+// return the public URL, so this is a file read — the env network-free invariant
+// holds. Independent expected values: PORTLESS_STATE_DIR points at a temp dir WE
+// create, and the routes.json + its `ngrokUrl` are literals WE write; the hostname to
+// key on is READ BACK from the code's OWN devUrl output (a different mechanism — the
+// bundled portless resolve — than the shareUrl file read under test), so the match is
+// exact without hard-coding portless's hostname scheme. A missing/mismatched route → null.
+describe("run() — env command (shareUrl from portless routes.json)", () => {
+	const STATE = "PORTLESS_STATE_DIR";
+	const stateDirs: string[] = [];
+	let gitVite: string;
+	let originalCmux: string | undefined;
+	let originalState: string | undefined;
+
+	beforeAll(() => {
+		originalCmux = process.env[CMUX];
+		originalState = process.env[STATE];
+		gitVite = makeGitRepo("dobby-share", {
+			pkg: { name: "scratch-share", dependencies: { vite: "^5.0.0" } },
+		});
+	});
+
+	afterAll(() => {
+		if (originalCmux === undefined) delete process.env[CMUX];
+		else process.env[CMUX] = originalCmux;
+		if (originalState === undefined) delete process.env[STATE];
+		else process.env[STATE] = originalState;
+		rmSync(gitVite, { recursive: true, force: true });
+		for (const d of stateDirs) rmSync(d, { recursive: true, force: true });
+		stateDirs.length = 0;
+	});
+
+	beforeEach(() => {
+		delete process.env[CMUX];
+		delete process.env[STATE];
+	});
+
+	// Write a routes.json into a fresh temp state dir; return the dir for PORTLESS_STATE_DIR.
+	function craftStateDir(routes: unknown): string {
+		const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-portless-")));
+		stateDirs.push(dir);
+		writeFileSync(join(dir, "routes.json"), JSON.stringify(routes));
+		return dir;
+	}
+
+	// The devUrl hostname the bundled portless assigns this project — read from env's OWN
+	// output (STATE unset → shareUrl irrelevant), so routes.json can be keyed to match it.
+	async function devHostname(): Promise<string> {
+		delete process.env[STATE];
+		const result = await run(["env"], gitVite);
+		const devUrl = parseEnvText(result.stdout).devUrl;
+		if (devUrl === undefined || devUrl === "null") {
+			throw new Error(`expected a resolved devUrl, got: ${devUrl}`);
+		}
+		return new URL(devUrl).hostname;
+	}
+
+	it("reports shareUrl (the ngrokUrl) when routes.json has a route matching the devUrl hostname", async () => {
+		const hostname = await devHostname();
+		process.env[STATE] = craftStateDir({
+			[hostname]: { ngrokUrl: "https://abc123.ngrok.app" },
+		});
+		const result = await run(["env"], gitVite);
+		expect(result.exitCode).toBe(0);
+		const env = parseEnvText(result.stdout);
+		expect(env.devUrl).toContain("scratch-share");
+		expect(env.shareUrl).toBe("https://abc123.ngrok.app");
+		// Ordering: shareUrl sits right after devUrl in the text output.
+		expect(result.stdout.indexOf("devUrl:")).toBeLessThan(
+			result.stdout.indexOf("shareUrl:"),
+		);
+	}, 20000);
+
+	it("reports shareUrl null when routes.json has only a DIFFERENT hostname (no match)", async () => {
+		process.env[STATE] = craftStateDir({
+			"someone-else.localhost": { ngrokUrl: "https://other.ngrok.app" },
+		});
+		const result = await run(["env"], gitVite);
+		expect(result.exitCode).toBe(0);
+		expect(parseEnvText(result.stdout).shareUrl).toBe("null");
+	}, 20000);
+
+	it("reports shareUrl null when the state dir has no routes.json (tolerant of a missing file)", async () => {
+		const dir = realpathSync(
+			mkdtempSync(join(tmpdir(), "dobby-portless-empty-")),
+		);
+		stateDirs.push(dir);
+		process.env[STATE] = dir;
+		const result = await run(["env"], gitVite);
+		expect(result.exitCode).toBe(0);
+		expect(parseEnvText(result.stdout).shareUrl).toBe("null");
+	}, 20000);
+
+	it("carries shareUrl (the matched tunnel URL) in --json", async () => {
+		const hostname = await devHostname();
+		process.env[STATE] = craftStateDir({
+			[hostname]: { ngrokUrl: "https://json123.ngrok.app" },
+		});
+		const result = await run(["env", "--json"], gitVite);
+		expect(result.exitCode).toBe(0);
+		expect(JSON.parse(result.stdout).shareUrl).toBe(
+			"https://json123.ngrok.app",
+		);
+	}, 20000);
+});
+
 // ===========================================================================
 // TASK 3 — Presets + `dobby check` core (biome + tsc).
 //
@@ -778,6 +887,8 @@ function readCliManifest(): {
 	exports?: Record<string, unknown>;
 	bin?: Record<string, string>;
 	dependencies?: Record<string, string>;
+	peerDependencies?: Record<string, string>;
+	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 	files?: string[];
 } {
 	return JSON.parse(readFileSync(cliFile("package.json"), "utf8"));
@@ -954,8 +1065,11 @@ describe("dobby presets — package.json exports", () => {
 		);
 	});
 
-	it("maps ./vitest to ./vitest.base.mjs", () => {
-		expect(readCliManifest().exports?.["./vitest"]).toBe("./vitest.base.mjs");
+	it("maps ./vitest to ./vitest.base.mjs (via the default condition)", () => {
+		const vitest = readCliManifest().exports?.["./vitest"] as {
+			default?: string;
+		};
+		expect(vitest?.default).toBe("./vitest.base.mjs");
 	});
 
 	it("keeps the existing dobby bin entry intact", () => {
@@ -1111,18 +1225,174 @@ describe("dobby stack presets — package.json exports", () => {
 		);
 	});
 
-	it("maps ./vite to ./vite.base.mjs", () => {
-		expect(readCliManifest().exports?.["./vite"]).toBe("./vite.base.mjs");
+	it("maps ./vite to ./vite.base.mjs (via the default condition)", () => {
+		const vite = readCliManifest().exports?.["./vite"] as { default?: string };
+		expect(vite?.default).toBe("./vite.base.mjs");
 	});
 
-	it("maps ./vitest/react to ./vitest.react.mjs", () => {
-		expect(readCliManifest().exports?.["./vitest/react"]).toBe(
-			"./vitest.react.mjs",
+	it("maps ./vitest/react to ./vitest.react.mjs (via the default condition)", () => {
+		const react = readCliManifest().exports?.["./vitest/react"] as {
+			default?: string;
+		};
+		expect(react?.default).toBe("./vitest.react.mjs");
+	});
+
+	it("maps ./drizzle to ./drizzle.base.mjs (via the default condition)", () => {
+		const drizzle = readCliManifest().exports?.["./drizzle"] as {
+			default?: string;
+		};
+		expect(drizzle?.default).toBe("./drizzle.base.mjs");
+	});
+
+	it("maps ./vite/tanstack-start to ./vite.tanstack.mjs (via the default condition)", () => {
+		const tanstack = readCliManifest().exports?.["./vite/tanstack-start"] as {
+			default?: string;
+		};
+		expect(tanstack?.default).toBe("./vite.tanstack.mjs");
+	});
+});
+
+// --- Type declarations (.d.mts) for every .mjs preset (D1/D2) -----------------
+// Consumers' STRICT tsc hits TS7016 (implicit any) when re-exporting an untyped
+// .mjs, so each .mjs preset ships a sibling .d.mts typing its default export from
+// the CONSUMER-resolved package. The `exports` objects carry a `types` condition
+// FIRST (TypeScript resolves conditions in order), pointing at that declaration.
+// Asserted by FILE READ + the manifest — the declaration's type import per preset
+// and the types-condition target are LITERALS the spec states outright.
+describe("dobby preset type declarations — sibling .d.mts files", () => {
+	// [preset, declaration file, the exact type import the declaration must carry].
+	const decls: [string, string, RegExp][] = [
+		[
+			"vite.base",
+			"vite.base.d.mts",
+			/import\s+type\s+\{\s*UserConfig\s*\}\s+from\s+"vite"/,
+		],
+		[
+			"vitest.base",
+			"vitest.base.d.mts",
+			/import\s+type\s+\{\s*UserConfig\s*\}\s+from\s+"vitest\/config"/,
+		],
+		[
+			"vitest.react",
+			"vitest.react.d.mts",
+			/import\s+type\s+\{\s*UserConfig\s*\}\s+from\s+"vitest\/config"/,
+		],
+		[
+			"drizzle.base",
+			"drizzle.base.d.mts",
+			/import\s+type\s+\{\s*Config\s*\}\s+from\s+"drizzle-kit"/,
+		],
+		[
+			"vite.tanstack",
+			"vite.tanstack.d.mts",
+			/import\s+type\s+\{\s*UserConfig\s*\}\s+from\s+"vite"/,
+		],
+	];
+
+	for (const [preset, file, typeImport] of decls) {
+		it(`${preset} ships a ${file} declaring the right type import`, () => {
+			expect(existsSync(cliFile(file))).toBe(true);
+			const raw = safeRead(file);
+			expect(raw).toMatch(typeImport);
+			// Types the default export the .mjs re-exports.
+			expect(raw).toMatch(/export\s+default\s+config/);
+		});
+	}
+
+	// The `types` condition must sit FIRST in each export object AND point at the
+	// sibling declaration — the two facts TypeScript needs to resolve the preset.
+	const typed: [string, string][] = [
+		["./vite", "./vite.base.d.mts"],
+		["./vite/tanstack-start", "./vite.tanstack.d.mts"],
+		["./vitest", "./vitest.base.d.mts"],
+		["./vitest/react", "./vitest.react.d.mts"],
+		["./drizzle", "./drizzle.base.d.mts"],
+	];
+
+	for (const [subpath, target] of typed) {
+		it(`exports["${subpath}"] carries a types condition -> ${target}`, () => {
+			const entry = readCliManifest().exports?.[subpath] as
+				| Record<string, string>
+				| undefined;
+			expect(entry?.types).toBe(target);
+			// types FIRST: TypeScript reads conditions top-down.
+			expect(Object.keys(entry ?? {})[0]).toBe("types");
+		});
+	}
+});
+
+// --- vite.tanstack.mjs — the house TanStack Start app stack (D2) ---------------
+// Layered on the vite base via mergeConfig; every plugin package resolves from the
+// CONSUMER's tree (same rule as vitest.react.mjs — NONE is a dobby dependency).
+// Markers are spec literals; comments are stripped so the header's mergeConfig
+// snippet never satisfies a config-body assertion.
+describe("dobby preset — vite.tanstack.mjs", () => {
+	it("exists as an exported preset file", () => {
+		expect(existsSync(cliFile("vite.tanstack.mjs"))).toBe(true);
+	});
+
+	it("layers on the vite base (imports ./vite.base.mjs)", () => {
+		expect(safeRead("vite.tanstack.mjs")).toMatch(
+			/from\s+"\.\/vite\.base\.mjs"/,
 		);
 	});
 
-	it("maps ./drizzle to ./drizzle.base.mjs", () => {
-		expect(readCliManifest().exports?.["./drizzle"]).toBe("./drizzle.base.mjs");
+	it("merges via mergeConfig on the dobby vite base", () => {
+		expect(codeOnly(safeRead("vite.tanstack.mjs"))).toMatch(
+			/mergeConfig\(\s*dobbyVite/,
+		);
+	});
+
+	it("wires the five house TanStack Start plugins", () => {
+		const raw = safeRead("vite.tanstack.mjs");
+		expect(raw).toMatch(/@tailwindcss\/vite/);
+		expect(raw).toMatch(/@tanstack\/devtools-vite/);
+		expect(raw).toMatch(/@tanstack\/react-start\/plugin\/vite/);
+		expect(raw).toMatch(/@vitejs\/plugin-react/);
+		expect(raw).toMatch(/nitro\/vite/);
+	});
+
+	it("encodes the house test-co-location convention (routeFileIgnorePattern)", () => {
+		expect(codeOnly(safeRead("vite.tanstack.mjs"))).toMatch(
+			/routeFileIgnorePattern/,
+		);
+	});
+});
+
+// --- biome/core.jsonc house override (D3) ------------------------------------
+// The maintainer turns noArrayIndexKey OFF as house style (custom-component JSX
+// where biome can't anchor a suppression; the rule's value doesn't pay its cost
+// for AI-written code). The rule sits in biome's `suspicious` group.
+describe("dobby preset — biome/core.jsonc house linter override", () => {
+	it("turns suspicious/noArrayIndexKey off", () => {
+		const raw = safeRead("biome/core.jsonc");
+		expect(raw).toMatch(/"noArrayIndexKey"\s*:\s*"off"/);
+	});
+});
+
+// --- knip.base.jsonc — dobby's default knip config for config-less consumers (D4)
+// Fixes the field bug where knip's vitest plugin can't see test.include through a
+// consumer's .mjs config re-export and flags every test file as "unused file".
+// VERIFIED against bundled knip@6: specifying `entry` REPLACES knip's defaults, so
+// the config re-states knip's own default entry globs PLUS the test glob. Asserted
+// by FILE READ (the config is passed to knip via --config, never imported).
+describe("dobby preset — knip.base.jsonc", () => {
+	it("exists as a shipped preset file", () => {
+		expect(existsSync(cliFile("knip.base.jsonc"))).toBe(true);
+	});
+
+	it("adds test files as entries (src/**/*.test glob)", () => {
+		expect(safeRead("knip.base.jsonc")).toMatch(
+			/"src\/\*\*\/\*\.test\.\{ts,tsx\}"/,
+		);
+	});
+
+	it("re-states knip's default entry globs (entry REPLACES, is not additive)", () => {
+		// Because `entry` overrides knip's defaults, the config must carry knip's own
+		// {index,cli,main} entry globs or genuine entry files would be flagged unused.
+		const raw = safeRead("knip.base.jsonc");
+		expect(raw).toMatch(/\{index,cli,main\}/);
+		expect(raw).toMatch(/src\/\{index,cli,main\}/);
 	});
 });
 
@@ -1167,6 +1437,18 @@ describe("dobby packaging — package.json files allowlist", () => {
 		]) {
 			expect(files, `missing packaged asset: ${asset}`).toContain(asset);
 		}
+	});
+
+	it("ships the new config-less assets: the tanstack preset, the .d.mts declarations, and the knip default", () => {
+		const files = readCliManifest().files ?? [];
+		// vite.tanstack.mjs must be listed explicitly (the allowlist enumerates .mjs
+		// presets by name, not a glob); the type declarations ship via the *.d.mts
+		// glob (which does NOT match the .mjs entries); knip.base.jsonc explicitly.
+		expect(files, "missing vite.tanstack.mjs").toContain("vite.tanstack.mjs");
+		expect(files, "missing *.d.mts glob (type declarations)").toContain(
+			"*.d.mts",
+		);
+		expect(files, "missing knip.base.jsonc").toContain("knip.base.jsonc");
 	});
 });
 
@@ -1273,17 +1555,37 @@ describe("dobby preset — drizzle.base.mjs", () => {
 	});
 });
 
+// The consumer-resolved packages the SHIPPED presets import — the single source
+// of truth for both the never-a-dependency guard and the optional-peer guard
+// below. Every entry is a bare specifier imported by a `.mjs` preset (and
+// type-imported by its `.d.mts` sibling); NONE is ever bundled (the dual-Vite
+// invariant). Derived by grepping every preset import in cli/, mapping each
+// subpath specifier back to its package:
+//   vite                     — vite.base.mjs, vite.tanstack.mjs, vitest.react.mjs, *.d.mts
+//   vitest                   — vitest.base.mjs, vitest.react.mjs (`vitest/config`), *.d.mts
+//   drizzle-kit              — drizzle.base.mjs, drizzle.base.d.mts
+//   @vitejs/plugin-react     — vite.tanstack.mjs, vitest.react.mjs
+//   @tailwindcss/vite        — vite.tanstack.mjs
+//   @tanstack/react-start    — vite.tanstack.mjs (`@tanstack/react-start/plugin/vite`)
+//   @tanstack/devtools-vite  — vite.tanstack.mjs
+//   nitro                    — vite.tanstack.mjs (`nitro/vite`)
+const PRESET_IMPORTED_PACKAGES = [
+	"vite",
+	"vitest",
+	"drizzle-kit",
+	"@vitejs/plugin-react",
+	"@tailwindcss/vite",
+	"@tanstack/react-start",
+	"@tanstack/devtools-vite",
+	"nitro",
+] as const;
+
 // --- No consumer-resolved package leaks into cli dependencies ----------------
 // The dual-Vite invariant, extended to the whole preset suite: vite / vitest /
 // drizzle-kit / @vitejs are ALWAYS resolved from the consumer's tree at
 // config-load time, never bundled inside dobby.
 describe("dobby dependencies — no consumer-resolved stack packages", () => {
-	for (const name of [
-		"vite",
-		"vitest",
-		"drizzle-kit",
-		"@vitejs/plugin-react",
-	]) {
+	for (const name of PRESET_IMPORTED_PACKAGES) {
 		it(`never declares ${name} as a dobby dependency`, () => {
 			const deps = readCliManifest().dependencies ?? {};
 			expect(deps[name]).toBeUndefined();
@@ -1296,21 +1598,75 @@ describe("dobby dependencies — no consumer-resolved stack packages", () => {
 			false,
 		);
 	});
+
+	it("declares no @tanstack/* package at all (the tanstack preset resolves them from the consumer)", () => {
+		const deps = readCliManifest().dependencies ?? {};
+		expect(Object.keys(deps).some((key) => key.startsWith("@tanstack/"))).toBe(
+			false,
+		);
+	});
 });
 
-// --- Dogfood: the repo's own root vitest.config.ts re-exports the base (D6) --
-// Proves the base preset loads under vitest with vite NOT installed, and stops
-// the suite discovering .claude/** worktree copies. Read relative to cli/ (the
-// file lives one level up, at the repo root).
-describe("dobby dogfood — root vitest.config.ts", () => {
-	it("exists at the repo root", () => {
-		expect(existsSync(cliFile("../vitest.config.ts"))).toBe(true);
+// --- Every preset-imported package is an OPTIONAL peerDependency --------------
+// The companion to the never-a-dependency guard: the same consumer-resolved set
+// (imported by the .mjs presets, type-imported by the .d.mts siblings) is
+// declared in peerDependencies with a permissive "*" range — dobby tracks the
+// house fleet, not a version policy — and marked optional in
+// peerDependenciesMeta. The peer declaration is what lets STRICT, non-hoisted
+// layouts (pnpm/isolated linkers) resolve these from dobby's own package
+// location; `optional: true` keeps hoisted/bun consumers and non-users of a
+// given preset free of install pressure and warnings (ADR-0015 world).
+describe("dobby peerDependencies — preset-imported packages, all optional", () => {
+	for (const name of PRESET_IMPORTED_PACKAGES) {
+		it(`declares ${name} as a peerDependency with a permissive "*" range`, () => {
+			const peers = readCliManifest().peerDependencies ?? {};
+			expect(peers[name]).toBe("*");
+		});
+
+		it(`marks ${name} optional in peerDependenciesMeta`, () => {
+			const meta = readCliManifest().peerDependenciesMeta ?? {};
+			expect(meta[name]).toEqual({ optional: true });
+		});
+	}
+
+	// The dual-Vite invariant holds across the two declaration sites: nothing may
+	// be both a bundled dependency AND a peer (peers resolve from the consumer).
+	it("declares no package as both a bundled dependency and a peerDependency (peers ≠ deps)", () => {
+		const manifest = readCliManifest();
+		const deps = manifest.dependencies ?? {};
+		const peers = manifest.peerDependencies ?? {};
+		for (const name of Object.keys(peers)) {
+			expect(deps[name]).toBeUndefined();
+		}
 	});
 
-	it("re-exports the dobby vitest BASE preset (no vite/react in this repo)", () => {
-		const raw = safeRead("../vitest.config.ts");
-		expect(raw).toMatch(/export\s+\{\s*default\s*\}/);
-		expect(raw).toMatch(/"@kvnwolf\/dobby\/vitest"/);
+	// peerDependenciesMeta must not drift from peerDependencies: every optional
+	// marker names a package that is actually a declared peer.
+	it("every peerDependenciesMeta entry names a declared peerDependency", () => {
+		const manifest = readCliManifest();
+		const peers = manifest.peerDependencies ?? {};
+		const meta = manifest.peerDependenciesMeta ?? {};
+		for (const name of Object.keys(meta)) {
+			expect(peers[name]).toBeDefined();
+		}
+	});
+});
+
+// --- Dogfood: the repo runs its OWN suite through the config-less default (ADR-0015)
+// INVERTED from the old "root vitest.config.ts exists + re-exports the base" test:
+// the config-less-defaults task DELETED that file (it was a pure re-export = zero
+// deltas). Its absence is now the LIVE PROOF of override-by-presence — with no
+// consumer vitest config, dobby's own `check` gate runs vitest through `--config
+// <dobby vitest.base.mjs>`. The dogfood asserts (a) the file is gone and (b) the
+// default preset it falls back to still ships. The actual `--config` wiring is
+// asserted through the run() seam in the config-less-defaults section below.
+describe("dobby dogfood — config-less default vitest (root vitest.config.ts deleted)", () => {
+	it("no longer ships a root vitest.config.ts (the config-less default replaces it)", () => {
+		expect(existsSync(cliFile("../vitest.config.ts"))).toBe(false);
+	});
+
+	it("still ships the vitest BASE preset the default falls back to", () => {
+		expect(existsSync(cliFile("vitest.base.mjs"))).toBe(true);
 	});
 });
 
@@ -2670,6 +3026,122 @@ describe("run() — dev command (no app capability: nothing to run)", () => {
 });
 
 // ===========================================================================
+// SHARE — the ngrok tunnel is ON BY DEFAULT for `dobby dev`; `--no-share` opts out.
+//
+// `dev --dry-run` wraps the portless main in `portless run --ngrok …` by default.
+// Because share is the DEFAULT, a machine WITHOUT ngrok must DEGRADE (drop `--ngrok`
+// + emit ONE note), never fail. The ngrok-presence probe is IMPURE, so it is made
+// deterministic through the documented `DOBBY_NGROK` test seam ("1"=present,
+// "0"=absent) — letting BOTH branches be asserted through the run() seam regardless
+// of whether the runner has ngrok. One integration-ish case (below) exercises the
+// REAL `ngrok version` probe via a PATH-stubbed binary. Independent expected values:
+// the `--ngrok` literal, the degrade-note wording, and `--no-share` are all spec/
+// maintainer literals, never recomputed by the code under test.
+// ===========================================================================
+
+const NGROK = "DOBBY_NGROK";
+
+describe("run() — dev command (ngrok share tunnel: on by default, --no-share opts out)", () => {
+	let originalNgrok: string | undefined;
+
+	beforeAll(() => {
+		originalNgrok = process.env[NGROK];
+	});
+
+	afterAll(() => {
+		if (originalNgrok === undefined) delete process.env[NGROK];
+		else process.env[NGROK] = originalNgrok;
+	});
+
+	beforeEach(() => {
+		delete process.env[NGROK];
+	});
+
+	it("wraps the portless main in `--ngrok` by default when ngrok is present", async () => {
+		process.env[NGROK] = "1";
+		const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
+		expect(result.exitCode).toBe(0);
+		// One line carries the portless wrapper, the `--ngrok` tunnel flag, AND the vite
+		// dev — proving `--ngrok` sits inside the portless-wrapped main, not elsewhere.
+		expect(
+			hasNoteLine(result.stdout, [/portless run/, /--ngrok/, /\bdev\b/]),
+		).toBe(true);
+		// No degrade note when ngrok is present.
+		expect(result.stdout).not.toMatch(/ngrok not installed/);
+	});
+
+	it("omits `--ngrok` under --no-share (and emits no degrade note — opt-out wins over the probe)", async () => {
+		// Force ngrok PRESENT to prove `--no-share` — not ngrok absence — is what drops it.
+		process.env[NGROK] = "1";
+		const result = await run(
+			["dev", "--dry-run", "--no-share"],
+			fixture("dev-admin"),
+		);
+		expect(result.exitCode).toBe(0);
+		// The portless main is still planned (a real plan), just without the tunnel flag.
+		expect(portlessMainLine(result.stdout)).toBe(true);
+		const portlessLine = result.stdout
+			.split("\n")
+			.find((l) => l.includes("portless run"));
+		expect(portlessLine).not.toContain("--ngrok");
+		expect(result.stdout).not.toMatch(/ngrok not installed/);
+	});
+
+	it("DEGRADES when ngrok is missing: drops `--ngrok` and emits the one degrade note (names the two fixes)", async () => {
+		process.env[NGROK] = "0";
+		const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
+		expect(result.exitCode).toBe(0);
+		// Positive anchor: a real portless main IS produced (so the negative below is not
+		// vacuous), just without `--ngrok`.
+		expect(portlessMainLine(result.stdout)).toBe(true);
+		const portlessLine = result.stdout
+			.split("\n")
+			.find((l) => l.includes("portless run"));
+		expect(portlessLine).not.toContain("--ngrok");
+		// The single degrade note names the binary install + the authtoken step.
+		expect(result.stdout).toMatch(/share: off/);
+		expect(result.stdout).toContain("ngrok.com/download");
+		expect(result.stdout).toContain("add-authtoken");
+	});
+});
+
+// The one integration-ish case: the REAL `ngrok version` probe (NOT the DOBBY_NGROK
+// seam). A stub `ngrok` whose `version` exits 0 is prepended to PATH (keeping git/curl
+// on the real PATH), so the genuine probe must find it and apply `--ngrok` by default.
+describe("run() — dev command (ngrok preflight via the real PATH probe)", () => {
+	let stubDir: string;
+	let originalPath: string | undefined;
+	let originalNgrok: string | undefined;
+
+	beforeAll(() => {
+		originalPath = process.env.PATH;
+		originalNgrok = process.env[NGROK];
+		stubDir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-ngrok-stub-")));
+		const binPath = join(stubDir, "ngrok");
+		writeFileSync(binPath, "#!/bin/sh\nexit 0\n");
+		chmodSync(binPath, 0o755);
+	});
+
+	afterAll(() => {
+		if (originalPath === undefined) delete process.env.PATH;
+		else process.env.PATH = originalPath;
+		if (originalNgrok === undefined) delete process.env[NGROK];
+		else process.env[NGROK] = originalNgrok;
+		rmSync(stubDir, { recursive: true, force: true });
+	});
+
+	it("applies `--ngrok` by default when a real `ngrok` is on PATH (probe, not the DOBBY_NGROK seam)", async () => {
+		// No DOBBY_NGROK override — exercise the genuine probe. Prepend the stub dir.
+		delete process.env[NGROK];
+		process.env.PATH = `${stubDir}:${originalPath ?? ""}`;
+		const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
+		expect(result.exitCode).toBe(0);
+		expect(hasNoteLine(result.stdout, [/portless run/, /--ngrok/])).toBe(true);
+		expect(result.stdout).not.toMatch(/ngrok not installed/);
+	}, 20000);
+});
+
+// ===========================================================================
 // TASK 9 — `dobby up` / `dobby down` (the run-lifecycle pair).
 //
 // up/down mechanize execute Step 2 + finish teardown. Both are ACTION commands
@@ -3044,6 +3516,103 @@ describe("run() — up command (no cmux: detached run + pidfile plan)", () => {
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("dobby dev");
 		expect(result.stdout).not.toContain("rename-workspace");
+	}, 20000);
+});
+
+// --- Slice U-share: share is on by default for the started `dobby dev` -----------
+// `up` starts `dobby dev` (via a cmux pane or a detached spawn); that inner dev shares
+// by DEFAULT, so `up`'s start command is plain `bunx dobby dev`. `up --no-share` passes
+// `--no-share` through to it. And because share is the default, `up` surfaces the SAME
+// degrade note as dev when ngrok is missing (share on, no tunnel). All asserted from
+// the --dry-run plan; DOBBY_NGROK makes the (impure) probe deterministic. Fixture is
+// vite-ONLY (no neon) so the plan reaches the start action. `--ngrok` itself never
+// appears in up's plan (the pane command stays plain `bunx dobby dev`) — the inner dev
+// owns the portless wrapper.
+describe("run() — up command (share tunnel: default vs --no-share vs degrade)", () => {
+	const dirs: string[] = [];
+	let repo: string;
+	let originalCmux: string | undefined;
+	let originalNgrok: string | undefined;
+
+	beforeAll(() => {
+		originalCmux = process.env[CMUX];
+		originalNgrok = process.env[NGROK];
+		repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+	});
+
+	afterAll(() => {
+		if (originalCmux === undefined) delete process.env[CMUX];
+		else process.env[CMUX] = originalCmux;
+		if (originalNgrok === undefined) delete process.env[NGROK];
+		else process.env[NGROK] = originalNgrok;
+		for (const d of dirs) rmSync(d, { recursive: true, force: true });
+		dirs.length = 0;
+	});
+
+	beforeEach(() => {
+		delete process.env[CMUX];
+		// Default the probe to PRESENT so the pane/detached-command assertions are not
+		// distracted by a degrade note; the degrade case sets DOBBY_NGROK=0 explicitly.
+		process.env[NGROK] = "1";
+	});
+
+	it("cmux: the pane command is plain `bunx dobby dev` (shares by default, no --no-share)", async () => {
+		process.env[CMUX] = "cmux-ws-share";
+		const result = await run(["up", "--dry-run"], repo);
+		expect(result.exitCode).toBe(0);
+		const sendLine = result.stdout
+			.split("\n")
+			.find((l) => l.includes("cmux send"));
+		expect(sendLine, "expected a `cmux send` line").toBeDefined();
+		expect(sendLine).toContain("bunx dobby dev");
+		expect(sendLine).not.toContain("--no-share");
+		// `--ngrok` is never in up's plan — the inner dev owns the portless wrapper.
+		expect(result.stdout).not.toContain("--ngrok");
+	}, 20000);
+
+	it("cmux + --no-share: the pane command carries `bunx dobby dev --no-share`", async () => {
+		process.env[CMUX] = "cmux-ws-share";
+		const result = await run(["up", "--dry-run", "--no-share"], repo);
+		expect(result.exitCode).toBe(0);
+		const sendLine = result.stdout
+			.split("\n")
+			.find((l) => l.includes("cmux send"));
+		expect(sendLine).toContain("bunx dobby dev --no-share");
+	}, 20000);
+
+	it("no cmux + --no-share: the detached command carries `dobby dev --no-share`", async () => {
+		const result = await run(["up", "--dry-run", "--no-share"], repo);
+		expect(result.exitCode).toBe(0);
+		const detachedLine = result.stdout
+			.split("\n")
+			.find((l) => l.includes("spawn detached"));
+		expect(detachedLine, "expected a `spawn detached` line").toBeDefined();
+		expect(detachedLine).toContain("dobby dev --no-share");
+	}, 20000);
+
+	it("no cmux, default: the detached command is plain `dobby dev` (no --no-share)", async () => {
+		const result = await run(["up", "--dry-run"], repo);
+		expect(result.exitCode).toBe(0);
+		const detachedLine = result.stdout
+			.split("\n")
+			.find((l) => l.includes("spawn detached"));
+		expect(detachedLine).toContain("bunx dobby dev");
+		expect(detachedLine).not.toContain("--no-share");
+	}, 20000);
+
+	it("DEGRADES in the plan when ngrok is missing (share on by default): the degrade note appears", async () => {
+		process.env[NGROK] = "0";
+		const result = await run(["up", "--dry-run"], repo);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toMatch(/share: off/);
+		expect(result.stdout).toContain("ngrok.com/download");
+	}, 20000);
+
+	it("emits NO degrade note under --no-share, even when ngrok is missing (opt-out wins)", async () => {
+		process.env[NGROK] = "0";
+		const result = await run(["up", "--dry-run", "--no-share"], repo);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).not.toMatch(/ngrok not installed/);
 	}, 20000);
 });
 
@@ -4474,4 +5043,607 @@ describe("run() — db:* dispatch (consumer bin resolution in the dry-run plan)"
 		expect(line).toContain("drizzle-kit generate");
 		expect(line).not.toContain(join(repo, "node_modules", ".bin"));
 	}, 20000);
+});
+
+// ===========================================================================
+// CONFIG-LESS DEFAULTS (ADR-0015) — override-by-presence + `dobby build`.
+//
+// For every tool ONLY dobby invokes (biome, knip, vitest, vite, drizzle-kit),
+// dobby ships a preset and points the tool at it via the tool's NATIVE config flag
+// — but ONLY when the consumer ships no config of its own at the workroot. A
+// consumer file (or package.json#knip) is a TOTAL override: dobby then spawns bare.
+//
+// Observed ONLY through the run(argv, cwd, stdin) seam. Each slice builds a
+// THROWAWAY git repo in a temp dir (a committed __fixtures__ dir would resolve its
+// workroot to THIS repo, defeating the per-repo presence check). Real biome + knip
+// run (as in the task-3/4 check slices); vite / vitest / drizzle-kit are NEVER
+// spawned — their config resolution surfaces purely through the dry-run PLAN text
+// (dev/build/db) and the biome/knip `configs:` note (the same configArgs seam).
+//
+// Independent sources for every expected value below:
+//   - Each resolved `--config` path is EXACTLY cliFile(<preset>): resolveAsset
+//     lands each preset at dobby's package root = the cli/ dir, so the plan must
+//     echo that KNOWN absolute path (computed the same way the preset-file slices
+//     above compute cliFile, never recomputed by the code under test).
+//   - The biome finding (LINTBAD, `==` on line 2) comes from a HAND-WRITTEN source
+//     whose offending token sits on a line WE chose. The knip "test file is an
+//     entry, not unused" behavior is the Wave-1 asset's verified contract.
+//   - The single-quote → double-quote autofix is biome's formatter applied BY HAND
+//     (ground truth established out-of-band with the bundled biome 2.5.4).
+// ===========================================================================
+
+// The preset asset paths the resolved `--config` flags must echo — resolveAsset
+// puts each at dobby's package root (the cli/ dir), so cliFile() is the independent
+// literal.
+const VITE_BASE_ASSET = cliFile("vite.base.mjs");
+const VITE_TANSTACK_ASSET = cliFile("vite.tanstack.mjs");
+const DRIZZLE_ASSET = cliFile("drizzle.base.mjs");
+
+// The FIVE consumer packages `vite.tanstack.mjs` imports unconditionally (mirrors
+// tasks.ts `VITE_TANSTACK_IMPORTS`). The require-all-imports guard picks the
+// tanstack preset ONLY when EVERY one is declared; missing any → a HARD ERROR
+// (ADR-0015 fail-loud, NO silent vite.base — base has no framework plugins, so the
+// app couldn't serve). A tanstack-start app declares ALL of these (the house stack).
+const TANSTACK_DEPS: Record<string, string> = {
+	"@tanstack/react-start": "^1.0.0",
+	"@tanstack/devtools-vite": "^0.2.0",
+	"@tailwindcss/vite": "^4.0.0",
+	nitro: "^2.0.0",
+	"@vitejs/plugin-react": "^4.0.0",
+};
+
+// The same house stack MINUS `nitro` — a config-less tanstack app that dobby BLOCKS
+// (ADR-0015 fail-loud): there is no import-safe fallback that still serves, so
+// dev/build/check hard-error naming the missing package, never a silent vite.base.
+const TANSTACK_MISSING_NITRO: Record<string, string> = {
+	"@tanstack/react-start": "^1.0.0",
+	"@tanstack/devtools-vite": "^0.2.0",
+	"@tailwindcss/vite": "^4.0.0",
+	"@vitejs/plugin-react": "^4.0.0",
+	// nitro deliberately absent.
+};
+
+// Assert a stream carries the ADR-0015 BLOCKED-tanstack error: the missing package(s)
+// named PLUS both remedies (install with `bun add -d`, or write your own
+// vite.config.ts). Used across the dev/build/check --build surfaces (identical text).
+function expectViteBlocked(text: string, ...missing: string[]): void {
+	expect(text).toContain("missing packages the default vite config imports");
+	for (const pkg of missing) {
+		expect(text).toContain(pkg);
+	}
+	expect(text).toContain("bun add -d");
+	expect(text).toContain("write your own vite.config.ts");
+	// The base preset must NEVER be silently substituted for a blocked tanstack app.
+	expect(text).not.toContain(VITE_BASE_ASSET);
+}
+
+// Build a THROWAWAY git repo for the config-less slices: `git init` (the workroot
+// resolves with no commit — and it is the REPO ITSELF, not dobby's, so the
+// presence check reads the repo's own tree), a package.json (the capabilities),
+// optional own-config FILES (whose presence flips a tool to the override path), and
+// optional fake consumer bins. Registered in `dirs` for afterAll cleanup.
+function makeCfglessRepo(
+	dirs: string[],
+	opts: {
+		pkg?: unknown;
+		files?: Record<string, string>;
+		consumerBins?: string[];
+	} = {},
+): string {
+	const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-cfgless-")));
+	dirs.push(dir);
+	gitIn(dir, "init", "-q");
+	if (opts.pkg !== undefined) {
+		writeFileSync(join(dir, "package.json"), JSON.stringify(opts.pkg, null, 2));
+	}
+	for (const [rel, content] of Object.entries(opts.files ?? {})) {
+		const full = join(dir, rel);
+		mkdirSync(dirname(full), { recursive: true });
+		writeFileSync(full, content);
+	}
+	for (const name of opts.consumerBins ?? []) {
+		const binDir = join(dir, "node_modules", ".bin");
+		mkdirSync(binDir, { recursive: true });
+		const binPath = join(binDir, name);
+		writeFileSync(binPath, "#!/bin/sh\nexit 0\n");
+		chmodSync(binPath, 0o755);
+	}
+	return dir;
+}
+
+describe("config-less defaults (ADR-0015) + dobby build", () => {
+	const dirs: string[] = [];
+
+	afterAll(() => {
+		for (const d of dirs) {
+			rmSync(d, { recursive: true, force: true });
+		}
+		dirs.length = 0;
+	});
+
+	// --- dev --dry-run: --config-when-absent on the vite main -------------------
+	describe("dev --dry-run carries --config only when the consumer has none", () => {
+		it("appends --config <vite.base.mjs> to the vite dev main when no vite.config is present", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "cfg-vite", devDependencies: { vite: "^5.0.0" } },
+			});
+			const result = await run(["dev", "--dry-run"], repo);
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).not.toContain("unknown command");
+			const line = devMainLine(result.stdout);
+			expect(line, "expected a portless-wrapped vite dev line").toBeDefined();
+			expect(line).toContain("--config");
+			expect(line).toContain(VITE_BASE_ASSET);
+		}, 20000);
+
+		it("picks the tanstack vite preset for a tanstack app declaring ALL five imported packages", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "cfg-tanstack",
+					dependencies: { ...TANSTACK_DEPS },
+					devDependencies: { vite: "^5.0.0" },
+				},
+			});
+			const result = await run(["dev", "--dry-run"], repo);
+			expect(result.exitCode).toBe(0);
+			const line = devMainLine(result.stdout);
+			expect(line).toContain(VITE_TANSTACK_ASSET);
+			// The base preset must NOT leak in — every imported package is present.
+			expect(line).not.toContain(VITE_BASE_ASSET);
+		}, 20000);
+
+		// The fail-loud stance (ADR-0015, round 3): the tanstack-start capability fires
+		// on @tanstack/react-start ALONE, but the preset imports five packages
+		// unconditionally. Missing ANY one (here nitro, an optional peer) leaves dobby
+		// with NO import-safe fallback that still serves — vite.base has no framework
+		// plugins — so a config-less tanstack app is a HARD ERROR naming the missing
+		// package + both remedies, NEVER a silent vite.base fallback.
+		it("HARD-ERRORS (never falls back to vite.base) when a config-less tanstack app is MISSING an imported package (no nitro)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "cfg-tanstack-partial",
+					dependencies: { ...TANSTACK_MISSING_NITRO },
+					devDependencies: { vite: "^5.0.0" },
+				},
+			});
+			const result = await run(["dev", "--dry-run"], repo);
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).not.toContain("unknown command");
+			expectViteBlocked(combined(result), "nitro");
+		}, 20000);
+
+		it("omits --config entirely when the consumer ships a vite.config.ts (total override)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "cfg-vite-own", devDependencies: { vite: "^5.0.0" } },
+				files: { "vite.config.ts": "export default {};\n" },
+			});
+			const result = await run(["dev", "--dry-run"], repo);
+			expect(result.exitCode).toBe(0);
+			const line = devMainLine(result.stdout);
+			expect(line, "expected a vite dev line").toBeDefined();
+			expect(line).not.toContain("--config");
+		}, 20000);
+
+		// A tanstack app MISSING an import but shipping its OWN vite.config is NOT
+		// blocked: a present config is a TOTAL override that supersedes both the default
+		// AND the block (the consumer supplies the plugins itself). No error, no default.
+		it("does NOT block a tanstack app missing an import when it ships its own vite.config.ts", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "cfg-tanstack-own",
+					dependencies: { ...TANSTACK_MISSING_NITRO },
+					devDependencies: { vite: "^5.0.0" },
+				},
+				files: { "vite.config.ts": "export default {};\n" },
+			});
+			const result = await run(["dev", "--dry-run"], repo);
+			expect(result.exitCode).toBe(0);
+			expect(combined(result)).not.toContain(
+				"missing packages the default vite config imports",
+			);
+			const line = devMainLine(result.stdout);
+			expect(line, "expected a vite dev line").toBeDefined();
+			expect(line).not.toContain("--config");
+		}, 20000);
+
+		// vite@8's DEFAULT_CONFIG_FILES includes the `.cts` form, so a `vite.config.cts`
+		// is a LEGAL consumer override that vite's bare discovery finds — dobby must NOT
+		// silently supply its default over it (the override-list-mirrors-native-discovery
+		// contract; `.cts` was the previously-missing form).
+		it("omits --config when the consumer ships a vite.config.cts (legal override form)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "cfg-vite-cts", devDependencies: { vite: "^5.0.0" } },
+				files: { "vite.config.cts": "module.exports = {};\n" },
+			});
+			const result = await run(["dev", "--dry-run"], repo);
+			expect(result.exitCode).toBe(0);
+			const line = devMainLine(result.stdout);
+			expect(line, "expected a vite dev line").toBeDefined();
+			expect(line).not.toContain("--config");
+		}, 20000);
+	});
+
+	// --- dobby build (new command) ----------------------------------------------
+	describe("dobby build (inferred vite build, config-when-absent)", () => {
+		it("renders `vite build --config <vite.base.mjs>` + cwd under --dry-run when no vite.config is present", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "build-vite", devDependencies: { vite: "^5.0.0" } },
+			});
+			const result = await run(["build", "--dry-run"], repo);
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).not.toContain("unknown command");
+			expect(result.stdout).toMatch(/build \(dry-run\)/);
+			expect(result.stdout).toContain("build");
+			expect(result.stdout).toContain(VITE_BASE_ASSET);
+			expect(result.stdout).toContain(`cwd: ${repo}`);
+		}, 20000);
+
+		it("picks the tanstack vite preset for a tanstack app declaring ALL five imported packages", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "build-tanstack",
+					dependencies: { ...TANSTACK_DEPS },
+					devDependencies: { vite: "^5.0.0" },
+				},
+			});
+			const result = await run(["build", "--dry-run"], repo);
+			expect(result.stdout).toContain(VITE_TANSTACK_ASSET);
+			expect(result.stdout).not.toContain(VITE_BASE_ASSET);
+		}, 20000);
+
+		// The fail-loud stance on the build surface (shares `viteConfigSpec` with dev +
+		// check --build): a config-less tanstack app missing an imported package has no
+		// import-safe fallback that serves, so build HARD-ERRORS (a blocked plan is an
+		// error, not a render) naming the missing package + both remedies — never base.
+		it("HARD-ERRORS (never falls back to vite.base) when a config-less tanstack app is MISSING an imported package (no nitro)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "build-tanstack-partial",
+					dependencies: { ...TANSTACK_MISSING_NITRO },
+					devDependencies: { vite: "^5.0.0" },
+				},
+			});
+			const result = await run(["build", "--dry-run"], repo);
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).not.toContain("unknown command");
+			expectViteBlocked(combined(result), "nitro");
+		}, 20000);
+
+		it("omits --config when the consumer ships a vite.config.ts (total override)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "build-vite-own", devDependencies: { vite: "^5.0.0" } },
+				files: { "vite.config.ts": "export default {};\n" },
+			});
+			const result = await run(["build", "--dry-run"], repo);
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).not.toContain("--config");
+		}, 20000);
+
+		// The `.cts` form is in vite@8's DEFAULT_CONFIG_FILES — build must treat it as a
+		// consumer override too (the build/dev/check surfaces share `viteConfigSpec`).
+		it("omits --config when the consumer ships a vite.config.cts (legal override form)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "build-vite-cts", devDependencies: { vite: "^5.0.0" } },
+				files: { "vite.config.cts": "module.exports = {};\n" },
+			});
+			const result = await run(["build", "--dry-run"], repo);
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).not.toContain("--config");
+		}, 20000);
+
+		it("exits 1 with 'nothing to build' for a project without the vite capability", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "build-noapp",
+					dependencies: { "drizzle-orm": "^0.30.0" },
+				},
+			});
+			const result = await run(["build", "--dry-run"], repo);
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).not.toContain("unknown command");
+			expect(combined(result)).toMatch(/nothing to build/i);
+		}, 20000);
+
+		it("a real build with no consumer vite installed fails at resolution (not the unknown-command path)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "build-nobin", devDependencies: { vite: "^5.0.0" } },
+			});
+			const result = await run(["build"], repo);
+			expect(result.exitCode).not.toBe(0);
+			expect(result.stderr).not.toContain("unknown command");
+			expect(result.stderr).toMatch(/vite not found|dobby up/);
+		}, 20000);
+	});
+
+	// --- check --build surface: the SAME fail-loud stance ------------------------
+	// `check --build` selects ONLY the build step (no biome/tsc/knip), so a blocked
+	// tanstack app hard-errors CHEAPLY — the step fails with the blocked note (exit 1),
+	// NO vite spawn. Same `viteConfigSpec` the dev/build surfaces resolve.
+	describe("check --build enforces the blocked-tanstack fail-loud", () => {
+		it("fails the build step (exit 1) with the missing package + remedies for a config-less tanstack app missing an import", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "check-tanstack-partial",
+					dependencies: { ...TANSTACK_MISSING_NITRO },
+					devDependencies: { vite: "^5.0.0" },
+				},
+			});
+			const result = await run(["check", "--build"], repo);
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).not.toContain("unknown command");
+			expectViteBlocked(combined(result), "nitro");
+		}, 20000);
+	});
+
+	// --- db:* --dry-run: drizzle-kit --config= when absent ----------------------
+	describe("db:* --dry-run carries --config= only when the consumer has none", () => {
+		it("appends --config=<drizzle.base.mjs> when no drizzle.config is present", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "db-cfg", devDependencies: { "drizzle-kit": "^0.20.0" } },
+			});
+			const result = await run(["db:generate", "--dry-run"], repo);
+			expect(result.exitCode).toBe(0);
+			const line = dbCommandLine(result.stdout, "drizzle-kit");
+			expect(line, "expected a drizzle-kit command line").toBeDefined();
+			expect(line).toContain(`--config=${DRIZZLE_ASSET}`);
+		}, 20000);
+
+		it("omits --config= when the consumer ships a drizzle.config.ts (total override)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "db-cfg-own",
+					devDependencies: { "drizzle-kit": "^0.20.0" },
+				},
+				files: { "drizzle.config.ts": "export default {};\n" },
+			});
+			const result = await run(["db:generate", "--dry-run"], repo);
+			expect(result.exitCode).toBe(0);
+			const line = dbCommandLine(result.stdout, "drizzle-kit");
+			expect(line).not.toContain("--config");
+		}, 20000);
+
+		// drizzle-kit's bare discovery tries drizzle.config.ts → .js → .json (verified
+		// against drizzle-kit 0.31.10 `bin.cjs`), so a `drizzle.config.json` is a LEGAL
+		// consumer override that must NOT be silently defaulted over — `.json` was the
+		// previously-missing form.
+		it("omits --config= when the consumer ships a drizzle.config.json (legal override form)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "db-cfg-json",
+					devDependencies: { "drizzle-kit": "^0.20.0" },
+				},
+				files: { "drizzle.config.json": '{ "dialect": "postgresql" }\n' },
+			});
+			const result = await run(["db:generate", "--dry-run"], repo);
+			expect(result.exitCode).toBe(0);
+			const line = dbCommandLine(result.stdout, "drizzle-kit");
+			expect(line).not.toContain("--config");
+		}, 20000);
+	});
+
+	// --- usage shows `build` for vite repos, hides it otherwise -----------------
+	describe("usage text advertises build only for a vite repo", () => {
+		it("lists `build` in the usage Commands block for a vite repo", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "usage-vite", devDependencies: { vite: "^5.0.0" } },
+			});
+			const result = await run([], repo);
+			const advertises = result.stdout
+				.split("\n")
+				.some((line) => /^\s+build\b/.test(line));
+			expect(advertises).toBe(true);
+		});
+
+		it("hides `build` for a repo without the vite capability", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "usage-novite",
+					dependencies: { "drizzle-orm": "^0.30.0" },
+				},
+			});
+			const result = await run([], repo);
+			const advertises = result.stdout
+				.split("\n")
+				.some((line) => /^\s+build\b/.test(line));
+			expect(advertises).toBe(false);
+		});
+	});
+
+	// --- check biome default: real biome via the shipped preset -----------------
+	describe("check biome default (real biome via the shipped preset)", () => {
+		it("reports real biome findings via the default AND emits the configs note when no biome.jsonc is present", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "biome-default" },
+				files: { "src/lintbad.ts": LINTBAD },
+			});
+			const result = await run(["check", "--lint"], repo);
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).not.toContain("unknown command");
+			// The default preset (ultracite core) fired noDoubleEquals on the `==` line.
+			expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
+			// ADR-0015 observability: the configs note names the active default.
+			expect(hasNoteLine(combined(result), [/configs:/, /biome=default/])).toBe(
+				true,
+			);
+		}, 30000);
+
+		it("labels the default `default(react)` when the react capability is present", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "biome-react", dependencies: { react: "^19.0.0" } },
+				files: { "src/lintbad.ts": LINTBAD },
+			});
+			const result = await run(["check", "--lint"], repo);
+			expect(result.exitCode).toBe(1);
+			expect(combined(result)).toContain("biome=default(react)");
+		}, 30000);
+
+		it("omits the configs note when the consumer ships its OWN biome.jsonc (total override)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "biome-own" },
+				files: {
+					"biome.jsonc": JSON.stringify({
+						formatter: { enabled: false },
+						assist: { enabled: false },
+						linter: {
+							enabled: true,
+							rules: {
+								recommended: false,
+								suspicious: { noDoubleEquals: "error" },
+							},
+						},
+					}),
+					"src/lintbad.ts": LINTBAD,
+				},
+			});
+			const result = await run(["check", "--lint"], repo);
+			// biome still runs (the consumer config) and reports the finding…
+			expect(result.exitCode).toBe(1);
+			expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
+			// …but NO default was used, so the configs note is omitted entirely.
+			expect(combined(result)).not.toContain("configs:");
+		}, 30000);
+	});
+
+	// --- check --hook autofix via the default (real biome) ----------------------
+	describe("check --hook autofixes via the default when no biome.jsonc is present", () => {
+		it("applies biome's safe fixes through the shipped preset and exits 0", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "hook-default" },
+				files: {
+					// dobby.config.json is the hook's project marker (config.ts reads it).
+					"dobby.config.json": JSON.stringify({ files: [] }),
+					// Single quotes: a formatter-only fix the default preset applies safely.
+					"src/messy.ts": "export const x = 'hi';\n",
+				},
+			});
+			const messy = join(repo, "src", "messy.ts");
+			const payload = JSON.stringify({ tool_input: { file_path: messy } });
+			const result = await run(["check", "--hook"], repo, payload);
+			// Everything was auto-fixed → the guard's silent exit 0 (nothing surfaced).
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toBe("");
+			// The default preset formatted the file in place: single → double quotes.
+			expect(readFileSync(messy, "utf8")).toContain('"hi"');
+		}, 30000);
+	});
+
+	// --- knip default: a test file is an entry, not an unused file ---------------
+	// Mirrors the Wave-1 asset verification: knip's vitest plugin can't see test
+	// globs through a consumer .mjs re-export, so dobby's default re-states the test
+	// glob as an entry. With the default, a `*.test.ts` is NOT flagged unused.
+	describe("check knip default (test file is an entry, not unused)", () => {
+		it("reports NO unused-file finding for a test file when no knip config is present, and names the default", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "knip-default" },
+				files: {
+					"src/index.ts": "export const main = () => 42;\n",
+					"src/index.test.ts":
+						'import { main } from "./index.ts";\nif (main() !== 42) {\n  throw new Error("bad");\n}\n',
+				},
+			});
+			const result = await run(["check", "--unused"], repo);
+			// The default made the test file an entry → knip clean → the gate passes.
+			expect(result.exitCode).toBe(0);
+			expect(combined(result)).not.toMatch(/unused file/i);
+			expect(combined(result)).not.toMatch(/index\.test\.ts/);
+			// The configs note records that knip ran on the default.
+			expect(hasNoteLine(combined(result), [/configs:/, /knip=default/])).toBe(
+				true,
+			);
+		}, 30000);
+
+		// knip@6's KNIP_CONFIG_LOCATIONS includes `knip.config.ts` (verified against
+		// knip 6.26.0 `dist/constants.js`), so a consumer `knip.config.ts` is a LEGAL
+		// override that knip's bare discovery finds — dobby must NOT append its default
+		// `--config` over it. Cheapest observable surface (mirroring the biome override
+		// slice): the `configs:` note, driven by the override-detection presence check
+		// independent of knip's own run, carries no `knip=default` — and is omitted
+		// entirely since knip is the only default-eligible tool on `--unused`.
+		it("does NOT supply the knip default when the consumer ships a knip.config.ts (legal override form)", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: { name: "knip-own-config" },
+				files: {
+					"knip.config.ts": "export default {};\n",
+					"src/index.ts": "export const main = () => 42;\n",
+				},
+			});
+			const result = await run(["check", "--unused"], repo);
+			expect(result.stderr).not.toContain("unknown command");
+			// The consumer config is a TOTAL override → dobby stayed bare → no default.
+			expect(combined(result)).not.toContain("knip=default");
+			expect(combined(result)).not.toContain("configs:");
+		}, 30000);
+	});
+
+	// --- vitest vite-fallback stance: a vite.config test block is NOT a vitest override
+	// Vitest natively falls back to a `test` block inside vite.config.* when no
+	// dedicated vitest.config.* exists. dobby DELIBERATELY does not honor that fallback
+	// as the consumer override (ADR-0015; house convention: test wiring lives in
+	// vitest.config.*). So with ONLY a vite.config.ts (carrying a test block) present,
+	// dobby STILL supplies its vitest default — observable via the configs note's
+	// `vitest=default`, which `recordDefault` emits from the presence check regardless
+	// of whether the vitest bin resolves (here consumer vitest is DECLARED but not
+	// installed, so the step skips WITHOUT spawning vitest — yet the default was planned).
+	describe("check vitest default (a vite.config test block is not a vitest override)", () => {
+		it("still plans the vitest default when only a vite.config.ts carrying a test block is present", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "vitest-vite-fallback",
+					devDependencies: { vitest: "^2.0.0" },
+				},
+				files: {
+					"vite.config.ts":
+						"export default { test: { environment: 'node' } };\n",
+				},
+			});
+			const result = await run(["check", "--test"], repo);
+			expect(result.stderr).not.toContain("unknown command");
+			// No dedicated vitest.config.* → the vite.config test block is NOT treated as
+			// an override → dobby's vitest default is still planned and named.
+			expect(combined(result)).toContain("vitest=default");
+		}, 30000);
+	});
+
+	// --- vitest react variant require-all-imports guard (ADR-0015) ---------------
+	// `vitest.react.mjs` imports @vitejs/plugin-react + vite unconditionally, so the
+	// `react` CAPABILITY alone (fires on `react`) must NOT pick it — the react
+	// variant is import-safe ONLY when BOTH imported packages are declared, else the
+	// base (imports only `vitest/config`). Asserted through the configs note the
+	// presence check records regardless of whether the vitest bin resolves (declared
+	// but not installed here, so no vitest spawns — the cheapest observable surface).
+	describe("check vitest default (react variant requires @vitejs/plugin-react + vite)", () => {
+		it("falls back to vitest.base (label `default`) for a react app WITHOUT @vitejs/plugin-react", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "vitest-react-partial",
+					dependencies: { react: "^19.0.0" },
+					devDependencies: { vitest: "^2.0.0" },
+				},
+			});
+			const result = await run(["check", "--test"], repo);
+			expect(result.stderr).not.toContain("unknown command");
+			// The react capability fired, but @vitejs/plugin-react (and vite) are absent
+			// → the base default, NOT the react one.
+			expect(combined(result)).toContain("vitest=default");
+			expect(combined(result)).not.toContain("vitest=default(react)");
+		}, 30000);
+
+		it("picks vitest.react (label `default(react)`) for a react app WITH @vitejs/plugin-react + vite", async () => {
+			const repo = makeCfglessRepo(dirs, {
+				pkg: {
+					name: "vitest-react-full",
+					dependencies: { react: "^19.0.0" },
+					devDependencies: {
+						vitest: "^2.0.0",
+						vite: "^5.0.0",
+						"@vitejs/plugin-react": "^4.0.0",
+					},
+				},
+			});
+			const result = await run(["check", "--test"], repo);
+			expect(result.stderr).not.toContain("unknown command");
+			// Every package vitest.react.mjs imports is declared → the react variant.
+			expect(combined(result)).toContain("vitest=default(react)");
+		}, 30000);
+	});
 });

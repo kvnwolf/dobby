@@ -2,7 +2,7 @@
 
 A **zero-config toolchain + environment-aware run lifecycle** for Bun + Vite/TanStack apps — the mechanical layer of the [dobby](https://github.com/kvnwolf/dobby) kit.
 
-`@kvnwolf/dobby` is a single dev dependency that gives a project a strict, opinionated toolchain (biome, tsc, knip) and a set of environment-aware lifecycle commands (`dev`, `up`, `down`, `db:*`) — all inferred from what the repo actually declares. You install one package, extend two thin config files, and get a consistent quality gate and run lifecycle with no per-project wiring.
+`@kvnwolf/dobby` is a single dev dependency that gives a project a strict, opinionated toolchain (biome, tsc, knip) and a set of environment-aware lifecycle commands (`dev`, `build`, `up`, `down`, `db:*`) — all inferred from what the repo actually declares. You install one package and get a consistent quality gate and run lifecycle with **no per-project wiring** — dobby ships every tool config as a default, so a delta-less repo carries only `package.json`, `tsconfig.json`, and (optionally) `dobby.config.json`.
 
 The kit's skills (agents, hooks, workflows) call this CLI; you can also run it directly.
 
@@ -14,9 +14,21 @@ bun add -d @kvnwolf/dobby
 
 That is the whole install — a single devDependency. The bundled toolchain (biome, tsc via `typescript`, knip, taze, portless, ultracite) ships transitively, so consumers install nothing else.
 
-## Thin config
+## Config-less by default (override by presence)
 
-Two small config files `extends` the central presets — you get centralized rules plus native editor support (your editor reads the same tsconfig/biome your gate does):
+For every tool **only dobby invokes** — biome, knip, vitest, vite, drizzle-kit — dobby passes its shipped preset through the tool's native config flag **when you have no config file of your own**. You never pass config paths; dobby resolves them. A config file, when present, is a **total override** (never merged): the tool's own discovery finds it and dobby stays out of the way. So you write a tool config **only for deltas** — creating the file instantly overrides the default, deleting it restores it.
+
+| Tool | Your override file (any of) | dobby's default when absent |
+| --- | --- | --- |
+| biome | `biome.json` / `biome.jsonc` | `@kvnwolf/dobby/biome/react` (react apps) or `/biome/core` |
+| knip | `knip.json` / `knip.jsonc` / `knip.ts` / `package.json#knip` | `@kvnwolf/dobby`'s `knip.base.jsonc` |
+| vitest | `vitest.config.{ts,mts,cts,js,mjs,cjs}` | `@kvnwolf/dobby/vitest/react` (react apps) or `/vitest` |
+| vite | `vite.config.{ts,mts,js,mjs}` | `@kvnwolf/dobby/vite/tanstack-start` (tanstack apps) or `/vite` |
+| drizzle-kit | `drizzle.config.{ts,mts,js,mjs}` | `@kvnwolf/dobby/drizzle` |
+
+`dobby check` prints a `configs:` note naming which defaults were active (`configs: biome=default(react) · knip=default`), and the `dev` / `build` / `db:*` `--dry-run` plans render the resolved `--config <path>` — so override-by-presence is always visible, never silent.
+
+**The one file that always stays is `tsconfig.json`** — not for editors, but because other tools read it directly (vite's `resolve.tsconfigPaths`, `tsc`) and it carries genuinely per-project `paths`. Extend the central base:
 
 `tsconfig.json`
 
@@ -24,13 +36,9 @@ Two small config files `extends` the central presets — you get centralized rul
 { "extends": "@kvnwolf/dobby/tsconfig" }
 ```
 
-`biome.jsonc`
+## Presets (for when you DO have deltas)
 
-```jsonc
-{ "extends": ["@kvnwolf/dobby/biome/react"] }
-```
-
-The exported presets:
+When you need deltas, `extends` (tsconfig/biome) or `mergeConfig`/re-export (vite/vitest/drizzle) the central presets:
 
 | Import | What it is |
 | --- | --- |
@@ -49,6 +57,12 @@ The tsconfig and Biome presets are `extends` targets; the Vite/Vitest/drizzle pr
 
 ```json
 { "extends": "@kvnwolf/dobby/tsconfig/vite", "compilerOptions": { "paths": { "@/*": ["./src/*"] } }, "include": ["src"] }
+```
+
+**`biome.jsonc`** — only when you need lint/format deltas; extend the react (or core) preset:
+
+```jsonc
+{ "extends": ["@kvnwolf/dobby/biome/react"] }
 ```
 
 **`vite.config.ts`** — merge your app plugins onto the dobby base:
@@ -92,7 +106,7 @@ export { default } from "@kvnwolf/dobby/drizzle";
 
 ### `dobby env`
 
-Print a snapshot of the working environment — worktree root, branch, cmux workspace, detected capabilities, config presence, dev URL, and kit pane refs. Every fact is resolved locally (no network) and `env` never fails.
+Print a snapshot of the working environment — worktree root, branch, cmux workspace, detected capabilities, config presence, dev URL, **share URL** (the public ngrok tunnel, when the app is shared — see [`dobby dev`](#dobby-dev)), and kit pane refs. Every fact is resolved locally (no network — `shareUrl` is read from portless's local `routes.json`) and `env` never fails.
 
 ```sh
 dobby env             # key: value text
@@ -121,7 +135,7 @@ dobby check --hook             # edit-time PostToolUse mode (payload on stdin)
 
 `--hook` reads a PostToolUse payload from stdin, applies biome's safe auto-fixes to the edited file in place, and surfaces only unfixable findings (exit 2, findings on stderr). This is what the plugin's edit hook invokes.
 
-The **test step runs your vitest under `node`** whenever a usable `node` is on the machine (falling back to the current runtime otherwise), so a `bunx dobby check` doesn't run your suite under bun — bun's module runner can mis-resolve some dependencies' export maps (e.g. `zod`), which the [`@kvnwolf/dobby/vitest`](#thin-config) preset also guards against by inlining `zod`. Only the vitest spawn is affected; a failure under the fallback runtime is annotated with the runtime it used.
+The **test step runs your vitest under `node`** whenever a usable `node` is on the machine (falling back to the current runtime otherwise), so a `bunx dobby check` doesn't run your suite under bun — bun's module runner can mis-resolve some dependencies' export maps (e.g. `zod`), which the [`@kvnwolf/dobby/vitest`](#presets-for-when-you-do-have-deltas) preset also guards against by inlining `zod`. Only the vitest spawn is affected; a failure under the fallback runtime is annotated with the runtime it used.
 
 ### `dobby dev`
 
@@ -129,17 +143,51 @@ Run the app: the `vite dev` server wrapped in `portless run`, plus concurrent se
 
 ```sh
 dobby dev
+dobby dev --no-share      # run local-only (no public tunnel)
 dobby dev --dry-run       # print the resolved plan without spawning
 ```
+
+#### Share (public URL) — on by default
+
+`dobby dev` (and the `dobby dev` that `dobby up` starts) opens a **public ngrok tunnel by default** — `portless run --ngrok …` — so your running app is reachable from your phone or a teammate for a quick look. `dobby env` reports the tunnel as `shareUrl`. Two things are worth knowing:
+
+- **Two one-time requirements.** The tunnel needs the [`ngrok` binary on your PATH](https://ngrok.com/download) and an ngrok authtoken configured once — `ngrok config add-authtoken <token>`. If the **binary is missing**, dobby doesn't fail — it **degrades**: it drops the tunnel, runs your app local-only, and prints one note (`share: off (ngrok not installed — …)`). If the binary is present but **not authenticated**, ngrok/portless surfaces its own clear error in the run log / pane (dobby doesn't pre-check auth).
+- **The URL rotates every session.** Each `dobby dev` gets a **new random** ngrok URL, and the tunnel dies when the run stops — there's no stable domain. Because it rotates, dobby **never writes the public URL into `.env.local`** (a stale public URL would poison auth/CORS the next time you run un-shared). Instead, portless injects `PORTLESS_NGROK_URL` into your app's process env when the tunnel is up — **read it as an optional env var** (present only when shared) if your app needs to know its own public origin. The local `PORTLESS_URL` is never rewritten.
+
+Pass `--no-share` to skip the tunnel entirely (no `--ngrok`, no note). On `dobby up`, `--no-share` is passed through to the `dobby dev` it starts.
+
+```sh
+dobby dev --no-share      # local-only, no tunnel
+```
+
+### `dobby build`
+
+Build the app: the consumer-local `vite build` (plus the config-less default `--config` when you have no `vite.config`). Listed only for a repo with the vite capability; a repo with no app exits 1 with `nothing to build`.
+
+```sh
+dobby build
+dobby build --dry-run     # print the resolved plan without spawning
+```
+
+**Point your builder at dobby.** `dobby build` is the inferred build command, so external builders build **through** dobby — set your Vercel **Build Command** to:
+
+```
+bunx dobby build
+```
+
+Building through dobby (rather than a raw framework CLI) means the config-less default and any future build-time niceties apply centrally, with no per-project buildCommand edits.
 
 ### `dobby up` / `dobby down`
 
 **`dobby up` is the single lifecycle entry point — it prepares and runs the workspace, idempotently.** It runs a **setup phase** first — `bun install`, then (in a linked git worktree) re-materializing files listed in `.worktreeinclude` from the main checkout, then any `setup[]` extras (fail-fast) — and only once that succeeds does it **run** the app: provisioning an isolated Neon branch when the repo has the neon capability, starting the run (cmux panes or a detached background run), and waiting for liveness. Under cmux, `up` also renames the **cmux workspace** to the goal slug (the workspace title becomes the goal identity, distinct from the `dobby-`prefixed pane names) so you can tell at a glance which workspace belongs to which goal — this happens whenever cmux is present, even for a repo with no app to run. Because the run is liveness-first, re-running `up` on an already-live workspace is a no-op — idempotent. A repo with no app to run (no vite capability) still runs the full setup phase, then reports `no app to run` and exits 0.
 
+The app `up` starts **shares by default** (the same public ngrok tunnel as [`dobby dev`](#share-public-url--on-by-default)); pass `dobby up --no-share` to start it local-only. If the `ngrok` binary is missing, `up` degrades exactly like `dev` (local-only + the one note). If `up` finds the app **already live but with no tunnel** (you'd started it earlier with `--no-share`, say), it does **not** restart anything — it tells you to `dobby down && dobby up` to restart with the default share.
+
 `dobby down` is the counterpart teardown: it closes the panes, kills the run, deletes the Neon branch, and runs `teardown[]` extras. Both are listed only for a repo with the vite capability.
 
 ```sh
-dobby up                  # prepare (setup phase) + run the workspace
+dobby up                  # prepare (setup phase) + run the workspace (shares by default)
+dobby up --no-share       # ...but start the app local-only
 dobby up --dry-run        # print the FULL ordered plan (setup phase + run phase)
 dobby down
 dobby down --dry-run
@@ -200,7 +248,7 @@ The command surface is inferred from what the repo declares (`dependencies ∪ d
 
 | Capability | Signal | Enables |
 | --- | --- | --- |
-| `vite` | `vite` | `dobby dev` / `up` / `down`; the `check` build step |
+| `vite` | `vite` | `dobby dev` / `build` / `up` / `down`; the `check` build step |
 | `vitest` | `vitest` | the `check` test step |
 | `drizzle` | `drizzle-orm` / `drizzle-kit` | `db:*` drizzle-kit tasks |
 | `neon` | `@neondatabase/serverless` | `up`/`down` Neon branch-per-worktree isolation |

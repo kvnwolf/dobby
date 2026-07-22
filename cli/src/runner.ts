@@ -3,6 +3,7 @@ import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ConfigDefaultSpec, ViteConfigSelection } from "./tasks.ts";
 
 // The single child-process utility every dobby command spawns through. It exists
 // to enforce ONE invariant: every child's working directory is pinned to the
@@ -101,6 +102,132 @@ type BinScope = "bundled" | "consumer";
 // `node_modules/@kvnwolf/dobby/...`).
 const runnerDir = dirname(fileURLToPath(import.meta.url));
 const requireFromRunner = createRequire(import.meta.url);
+
+// This module's package ROOT — the directory shipping the preset ASSETS (biome/,
+// knip.base.jsonc, the .mjs configs). runner.ts always lives at
+// <pkgRoot>/src/runner.ts (the `files` allowlist ships `src` at the package root),
+// so the package root is its grandparent — derived from import.meta.url so it
+// points at dobby's OWN install location (this repo's cli/, or a consumer's
+// node_modules/@kvnwolf/dobby/).
+const packageRoot = dirname(runnerDir);
+
+/**
+ * Resolve a SHIPPED preset asset (e.g. "biome/core.jsonc", "knip.base.jsonc",
+ * "vitest.base.mjs") to an absolute path inside dobby's OWN package tree — the
+ * ASSET counterpart to resolveBin's bundled scope (both walk from this module's
+ * own location, never the consumer's cwd). Used by the config-less defaults
+ * (ADR-0015): when a consumer ships no config of its own for a tool dobby
+ * invokes, dobby points the tool at this asset via its native config flag.
+ *
+ * @public — consumed by check.ts / lifecycle.ts (via configArgs) to supply the
+ * default tool configs.
+ */
+export function resolveAsset(relPath: string): string {
+	return join(packageRoot, relPath);
+}
+
+/**
+ * The override-by-presence seam (ADR-0015). Given the workroot and a tool's pure
+ * `ConfigDefaultSpec` (from tasks.ts), decide whether the consumer ships its OWN
+ * config for that tool and return the config args to APPEND to the tool spawn:
+ *   - PRESENT (a matching file at the workroot, or the package.json key) → NO args
+ *     (dobby spawns bare; the tool's native discovery finds the consumer file — a
+ *     TOTAL override, never merged) and a null `usedDefault`.
+ *   - ABSENT (or no workroot) → the tool's native config flag pointing at dobby's
+ *     SHIPPED preset (`resolveAsset`, an absolute path in dobby's own tree), plus
+ *     the note label (`usedDefault`) so `check` can report which default kicked in.
+ * Biome additionally gets `--vcs-root=<workroot>` (see `ConfigDefaultSpec.vcsRoot`).
+ * A null root cannot happen for check (requireWorkroot) but can for a dev dry-run
+ * outside a git repo — there the default still applies (nothing to override).
+ *
+ * @public — the single config-args resolver every config-less tool spawn routes
+ * through (check biome/knip/vite/vitest, dev/build vite, db drizzle-kit).
+ */
+export function configArgs(
+	root: string | null,
+	spec: ConfigDefaultSpec,
+): { args: string[]; usedDefault: string | null } {
+	if (root !== null && consumerOwnsConfig(root, spec)) {
+		return { args: [], usedDefault: null };
+	}
+	const assetPath = resolveAsset(spec.asset);
+	const args = spec.equals
+		? [`${spec.flag}=${assetPath}`]
+		: [spec.flag, assetPath];
+	if (spec.vcsRoot && root !== null) {
+		args.push(`--vcs-root=${root}`);
+	}
+	return { args, usedDefault: spec.label };
+}
+
+// The result of resolving the vite config-less default against the workroot:
+//   - `{ blocked: false, args, usedDefault }` — the config args to append (bare when
+//     the consumer ships its own vite config, else the default `--config <preset>`),
+//     identical to `configArgs`.
+//   - `{ blocked: true, missing }` — a config-LESS tanstack app missing packages the
+//     tanstack default imports; the caller turns this into a HARD ERROR (never a
+//     silent base fallback). `missing` names the packages for the message.
+export type ViteConfigResolution =
+	| { blocked: false; args: string[]; usedDefault: string | null }
+	| { blocked: true; missing: string[] };
+
+/**
+ * Resolve the pure `ViteConfigSelection` (from tasks.ts) against the workroot — the
+ * IMPURE seam that combines the presence check with the blocked-default enforcement:
+ *   - a "default" selection resolves exactly like `configArgs` (bare when the consumer
+ *     ships its own vite config, else the default preset via `--config`).
+ *   - a "blocked" selection (a config-less tanstack app missing an imported package) is
+ *     BLOCKED — UNLESS the consumer ships its own vite config, a TOTAL override that
+ *     supersedes both the default AND the block (the consumer supplies the plugins).
+ * So only a config-LESS tanstack app is ever blocked; a present config is never blocked.
+ *
+ * @public — the vite callers (check build step, dev planDev, build runBuild) route
+ * through this; on `blocked` they emit the hard error (`viteBlockedMessage`).
+ */
+export function resolveViteConfig(
+	root: string | null,
+	selection: ViteConfigSelection,
+): ViteConfigResolution {
+	if (selection.kind === "default") {
+		return { blocked: false, ...configArgs(root, selection.spec) };
+	}
+	// A present consumer vite config wins over the block (the same override-by-presence
+	// rule `configArgs` applies to a default): only a config-LESS app is blocked.
+	if (root !== null && anyConfigFilePresent(root, selection.ownFiles)) {
+		return { blocked: false, args: [], usedDefault: null };
+	}
+	return { blocked: true, missing: selection.missing };
+}
+
+// Whether the consumer ships its OWN config for a tool at `root`: any of the
+// spec's own-config filenames present, or the spec's package.json key declared.
+function consumerOwnsConfig(root: string, spec: ConfigDefaultSpec): boolean {
+	if (anyConfigFilePresent(root, spec.ownFiles)) {
+		return true;
+	}
+	return spec.ownPkgKey !== undefined && pkgHasKey(root, spec.ownPkgKey);
+}
+
+// Whether any of `ownFiles` exists at the workroot — a consumer config file present.
+function anyConfigFilePresent(
+	root: string,
+	ownFiles: readonly string[],
+): boolean {
+	return ownFiles.some((file) => existsSync(join(root, file)));
+}
+
+// Whether `<root>/package.json` declares top-level `key` (knip's `#knip`).
+// Tolerant: an absent/unparseable manifest is "no key".
+function pkgHasKey(root: string, key: string): boolean {
+	try {
+		const manifest = JSON.parse(
+			readFileSync(join(root, "package.json"), "utf8"),
+		) as Record<string, unknown>;
+		return manifest[key] !== undefined;
+	} catch {
+		return false;
+	}
+}
 
 // The npm package shipping each bundled bin (bin name -> package), for the
 // require.resolve fallback when the node_modules/.bin walk finds nothing. The bin

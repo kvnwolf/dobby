@@ -81,12 +81,34 @@ function signalFires(signal: Signal, declared: Set<string>): boolean {
 	return false;
 }
 
+// Both the detected capabilities AND the raw declared-dependency name set, from a
+// SINGLE package.json read. Callers that need the dependency names for a finer
+// decision than the capability catalog — the config-less preset selection, where a
+// multi-import preset must NOT be chosen unless EVERY package it imports is
+// declared — use this so they never read package.json twice (the `detectCapabilities`
+// read is right there). `dependencies` is the same union (`deps ∪ devDeps`, never
+// `peerDependencies`) the signals fire on.
+export interface CapabilityScan {
+	capabilities: string[];
+	dependencies: Set<string>;
+}
+
+// Scan the single package at `root` once: the declared dependency set + the
+// capabilities it fires, in fixed catalog order. Tolerant (a missing/unparseable
+// package.json yields an empty set and no capabilities).
+export function scanCapabilities(root: string): CapabilityScan {
+	const dependencies = declaredDependencies(root);
+	const capabilities = SIGNALS.filter((signal) =>
+		signalFires(signal, dependencies),
+	).map((signal) => signal.capability);
+	return { capabilities, dependencies };
+}
+
 // Detect the capabilities declared by the single package at `root`, in fixed
 // catalog order. Reads `<root>/package.json` (dependencies ∪ devDependencies).
-// Tolerant: a missing/unparseable package.json simply contributes no signals.
+// Tolerant: a missing/unparseable package.json simply contributes no signals. Thin
+// wrapper over `scanCapabilities` (the same single read) for callers needing only
+// the capability list.
 export function detectCapabilities(root: string): string[] {
-	const declared = declaredDependencies(root);
-	return SIGNALS.filter((signal) => signalFires(signal, declared)).map(
-		(signal) => signal.capability,
-	);
+	return scanCapabilities(root).capabilities;
 }
