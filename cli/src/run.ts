@@ -9,6 +9,7 @@ import {
 	planDev,
 	type ResolvedDevCommand,
 	type ResolvedDevPlan,
+	runBuild,
 	runDbTask,
 	runDown,
 	runUp,
@@ -48,7 +49,7 @@ const OPTION_LINES = [
 	"  --test          check: run only the test step",
 	"  --fix           check: apply biome's safe fixes first, then report what remains",
 	"  --hook          check: edit-time PostToolUse mode (payload on stdin)",
-	"  --dry-run       dev / db:* / up / down: print the resolved action plan without executing it",
+	"  --dry-run       dev / build / db:* / up / down: print the resolved action plan without executing it",
 	"  -v, --version   Print the dobby version and exit",
 ];
 
@@ -201,6 +202,32 @@ export async function run(
 		return { exitCode: 0, stdout: formatDevPlan(report.plan), stderr: "" };
 	}
 
+	if (command === "build") {
+		// The inferred mechanical build (ADR-0015): external builders (Vercel CI) set
+		// their buildCommand to `bunx dobby build`, so dobby owns the `vite build` spawn
+		// (consumer-local vite + the config-less default `--config` when absent). Gated
+		// on the vite capability (no vite → exit 1 'nothing to build', dev's gate's
+		// twin). FINITE — dispatched here (not the streaming split), inheriting stdio; a
+		// real run streams so only the exit code / failure come back. `--dry-run` renders
+		// the resolved plan without spawning.
+		const report = runBuild(cwd, { dryRun: Boolean(dryRun) });
+		if (!report.ok) {
+			return { exitCode: 1, stdout: "", stderr: `${report.error}\n` };
+		}
+		if (report.kind === "plan") {
+			return {
+				exitCode: 0,
+				stdout: formatBuildPlan(report.bin, report.args, report.cwd),
+				stderr: "",
+			};
+		}
+		return {
+			exitCode: report.exitCode,
+			stdout: "",
+			stderr: report.failure === null ? "" : `${report.failure}\n`,
+		};
+	}
+
 	if (command === "up") {
 		// Bring the app up (liveness-first, idempotent). Fails hard outside a git repo;
 		// the no-app gate (no vite) is a graceful exit-0 no-op; a neon project with
@@ -342,6 +369,16 @@ function describeSetupAction(action: SetupAction): string {
 function formatDbPlan(bin: string, command: DbCommand, cwd: string): string {
 	const line = `${bin} ${command.args.join(" ")}`.trimEnd();
 	return `db task (dry-run):\n  ${line}\n  cwd: ${cwd}\n`;
+}
+
+// Render `dobby build --dry-run`: the RESOLVED consumer vite bin + args (incl. the
+// config-less default `--config <preset>` when the consumer ships no vite config,
+// ADR-0015) as one shell-style line, then the pinned workroot — mirroring the db:*
+// dry-run plan format. NO spawn: this is exactly what a real `bunx dobby build`
+// (the Vercel buildCommand) would execute.
+function formatBuildPlan(bin: string, args: string[], cwd: string): string {
+	const line = `${bin} ${args.join(" ")}`.trimEnd();
+	return `build (dry-run):\n  ${line}\n  cwd: ${cwd}\n`;
 }
 
 // Render the RESOLVED dev plan as one shell-style line per command, in EXECUTION

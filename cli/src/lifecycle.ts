@@ -16,6 +16,7 @@ import { loadConfig } from "./config.ts";
 import { detectCapabilities } from "./detect.ts";
 import { discoverPanes, resolveDevUrl } from "./envinfo.ts";
 import {
+	configArgs,
 	requireWorkroot,
 	resolveBin,
 	resolveWorkroot,
@@ -31,7 +32,9 @@ import {
 	type DevPlan,
 	dbTasks,
 	devPlan,
+	drizzleConfigSpec,
 	UPDATE_ARGS,
+	viteConfigSpec,
 } from "./tasks.ts";
 
 // The action-command executors (the inferred `db:*` tasks, `update`, and
@@ -343,14 +346,24 @@ export function runDbTask(
 		};
 	}
 
+	// Config-less default (ADR-0015): drizzle-kit gains `--config=<preset>` when the
+	// consumer ships no drizzle.config.* — the SAME augmented args feed the dry-run
+	// plan and the real spawn, so the plan never lies. A consumer file → NO extra
+	// args (bare — native discovery, a total override).
+	const cfgArgs = configArgs(root, drizzleConfigSpec()).args;
+	const augmented: DbCommand = {
+		tool: command.tool,
+		args: [...command.args, ...cfgArgs],
+	};
+
 	if (opts.dryRun) {
 		// Resolve the tool bin CONSUMER-local (part c: the dry-run plan renders the
 		// RESOLVED path so the resolution is observable) — bare fallback when absent.
 		const bin = resolveBin(command.tool, { scope: "consumer", root });
-		return { ok: true, kind: "plan", bin, command, cwd: root };
+		return { ok: true, kind: "plan", bin, command: augmented, cwd: root };
 	}
 
-	return { ok: true, kind: "ran", ...executeDbCommand(command, root) };
+	return { ok: true, kind: "ran", ...executeDbCommand(augmented, root) };
 }
 
 // Build the error for an unresolved db name, listing the available (short) drizzle
@@ -451,14 +464,24 @@ export function planDev(cwd: string): DevReport {
 	// Resolve every bin now (SOFT workroot — the dry-run capture path must not fail
 	// hard outside a git repo; a null root leaves consumer bins as bare names, the
 	// documented fallback). The real streaming path re-asserts a hard workroot.
-	return { ok: true, plan: resolveDevPlan(plan, resolveWorkroot(cwd)) };
+	return {
+		ok: true,
+		plan: resolveDevPlan(plan, resolveWorkroot(cwd), capabilities),
+	};
 }
 
 // Resolve the logical dev plan's bins to spawnable paths: consumer-local for the
 // app/email tools (`<root>/node_modules/.bin/<tool>`, bare fallback), BUNDLED for
 // the portless wrapper (dobby's own tree). The SAME resolution feeds the dry-run
-// render and the real spawn, so the plan never lies about what runs.
-function resolveDevPlan(plan: DevPlan, root: string | null): ResolvedDevPlan {
+// render and the real spawn, so the plan never lies about what runs. The vite dev
+// command additionally carries the config-less default `--config <preset>`
+// (ADR-0015) when the consumer ships no vite config — resolved from the workroot,
+// so both the dry-run render and the real spawn read the identical `--config` path.
+function resolveDevPlan(
+	plan: DevPlan,
+	root: string | null,
+	capabilities: string[],
+): ResolvedDevPlan {
 	const consumer = (command: DevCommand): ResolvedDevCommand => ({
 		bin: resolveBin(command.tool, {
 			scope: "consumer",
@@ -466,15 +489,21 @@ function resolveDevPlan(plan: DevPlan, root: string | null): ResolvedDevPlan {
 		}),
 		args: command.args,
 	});
+	// The vite dev command (the main) gains `--config <preset>` when absent.
+	const viteCfg = configArgs(root, viteConfigSpec(capabilities)).args;
+	const main = ((): ResolvedDevPlan["main"] => {
+		if (plan.main === null) {
+			return null;
+		}
+		const command = consumer(plan.main.command);
+		return {
+			portless: resolveBin("portless", { scope: "bundled" }),
+			command: { bin: command.bin, args: [...command.args, ...viteCfg] },
+		};
+	})();
 	return {
 		cacheClears: plan.main?.cacheClears ?? [],
-		main:
-			plan.main === null
-				? null
-				: {
-						portless: resolveBin("portless", { scope: "bundled" }),
-						command: consumer(plan.main.command),
-					},
+		main,
 		secondaries: plan.secondaries.map(consumer),
 	};
 }
@@ -592,6 +621,89 @@ function killGroup(child: ChildProcess): void {
 	} catch {
 		// Already dead or no such group — nothing to tear down.
 	}
+}
+
+// ---------------------------------------------------------------------------
+// `dobby build` — the inferred mechanical build (ADR-0015)
+//
+// External builders build THROUGH dobby: a consumer's Vercel `buildCommand` is
+// `bunx dobby build`, so dobby (not the raw framework CLI) owns the build spawn —
+// which lets future niceties (env checks, cache warmup, telemetry) land CENTRALLY
+// without every consumer editing its buildCommand. The real run is the consumer's
+// OWN `vite build` (never dobby's — the dual-Vite invariant) + the config-less
+// default `--config <preset>` (ADR-0015) when the consumer ships no vite config.
+//
+// Capability-gated on `vite` (mirroring `dev`'s gate): no vite → exit 1 'nothing to
+// build'. FINITE (not the streaming split) — it is dispatched inside run() and
+// inherits stdio through the runner (the `db:*` pattern), so run() renders the
+// outcome. `--dry-run` renders the plan (bin + args + pinned cwd), no spawn.
+// `check --build` reuses the SAME config resolution (viteConfigSpec).
+// ---------------------------------------------------------------------------
+
+// The outcome of `dobby build`:
+//   - `{ ok: false, error }` — no vite capability ('nothing to build'), or outside
+//     a git repo. `run.ts` prints `error` on stderr with exit 1.
+//   - `{ ok: true, kind: "plan", bin, args, cwd }` — `--dry-run`: the RESOLVED
+//     consumer vite bin + args (incl. the `--config` default when absent) + the
+//     pinned workroot, rendered by `run.ts`, nothing spawned.
+//   - `{ ok: true, kind: "ran", exitCode, failure }` — a real run: the child's exit
+//     code plus an optional failure note (vite not installed, nonzero exit).
+export type BuildReport =
+	| { ok: false; error: string }
+	| { ok: true; kind: "plan"; bin: string; args: string[]; cwd: string }
+	| { ok: true; kind: "ran"; exitCode: number; failure: string | null };
+
+// Resolve and (unless dry-run) run `vite build` for the project at `cwd`.
+// Capabilities are detected from `cwd` (a single-package project runs dobby at its
+// root); no vite → the hard 'nothing to build' gate (dev's gate's twin). The
+// workroot is resolved for the pinned spawn cwd, so a real run fails hard outside a
+// git repo.
+export function runBuild(cwd: string, opts: { dryRun: boolean }): BuildReport {
+	const capabilities = detectCapabilities(cwd);
+	if (!capabilities.includes("vite")) {
+		return {
+			ok: false,
+			error:
+				"nothing to build — no app capability (no vite) detected; `dobby build` is the inferred build for vite apps",
+		};
+	}
+
+	let root: string;
+	try {
+		root = requireWorkroot(cwd);
+	} catch (error) {
+		return {
+			ok: false,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
+
+	const bin = resolveBin("vite", { scope: "consumer", root });
+	const cfgArgs = configArgs(root, viteConfigSpec(capabilities)).args;
+	const args = ["build", ...cfgArgs];
+
+	if (opts.dryRun) {
+		return { ok: true, kind: "plan", bin, args, cwd: root };
+	}
+
+	// A bare-name fallback (bin === "vite") means it is not installed in the
+	// consumer's node_modules/.bin — a setup gap, surfaced actionably (mirrors db:*).
+	if (bin === "vite") {
+		return {
+			ok: true,
+			kind: "ran",
+			exitCode: 127,
+			failure: "vite not found — run `dobby up` to install it",
+		};
+	}
+
+	const code = runInherit(bin, args, { root });
+	return {
+		ok: true,
+		kind: "ran",
+		exitCode: code,
+		failure: code === 0 ? null : `vite build exited ${code}`,
+	};
 }
 
 // ---------------------------------------------------------------------------

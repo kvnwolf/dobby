@@ -3,6 +3,7 @@ import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ConfigDefaultSpec } from "./tasks.ts";
 
 // The single child-process utility every dobby command spawns through. It exists
 // to enforce ONE invariant: every child's working directory is pinned to the
@@ -101,6 +102,87 @@ type BinScope = "bundled" | "consumer";
 // `node_modules/@kvnwolf/dobby/...`).
 const runnerDir = dirname(fileURLToPath(import.meta.url));
 const requireFromRunner = createRequire(import.meta.url);
+
+// This module's package ROOT — the directory shipping the preset ASSETS (biome/,
+// knip.base.jsonc, the .mjs configs). runner.ts always lives at
+// <pkgRoot>/src/runner.ts (the `files` allowlist ships `src` at the package root),
+// so the package root is its grandparent — derived from import.meta.url so it
+// points at dobby's OWN install location (this repo's cli/, or a consumer's
+// node_modules/@kvnwolf/dobby/).
+const packageRoot = dirname(runnerDir);
+
+/**
+ * Resolve a SHIPPED preset asset (e.g. "biome/core.jsonc", "knip.base.jsonc",
+ * "vitest.base.mjs") to an absolute path inside dobby's OWN package tree — the
+ * ASSET counterpart to resolveBin's bundled scope (both walk from this module's
+ * own location, never the consumer's cwd). Used by the config-less defaults
+ * (ADR-0015): when a consumer ships no config of its own for a tool dobby
+ * invokes, dobby points the tool at this asset via its native config flag.
+ *
+ * @public — consumed by check.ts / lifecycle.ts (via configArgs) to supply the
+ * default tool configs.
+ */
+export function resolveAsset(relPath: string): string {
+	return join(packageRoot, relPath);
+}
+
+/**
+ * The override-by-presence seam (ADR-0015). Given the workroot and a tool's pure
+ * `ConfigDefaultSpec` (from tasks.ts), decide whether the consumer ships its OWN
+ * config for that tool and return the config args to APPEND to the tool spawn:
+ *   - PRESENT (a matching file at the workroot, or the package.json key) → NO args
+ *     (dobby spawns bare; the tool's native discovery finds the consumer file — a
+ *     TOTAL override, never merged) and a null `usedDefault`.
+ *   - ABSENT (or no workroot) → the tool's native config flag pointing at dobby's
+ *     SHIPPED preset (`resolveAsset`, an absolute path in dobby's own tree), plus
+ *     the note label (`usedDefault`) so `check` can report which default kicked in.
+ * Biome additionally gets `--vcs-root=<workroot>` (see `ConfigDefaultSpec.vcsRoot`).
+ * A null root cannot happen for check (requireWorkroot) but can for a dev dry-run
+ * outside a git repo — there the default still applies (nothing to override).
+ *
+ * @public — the single config-args resolver every config-less tool spawn routes
+ * through (check biome/knip/vite/vitest, dev/build vite, db drizzle-kit).
+ */
+export function configArgs(
+	root: string | null,
+	spec: ConfigDefaultSpec,
+): { args: string[]; usedDefault: string | null } {
+	if (root !== null && consumerOwnsConfig(root, spec)) {
+		return { args: [], usedDefault: null };
+	}
+	const assetPath = resolveAsset(spec.asset);
+	const args = spec.equals
+		? [`${spec.flag}=${assetPath}`]
+		: [spec.flag, assetPath];
+	if (spec.vcsRoot && root !== null) {
+		args.push(`--vcs-root=${root}`);
+	}
+	return { args, usedDefault: spec.label };
+}
+
+// Whether the consumer ships its OWN config for a tool at `root`: any of the
+// spec's own-config filenames present, or the spec's package.json key declared.
+function consumerOwnsConfig(root: string, spec: ConfigDefaultSpec): boolean {
+	for (const file of spec.ownFiles) {
+		if (existsSync(join(root, file))) {
+			return true;
+		}
+	}
+	return spec.ownPkgKey !== undefined && pkgHasKey(root, spec.ownPkgKey);
+}
+
+// Whether `<root>/package.json` declares top-level `key` (knip's `#knip`).
+// Tolerant: an absent/unparseable manifest is "no key".
+function pkgHasKey(root: string, key: string): boolean {
+	try {
+		const manifest = JSON.parse(
+			readFileSync(join(root, "package.json"), "utf8"),
+		) as Record<string, unknown>;
+		return manifest[key] !== undefined;
+	} catch {
+		return false;
+	}
+}
 
 // The npm package shipping each bundled bin (bin name -> package), for the
 // require.resolve fallback when the node_modules/.bin walk finds nothing. The bin

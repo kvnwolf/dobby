@@ -2,7 +2,7 @@
 
 A **zero-config toolchain + environment-aware run lifecycle** for Bun + Vite/TanStack apps — the mechanical layer of the [dobby](https://github.com/kvnwolf/dobby) kit.
 
-`@kvnwolf/dobby` is a single dev dependency that gives a project a strict, opinionated toolchain (biome, tsc, knip) and a set of environment-aware lifecycle commands (`dev`, `up`, `down`, `db:*`) — all inferred from what the repo actually declares. You install one package, extend two thin config files, and get a consistent quality gate and run lifecycle with no per-project wiring.
+`@kvnwolf/dobby` is a single dev dependency that gives a project a strict, opinionated toolchain (biome, tsc, knip) and a set of environment-aware lifecycle commands (`dev`, `build`, `up`, `down`, `db:*`) — all inferred from what the repo actually declares. You install one package and get a consistent quality gate and run lifecycle with **no per-project wiring** — dobby ships every tool config as a default, so a delta-less repo carries only `package.json`, `tsconfig.json`, and (optionally) `dobby.config.json`.
 
 The kit's skills (agents, hooks, workflows) call this CLI; you can also run it directly.
 
@@ -14,9 +14,21 @@ bun add -d @kvnwolf/dobby
 
 That is the whole install — a single devDependency. The bundled toolchain (biome, tsc via `typescript`, knip, taze, portless, ultracite) ships transitively, so consumers install nothing else.
 
-## Thin config
+## Config-less by default (override by presence)
 
-Two small config files `extends` the central presets — you get centralized rules plus native editor support (your editor reads the same tsconfig/biome your gate does):
+For every tool **only dobby invokes** — biome, knip, vitest, vite, drizzle-kit — dobby passes its shipped preset through the tool's native config flag **when you have no config file of your own**. You never pass config paths; dobby resolves them. A config file, when present, is a **total override** (never merged): the tool's own discovery finds it and dobby stays out of the way. So you write a tool config **only for deltas** — creating the file instantly overrides the default, deleting it restores it.
+
+| Tool | Your override file (any of) | dobby's default when absent |
+| --- | --- | --- |
+| biome | `biome.json` / `biome.jsonc` | `@kvnwolf/dobby/biome/react` (react apps) or `/biome/core` |
+| knip | `knip.json` / `knip.jsonc` / `knip.ts` / `package.json#knip` | `@kvnwolf/dobby`'s `knip.base.jsonc` |
+| vitest | `vitest.config.{ts,mts,cts,js,mjs,cjs}` | `@kvnwolf/dobby/vitest/react` (react apps) or `/vitest` |
+| vite | `vite.config.{ts,mts,js,mjs}` | `@kvnwolf/dobby/vite/tanstack-start` (tanstack apps) or `/vite` |
+| drizzle-kit | `drizzle.config.{ts,mts,js,mjs}` | `@kvnwolf/dobby/drizzle` |
+
+`dobby check` prints a `configs:` note naming which defaults were active (`configs: biome=default(react) · knip=default`), and the `dev` / `build` / `db:*` `--dry-run` plans render the resolved `--config <path>` — so override-by-presence is always visible, never silent.
+
+**The one file that always stays is `tsconfig.json`** — not for editors, but because other tools read it directly (vite's `resolve.tsconfigPaths`, `tsc`) and it carries genuinely per-project `paths`. Extend the central base:
 
 `tsconfig.json`
 
@@ -24,13 +36,9 @@ Two small config files `extends` the central presets — you get centralized rul
 { "extends": "@kvnwolf/dobby/tsconfig" }
 ```
 
-`biome.jsonc`
+## Presets (for when you DO have deltas)
 
-```jsonc
-{ "extends": ["@kvnwolf/dobby/biome/react"] }
-```
-
-The exported presets:
+When you need deltas, `extends` (tsconfig/biome) or `mergeConfig`/re-export (vite/vitest/drizzle) the central presets:
 
 | Import | What it is |
 | --- | --- |
@@ -49,6 +57,12 @@ The tsconfig and Biome presets are `extends` targets; the Vite/Vitest/drizzle pr
 
 ```json
 { "extends": "@kvnwolf/dobby/tsconfig/vite", "compilerOptions": { "paths": { "@/*": ["./src/*"] } }, "include": ["src"] }
+```
+
+**`biome.jsonc`** — only when you need lint/format deltas; extend the react (or core) preset:
+
+```jsonc
+{ "extends": ["@kvnwolf/dobby/biome/react"] }
 ```
 
 **`vite.config.ts`** — merge your app plugins onto the dobby base:
@@ -121,7 +135,7 @@ dobby check --hook             # edit-time PostToolUse mode (payload on stdin)
 
 `--hook` reads a PostToolUse payload from stdin, applies biome's safe auto-fixes to the edited file in place, and surfaces only unfixable findings (exit 2, findings on stderr). This is what the plugin's edit hook invokes.
 
-The **test step runs your vitest under `node`** whenever a usable `node` is on the machine (falling back to the current runtime otherwise), so a `bunx dobby check` doesn't run your suite under bun — bun's module runner can mis-resolve some dependencies' export maps (e.g. `zod`), which the [`@kvnwolf/dobby/vitest`](#thin-config) preset also guards against by inlining `zod`. Only the vitest spawn is affected; a failure under the fallback runtime is annotated with the runtime it used.
+The **test step runs your vitest under `node`** whenever a usable `node` is on the machine (falling back to the current runtime otherwise), so a `bunx dobby check` doesn't run your suite under bun — bun's module runner can mis-resolve some dependencies' export maps (e.g. `zod`), which the [`@kvnwolf/dobby/vitest`](#presets-for-when-you-do-have-deltas) preset also guards against by inlining `zod`. Only the vitest spawn is affected; a failure under the fallback runtime is annotated with the runtime it used.
 
 ### `dobby dev`
 
@@ -131,6 +145,23 @@ Run the app: the `vite dev` server wrapped in `portless run`, plus concurrent se
 dobby dev
 dobby dev --dry-run       # print the resolved plan without spawning
 ```
+
+### `dobby build`
+
+Build the app: the consumer-local `vite build` (plus the config-less default `--config` when you have no `vite.config`). Listed only for a repo with the vite capability; a repo with no app exits 1 with `nothing to build`.
+
+```sh
+dobby build
+dobby build --dry-run     # print the resolved plan without spawning
+```
+
+**Point your builder at dobby.** `dobby build` is the inferred build command, so external builders build **through** dobby — set your Vercel **Build Command** to:
+
+```
+bunx dobby build
+```
+
+Building through dobby (rather than a raw framework CLI) means the config-less default and any future build-time niceties apply centrally, with no per-project buildCommand edits.
 
 ### `dobby up` / `dobby down`
 
@@ -200,7 +231,7 @@ The command surface is inferred from what the repo declares (`dependencies ∪ d
 
 | Capability | Signal | Enables |
 | --- | --- | --- |
-| `vite` | `vite` | `dobby dev` / `up` / `down`; the `check` build step |
+| `vite` | `vite` | `dobby dev` / `build` / `up` / `down`; the `check` build step |
 | `vitest` | `vitest` | the `check` test step |
 | `drizzle` | `drizzle-orm` / `drizzle-kit` | `db:*` drizzle-kit tasks |
 | `neon` | `@neondatabase/serverless` | `up`/`down` Neon branch-per-worktree isolation |

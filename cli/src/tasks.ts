@@ -97,6 +97,168 @@ export function checkPipeline(
 }
 
 // ---------------------------------------------------------------------------
+// Config-less defaults (ADR-0015): override-by-presence.
+//
+// For every tool ONLY dobby invokes (biome, knip, vitest, vite, drizzle-kit),
+// dobby SHIPS a preset and points the tool at it through the tool's NATIVE config
+// flag — but ONLY when the consumer ships no config of its own at the workroot. A
+// consumer config file (or a package.json key, for knip) is a TOTAL override,
+// never merged: dobby then spawns bare and the tool's own discovery finds it.
+// Default selection is capability-driven (react → the react preset; tanstack-start
+// → the tanstack vite preset).
+//
+// The DECISION is PURE (this module): which own-config files count as an override,
+// the tool's flag + argument form, and — from the capabilities — which shipped
+// asset the default points at. The PRESENCE check (fs) + asset PATH resolution
+// (`resolveAsset`) are IMPURE and live in `runner.configArgs`.
+// ---------------------------------------------------------------------------
+
+// The config-less default decision for ONE tool invocation — pure data consumed
+// by `runner.configArgs`, which resolves it against the workroot at spawn time.
+export interface ConfigDefaultSpec {
+	// The tool this spec configures (labels the `configs:` note + the docs), e.g.
+	// "biome" / "knip" / "vitest" / "vite" / "drizzle".
+	tool: string;
+	// Consumer config filenames (relative to the workroot) whose presence is a
+	// TOTAL override — ANY present means dobby spawns bare (native discovery).
+	ownFiles: string[];
+	// A package.json key whose presence ALSO overrides (knip's `#knip`), else absent.
+	ownPkgKey?: string;
+	// The tool's native config flag (biome: --config-path; the rest: --config).
+	flag: string;
+	// Whether the flag takes `--flag=value` (drizzle-kit, biome) vs `--flag value`.
+	equals: boolean;
+	// Biome ONLY: also pass `--vcs-root=<workroot>`. The shipped biome preset
+	// extends ultracite, which sets `vcs.useIgnoreFile: true`; without an explicit
+	// vcs-root biome resolves the ignore file beside the PRESET (outside the repo)
+	// and hard-errors. Rooting it at the workroot honors the consumer's .gitignore
+	// (and tolerates its absence). Verified against bundled biome 2.5.4.
+	vcsRoot?: boolean;
+	// The shipped preset (relative to dobby's package root) the flag points at when
+	// the consumer ships nothing — `resolveAsset` turns it into an absolute path.
+	asset: string;
+	// How the `configs:` note names the default source, e.g. "default(react)".
+	label: string;
+}
+
+// Biome's default: the react preset when the `react` capability is present, else
+// core. Uses `--config-path=<file>` + `--vcs-root=<workroot>` (see `vcsRoot`).
+export function biomeConfigSpec(capabilities: string[]): ConfigDefaultSpec {
+	const react = capabilities.includes("react");
+	return {
+		tool: "biome",
+		ownFiles: ["biome.json", "biome.jsonc"],
+		flag: "--config-path",
+		equals: true,
+		vcsRoot: true,
+		asset: react ? "biome/react.jsonc" : "biome/core.jsonc",
+		label: react ? "default(react)" : "default",
+	};
+}
+
+// Knip's default: dobby's `knip.base.jsonc` (the test-file-as-entry fix). A
+// consumer overrides with ANY file in knip's own discovery set OR a package.json
+// `#knip` key. `ownFiles` MIRRORS knip@6's `KNIP_CONFIG_LOCATIONS` verbatim (bundled
+// knip 6.26.0, `dist/constants.js`) — a config in ANY of these forms is found by
+// knip's bare discovery, so listing fewer would let a legal consumer config get
+// SILENTLY overridden by dobby's default (the override-by-presence contract).
+export function knipConfigSpec(): ConfigDefaultSpec {
+	return {
+		tool: "knip",
+		ownFiles: [
+			"knip.json",
+			"knip.jsonc",
+			".knip.json",
+			".knip.jsonc",
+			"knip.ts",
+			"knip.js",
+			"knip.config.ts",
+			"knip.config.js",
+		],
+		ownPkgKey: "knip",
+		flag: "--config",
+		equals: false,
+		asset: "knip.base.jsonc",
+		label: "default",
+	};
+}
+
+// Vitest's default: the react variant when the `react` capability is present, else
+// the base. `--config <file>` — vitest keeps `root = cwd` (the pinned workroot),
+// so discovery is unchanged; the flag only supplies the config.
+//
+// DELIBERATE STANCE (ADR-0015): `ownFiles` lists ONLY the DEDICATED `vitest.config.*`
+// forms — NEVER `vite.config.*`. Vitest natively FALLS BACK to a `test` block inside
+// `vite.config.*` when no dedicated vitest config exists, so a bare vitest with a
+// vite.config present would read that block. dobby does NOT honor that fallback as a
+// consumer override: the house convention is that test wiring lives in
+// `vitest.config.*`, and a `vite.config.*` kept only for app-plugin deltas must NOT
+// silently disable dobby's vitest default. Only a DEDICATED `vitest.config.*` counts
+// as the override — otherwise dobby supplies its shipped vitest preset via `--config`.
+export function vitestConfigSpec(capabilities: string[]): ConfigDefaultSpec {
+	const react = capabilities.includes("react");
+	return {
+		tool: "vitest",
+		ownFiles: [
+			"vitest.config.ts",
+			"vitest.config.mts",
+			"vitest.config.cts",
+			"vitest.config.js",
+			"vitest.config.mjs",
+			"vitest.config.cjs",
+		],
+		flag: "--config",
+		equals: false,
+		asset: react ? "vitest.react.mjs" : "vitest.base.mjs",
+		label: react ? "default(react)" : "default",
+	};
+}
+
+// Vite's default: the house TanStack Start stack when the `tanstack-start`
+// capability is present, else the universal vite base. `--config <file>`. `ownFiles`
+// MIRRORS vite@8's `DEFAULT_CONFIG_FILES` verbatim (verified against vite 8.1.5,
+// `dist/node/chunks/node.js`) — all six extensions vite's bare discovery scans, so a
+// legal `vite.config.cjs`/`.cts` is not SILENTLY overridden. Shared by build, dev,
+// and `check --build` (all three read this spec).
+export function viteConfigSpec(capabilities: string[]): ConfigDefaultSpec {
+	const tanstack = capabilities.includes("tanstack-start");
+	return {
+		tool: "vite",
+		ownFiles: [
+			"vite.config.js",
+			"vite.config.mjs",
+			"vite.config.ts",
+			"vite.config.cjs",
+			"vite.config.mts",
+			"vite.config.cts",
+		],
+		flag: "--config",
+		equals: false,
+		asset: tanstack ? "vite.tanstack.mjs" : "vite.base.mjs",
+		label: tanstack ? "default(tanstack-start)" : "default",
+	};
+}
+
+// Drizzle-kit's default: dobby's `drizzle.base.mjs`. drizzle-kit takes the flag in
+// the `--config=<file>` form (equals). `ownFiles` MIRRORS drizzle-kit's ACTUAL bare
+// discovery set — verified against drizzle-kit 0.31.10 (`bin.cjs` `drizzleConfigFromFile`:
+// it tries `drizzle.config.ts`, then `drizzle.config.js`, then `drizzle.config.json`,
+// and NO other extension). The earlier `.mts`/`.mjs` entries were removed: drizzle-kit
+// does NOT discover them bare, so listing them created a FALSE override (a `.mjs`
+// present → dobby spawns bare → drizzle-kit finds nothing → error); `.json` was added
+// because it IS a real discovery target that was previously missing.
+export function drizzleConfigSpec(): ConfigDefaultSpec {
+	return {
+		tool: "drizzle",
+		ownFiles: ["drizzle.config.ts", "drizzle.config.js", "drizzle.config.json"],
+		flag: "--config",
+		equals: true,
+		asset: "drizzle.base.mjs",
+		label: "default",
+	};
+}
+
+// ---------------------------------------------------------------------------
 // db:* task inference
 //
 // `dbTasks(capabilities)` maps the DETECTED db capability to the concrete `db:*`
@@ -165,8 +327,9 @@ export const UPDATE_ARGS: readonly string[] = ["--interactive"];
 // vite nor a db capability. The filter:
 //   - UNIVERSAL commands are ALWAYS present: env, check, update. (`setup` is folded
 //     into `up`'s setup phase — no standalone command — so it is not advertised.)
-//   - dev / up / down appear ONLY with the `vite` capability. `up` is the single
-//     lifecycle entry point (prepare + run), so its description covers both.
+//   - dev / up / down / build appear ONLY with the `vite` capability. `up` is the
+//     single lifecycle entry point (prepare + run), so its description covers both;
+//     `build` is the inferred Vercel buildCommand (`bunx dobby build`).
 //   - db:* entries appear ONLY with a db capability, each carrying its ACTUAL
 //     resolved task name (the short `db:push` / `db:studio` / … drizzle names) and
 //     the concrete shell command it runs — sourced from the SAME `dbTasks` map the
@@ -209,6 +372,11 @@ export function usageCommands(capabilities: string[]): UsageCommand[] {
 				name: "down",
 				description:
 					"Tear the run down: close panes, kill the run, delete the neon branch, teardown[] extras",
+			},
+			{
+				name: "build",
+				description:
+					"Build the app (vite build) — the inferred Vercel buildCommand (`bunx dobby build`)",
 			},
 		);
 	}

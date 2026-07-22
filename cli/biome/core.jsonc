@@ -1,5 +1,16 @@
 {
 	"extends": ["ultracite/biome/core"],
+	"linter": {
+		"rules": {
+			"suspicious": {
+				// House style (maintainer decision): the array-index-key rule forced
+				// key-const gymnastics on custom-component JSX where biome can't even
+				// anchor a suppression comment. For AI-written code its value doesn't
+				// pay its cost, so dobby consumers get it off by default.
+				"noArrayIndexKey": "off"
+			}
+		}
+	},
 	"files": {
 		"includes": [
 			"**",

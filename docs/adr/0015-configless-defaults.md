@@ -1,0 +1,16 @@
+# Tool configs are dobby-internal defaults; a consumer file carries only deltas
+
+**Status:** accepted — supersedes [ADR-0011](./0011-bundled-toolchain-zero-config.md)'s editor-support rationale; ADR-0011's bundling and task-inference decisions stand.
+
+ADR-0011 kept two thin consumer config files (`tsconfig.json`, `biome.jsonc`) extending the shipped presets, justified partly by preserving native EDITOR support. The maintainer has since dropped that constraint entirely — "nunca voy a usar editor, todo es puro AI code — entre menos, mejor" — which removes the reason those files must exist. Decision: for every tool **only dobby invokes** — biome (gate + edit hook), knip, vitest, drizzle-kit, taze — dobby passes its shipped preset through the tool's native config flag (`--config-path` / `--config`) **when the consumer has no config file of its own**. A consumer file, when present, is a **total override** (no merging): the tool's normal discovery finds it and dobby stays out of the way. Default selection is capability-driven — react → `vitest/react` + `biome/react`, tanstack-start → `vite/tanstack-start`.
+
+`vite.config.ts` becomes optional the same way, because Vercel and CI build **through** dobby: `bunx dobby build` is the new inferred build command (the Vercel `buildCommand`), so dobby supplies the vite config.
+
+**The one file that always stays is `tsconfig.json`** — not for editors, but because OTHER tools read it directly (vite's `resolve.tsconfigPaths`, `tsc`) and it carries genuinely per-project `paths`.
+
+## Consequences
+
+- A delta-less consumer repo carries only `package.json`, `tsconfig.json`, and `dobby.config.json`. Creating a tool config file instantly overrides the default; deleting it restores the default.
+- `--dry-run` plans and `check` output render which config SOURCE was used (shipped preset vs. consumer file), so override-by-presence is visible, not silent.
+- **The override-detection file lists MIRROR each tool's REAL native discovery** — a consumer config in ANY form the tool itself would discover must count as the override, else a legal-but-unlisted file gets silently overridden by dobby's default. The verified sets: knip = its `KNIP_CONFIG_LOCATIONS` (`knip.{json,jsonc,ts,js}`, `.knip.{json,jsonc}`, `knip.config.{ts,js}`); vite = its `DEFAULT_CONFIG_FILES` (`vite.config.{js,mjs,ts,cjs,mts,cts}`); drizzle-kit = only the forms its bare discovery tries (`drizzle.config.{ts,js,json}` — NOT `.mjs`/`.mts`, which it never discovers).
+- **Vitest's vite-config fallback is DELIBERATELY not honored as an override.** Vitest natively falls back to a `test` block inside `vite.config.*` when no dedicated `vitest.config.*` exists; dobby counts ONLY a dedicated `vitest.config.*` as the consumer override. House convention: test wiring lives in `vitest.config.*`, so a `vite.config.*` kept only for app-plugin deltas must not silently disable dobby's vitest default. (This is the ONE place dobby narrows a tool's native discovery rather than mirroring it — and it is intentional.)

@@ -1,0 +1,24 @@
+{
+	// dobby's DEFAULT knip config, passed via `--config` for consumers that ship no
+	// knip config of their own (the CLI wires `--config`-when-absent). It exists to
+	// fix a field bug: knip's vitest plugin can't see `test.include` through a
+	// consumer's .mjs config re-export, so it stops treating test files as entries
+	// and flags every one as an "unused file" (10 real test files, in the report).
+	//
+	// VERIFIED SEMANTICS (bundled knip@6, throwaway fixture — src/index.ts +
+	// src/foo.test.ts importing a helper + a genuinely-unused src/unused.ts):
+	// specifying `entry` REPLACES knip's default entry globs, it is NOT additive —
+	// a config carrying ONLY the test glob made src/index.ts (a former default
+	// entry) get flagged as unused. So we must re-state knip's OWN default entry
+	// globs ({index,cli,main} at root and under src/, the `!` = production marker)
+	// AND add the test glob on top. `project` is left unset, so it keeps knip's
+	// default (`**/*.{js,mjs,cjs,jsx,ts,tsx,mts,cts}`); plugin-contributed entries
+	// are likewise untouched. Fixture result with this config: ZERO "unused file"
+	// for the test file, src/index.ts stays reachable, and the genuine orphan is
+	// STILL flagged — knip's normal heuristics keep working.
+	"entry": [
+		"{index,cli,main}.{js,mjs,cjs,jsx,ts,tsx,mts,cts}!",
+		"src/{index,cli,main}.{js,mjs,cjs,jsx,ts,tsx,mts,cts}!",
+		"src/**/*.test.{ts,tsx}"
+	]
+}
