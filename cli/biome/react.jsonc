@@ -52,7 +52,7 @@
       },
       "includes": [
         // TanStack Start stack coupling: under the route dir the router owns the file
-        // shapes, so two rules relax there (rationale on each below). Glob is `**/`-
+        // shapes, so two rules relax there (rationale beside each rule). Glob is `**/`-
         // prefixed so it anchors under BOTH the consumer's extends chain AND dobby's
         // config-less `--config-path` wrapper (biome anchors override globs to the
         // config's own dir there, not the project cwd) — lab-verified, bundled biome.
