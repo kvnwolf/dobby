@@ -610,6 +610,25 @@ interface BiomeDiagnostic {
   severity?: string;
 }
 
+/**
+ * Format a gate-tool spawn failure. A tool that blows past runCapture's 64MB
+ * output cap surfaces as an OPAQUE Node `ENOBUFS` "could not be spawned" error, but
+ * the real cause is a runaway output VOLUME — almost always an EXPLODED lint scope
+ * (the field bug: a big re-lint produced >1MB, and before the maxBuffer bump it
+ * looked like biome failed to spawn). Rewrite ENOBUFS into an actionable finding
+ * naming the likely cause + fix; any OTHER spawn error keeps the plain form.
+ * `error.code` is Node's ErrnoException code (`ENOBUFS` on the maxBuffer trip).
+ *
+ * @public — exported for a direct unit test (both branches); the ENOBUFS path is
+ * not cheaply reachable through the run() seam (it needs >64MB of real tool output).
+ */
+export function spawnFailure(tool: string, error: Error): string {
+  if ((error as NodeJS.ErrnoException).code === "ENOBUFS") {
+    return `${tool} produced more than 64MB of output — almost always an exploded lint scope. Suspect a stale @kvnwolf/dobby install (rm -rf node_modules && bun install) or generated dirs leaking into biome's files.includes.`;
+  }
+  return `${tool} could not be spawned: ${error.message}`;
+}
+
 // Spawn biome (via node/bun) with the JSON reporter and reduce it to findings.
 // ONLY error/warning severities count — biome also emits info/hint diagnostics
 // (e.g. a config-deprecation notice) that must not fail the gate. `write` adds
@@ -637,7 +656,7 @@ function runBiome(
     root,
   });
   if (result.error) {
-    return { error: `biome could not be spawned: ${result.error.message}` };
+    return { error: spawnFailure("biome", result.error) };
   }
 
   let report: { diagnostics?: BiomeDiagnostic[] };
@@ -681,7 +700,7 @@ function runTsc(
     }
   );
   if (result.error) {
-    return { error: `tsc could not be spawned: ${result.error.message}` };
+    return { error: spawnFailure("tsc", result.error) };
   }
 
   const findings: Finding[] = [];

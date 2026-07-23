@@ -322,9 +322,18 @@ function bundledPackageBin(pkg: string, binName: string): string | null {
   }
 }
 
+// Node's spawnSync defaults stdout/stderr to a 1MB buffer; a big re-lint blows
+// past it and surfaces as an OPAQUE `ENOBUFS` "could not be spawned" error (the
+// field bug — biome produced >1MB of findings JSON and looked like a spawn
+// failure). Raise the captured-output cap to 64MB so a normal (even large) gate
+// run always fits; past THAT, an ENOBUFS is a real signal (an exploded scope) that
+// check.ts turns into an actionable finding rather than an opaque spawn failure.
+const MAX_CAPTURE_BUFFER = 64 * 1024 * 1024;
+
 // Run a child process CAPTURING stdout/stderr, cwd pinned to opts.root. Never
 // throws: a nonzero exit or a missing binary is returned in RunResult. Used for
-// the finite, output-parsed spawns (git facts, `portless get`, `cmux list-*`).
+// the finite, output-parsed spawns (git facts, `portless get`, `cmux list-*`, and
+// the gate tools biome/tsc/knip/vite/vitest — hence the raised maxBuffer).
 export function runCapture(
   cmd: string,
   args: string[],
@@ -335,6 +344,7 @@ export function runCapture(
     encoding: "utf8",
     env: opts.env,
     input: opts.input,
+    maxBuffer: MAX_CAPTURE_BUFFER,
     stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
   });
   return {

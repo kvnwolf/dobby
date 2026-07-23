@@ -29,7 +29,44 @@
       },
       "style": {
         "useReactFunctionComponents": "error"
+      },
+      "performance": {
+        // House style: noJsxPropsBind's 'fix' is hundreds of hand-written useCallback/useMemo
+        // deps arrays (stale-closure risk, no perf gain without react-compiler) — off. A
+        // PERFORMANCE rule ultracite's react config omits, so dobby adds it here.
+        "noJsxPropsBind": "off"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "assist": {
+        "actions": {
+          "source": {
+            // useSortedKeys alphabetises Route options, moving `head` before `loader`; but
+            // TanStack infers head()'s loaderData in TEXTUAL order, so sorting collapses
+            // loaderData to `never` (52 tsc errors in the field). Off under routes.
+            "useSortedKeys": "off"
+          }
+        }
+      },
+      "includes": [
+        // TanStack Start stack coupling: under the route dir the router owns the file
+        // shapes, so two rules relax there (rationale beside each rule). Glob is `**/`-
+        // prefixed so it anchors under BOTH the consumer's extends chain AND dobby's
+        // config-less `--config-path` wrapper (biome anchors override globs to the
+        // config's own dir there, not the project cwd) — lab-verified, bundled biome.
+        "**/src/routes/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            // TanStack Router route filenames ($param, $ splat, _layout, -components, dotted
+            // segments) ARE the route tree — renaming them to kebab-case breaks routing.
+            "useFilenamingConvention": "off"
+          }
+        }
+      }
+    }
+  ]
 }

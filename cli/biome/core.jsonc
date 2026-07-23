@@ -59,11 +59,22 @@
       "!!**/pnpm-lock.yaml",
       "!!**/next-env.d.ts",
       "!!**/worker-configuration.d.ts",
+      // TanStack Start / nitro build output (force-exclude, ultracite's !!**/dist class).
+      "!!**/.nitro",
+      "!!**/.vinxi",
+      "!!**/.tanstack",
       // dobby's common consumer ignores (appended to ultracite's includes).
       "!.claude",
       "!.dobby",
       "!.github",
+      // Agent/plugin ecosystem: agent dirs + skills lockfile (same class as .claude).
+      "!.agents",
+      "!.hallmark",
+      "!skills-lock.json",
       "!**/*.md",
+      // Tailwind-only stack: biome's CSS parser aborts on Tailwind 4 @apply/@theme,
+      // so CSS is out of biome's scope entirely.
+      "!**/*.css",
       // House conventions: generated/vendored consumer dirs (never linted by default).
       "!convex/**",
       "!src/components/ui/**",
@@ -177,7 +188,8 @@
         "noUselessTypeConstraint": "error",
         "noUselessUndefined": "error",
         "noUselessUndefinedInitialization": "error",
-        "noVoid": "error",
+        // House style: the void-operator ban's cost exceeds its value for AI-written code — off.
+        "noVoid": "off",
         "useArrayFind": "error",
         "useArrowFunction": "error",
         "useDateNow": "error",
@@ -287,12 +299,14 @@
       },
       "performance": {
         "noAccumulatingSpread": "error",
-        "noAwaitInLoops": "error",
+        // House style: sequential awaits are frequently intentional; the rule's cost exceeds its value for AI-written code — off.
+        "noAwaitInLoops": "off",
         "noBarrelFile": "error",
         "noDelete": "error",
         "noDynamicNamespaceImportAccess": "error",
         "noJsxPropsBind": "error",
-        "noNamespaceImport": "error",
+        // House style: namespace imports are idiomatic in the maintainer's stack; the rule's cost exceeds its value for AI-written code — off.
+        "noNamespaceImport": "off",
         "noSyncScripts": "error",
         "noUnwantedPolyfillio": "error",
         "useGoogleFontPreconnect": "error",
@@ -480,7 +494,8 @@
         "noThenProperty": "error",
         "noTsIgnore": "error",
         "noUnassignedVariables": "error",
-        "noUnnecessaryConditions": "error",
+        // House style: biome's control-flow analysis doesn't model tsc noUncheckedIndexedAccess, so it flags guards tsc REQUIRES — off (field-confirmed twice: dobby repo + consumer).
+        "noUnnecessaryConditions": "off",
         "noUnsafeDeclarationMerging": "error",
         "noUnsafeNegation": "error",
         "noUselessEscapeInString": "error",
