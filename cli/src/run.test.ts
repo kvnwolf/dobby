@@ -14,6 +14,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import pkg from "../package.json";
+import { spawnFailure } from "./check.ts";
 import { run } from "./run.ts";
 
 // Fixture paths are anchored to THIS test file's location (never process.cwd()),
@@ -1214,6 +1215,23 @@ describe("dobby preset — biome/react.jsonc (vendored flat)", () => {
       /"noArrayIndexKey"\s*:\s*"off"/
     );
   });
+
+  it("adds noJsxPropsBind off (a performance rule ultracite's react config omits)", () => {
+    expect(safeRead("biome/react.jsonc")).toMatch(
+      /"noJsxPropsBind"\s*:\s*"off"/
+    );
+  });
+
+  it("ships the TanStack routes override — the **/-prefixed glob relaxing filename + sorted-keys rules", () => {
+    // The glob is `**/`-prefixed (not the bare `src/routes/**`) so the override
+    // anchors under BOTH a consumer's extends chain AND dobby's config-less
+    // `--config-path` wrapper (biome anchors override includes to the config's own
+    // dir there) — lab-verified against bundled biome 2.5.4.
+    const raw = safeRead("biome/react.jsonc");
+    expect(raw).toContain('"**/src/routes/**"');
+    expect(raw).toMatch(/"useFilenamingConvention"\s*:\s*"off"/);
+    expect(raw).toMatch(/"useSortedKeys"\s*:\s*"off"/);
+  });
 });
 
 // --- biome/configless.react.jsonc — the INTERNAL config-less wrapper ---------
@@ -1456,6 +1474,36 @@ describe("dobby preset — biome/core.jsonc house linter override", () => {
   it("turns suspicious/noArrayIndexKey off", () => {
     const raw = safeRead("biome/core.jsonc");
     expect(raw).toMatch(/"noArrayIndexKey"\s*:\s*"off"/);
+  });
+
+  it("turns off the field-round-2 house rules-off set (each off)", () => {
+    // Groups verified against the vendored core.jsonc: noUnnecessaryConditions is
+    // suspicious, noVoid is complexity, noNamespaceImport + noAwaitInLoops are
+    // performance. Each is off because its cost exceeds its value for AI-written code.
+    const raw = safeRead("biome/core.jsonc");
+    for (const rule of [
+      "noUnnecessaryConditions",
+      "noVoid",
+      "noNamespaceImport",
+      "noAwaitInLoops",
+    ]) {
+      expect(raw).toMatch(new RegExp(`"${rule}"\\s*:\\s*"off"`));
+    }
+  });
+
+  it("appends the round-2 consumer ignores (TanStack/nitro force-excludes, agent dirs, CSS)", () => {
+    const raw = safeRead("biome/core.jsonc");
+    for (const ignore of [
+      "!!**/.nitro",
+      "!!**/.vinxi",
+      "!!**/.tanstack",
+      "!.agents",
+      "!.hallmark",
+      "!skills-lock.json",
+      "!**/*.css",
+    ]) {
+      expect(raw).toContain(`"${ignore}"`);
+    }
   });
 });
 
@@ -2442,6 +2490,38 @@ describe("run() — check command (findingless nonzero step surfaces the raw tai
       "VITE_CRASH_MARKER: simulated config error"
     );
   }, 20_000);
+});
+
+// The ENOBUFS-aware spawn-error formatter (`check.spawnFailure`). A gate tool that
+// blows past runCapture's 64MB output cap surfaces as an OPAQUE Node ENOBUFS "could
+// not be spawned" error; the formatter rewrites that into an actionable finding
+// (exploded lint scope) while leaving any OTHER spawn error in its plain form. The
+// ENOBUFS path is NOT cheaply reachable through run() (it needs >64MB of real tool
+// output from a BUNDLED biome/tsc that a fixture can't stub), so it is unit-tested
+// directly with synthetic Errors — the cheap error-path test, no harness machinery.
+describe("check spawnFailure — ENOBUFS rewritten to an actionable finding", () => {
+  it("rewrites an ENOBUFS spawn error into the >64MB / exploded-scope finding", () => {
+    const err = Object.assign(new Error("spawnSync /usr/bin/node ENOBUFS"), {
+      code: "ENOBUFS",
+    });
+    const message = spawnFailure("biome", err);
+    // Names the tool, the 64MB cap, and BOTH remedies (stale install / leaked dirs)…
+    expect(message).toMatch(/^biome produced more than 64MB of output/);
+    expect(message).toMatch(/exploded lint scope/);
+    expect(message).toMatch(/rm -rf node_modules && bun install/);
+    expect(message).toMatch(/files\.includes/);
+    // …and does NOT leak the opaque raw "could not be spawned" text.
+    expect(message).not.toMatch(/could not be spawned/);
+  });
+
+  it("leaves a NON-ENOBUFS spawn error in its plain 'could not be spawned' form", () => {
+    const err = Object.assign(new Error("spawn tsc ENOENT"), {
+      code: "ENOENT",
+    });
+    expect(spawnFailure("tsc", err)).toBe(
+      "tsc could not be spawned: spawn tsc ENOENT"
+    );
+  });
 });
 
 // ===========================================================================

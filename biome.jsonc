@@ -18,22 +18,6 @@
       "!plugin"
     ]
   },
-  "linter": {
-    "rules": {
-      "suspicious": {
-        // Repo delta. `noUnnecessaryConditions` runs biome's OWN control-flow type
-        // analysis, which does NOT model this repo's tsconfig `noUncheckedIndexedAccess`
-        // — so it flags guards that tsc's stricter model REQUIRES: `arr[0]?.x`,
-        // `split()[0] === undefined`, `plan.main?.cacheClears ?? []`, `loaded?.config
-        // ?? null`. Removing them to satisfy biome breaks the typecheck. It also flags
-        // defensive optional-chaining on `JSON.parse(x) as T` results (a valid-JSON-but-
-        // null/primitive payload the cast hides). Both are load-bearing; tsc (with
-        // noUncheckedIndexedAccess) + the tests are the real safety net for this class.
-        // Off for THIS repo only — the vendored preset keeps it ON for consumers.
-        "noUnnecessaryConditions": "off"
-      }
-    }
-  },
   "overrides": [
     {
       // Repo delta (merges after ultracite's own test-file relaxations, which

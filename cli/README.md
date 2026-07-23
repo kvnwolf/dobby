@@ -45,7 +45,7 @@ When you need deltas, `extends` (tsconfig/biome) or `mergeConfig`/re-export (vit
 | `@kvnwolf/dobby/tsconfig` | The strict bundler TypeScript base (`strict`, `noUncheckedIndexedAccess`, `noUncheckedSideEffectImports`, `allowImportingTsExtensions`, `noEmit`, `module: preserve`, `moduleResolution: bundler`, …). |
 | `@kvnwolf/dobby/tsconfig/vite` | The vite-app tsconfig variant — extends the base and adds `types: ["vite/client"]`. |
 | `@kvnwolf/dobby/biome/core` | Flat Biome preset — ultracite's core config vendored verbatim + dobby's mods (framework-agnostic). |
-| `@kvnwolf/dobby/biome/react` | Flat Biome preset — ultracite's react config vendored + dobby's mods. React apps extend BOTH core and react (biome's `extends` is one-level / non-transitive, so each preset is flat and stands alone). |
+| `@kvnwolf/dobby/biome/react` | Flat Biome preset — ultracite's react config vendored + dobby's mods, including a **built-in `src/routes/**` override** for TanStack Router (relaxes `useFilenamingConvention` + `useSortedKeys`, which the router's route-file shapes and `head()`/`loader` order require) that you no longer hand-write. React apps extend BOTH core and react (biome's `extends` is one-level / non-transitive, so each preset is flat and stands alone). |
 | `@kvnwolf/dobby/vite` | The universal Vite app config — native tsconfig path aliases (`resolve.tsconfigPaths`, vite@8) + `server.allowedHosts: true` (portless serves through per-worktree custom hostnames). No plugins — you merge yours on top. |
 | `@kvnwolf/dobby/vitest` | The universal Vitest base — inlines `zod` (so vitest-under-bun can't mangle its export map) and excludes `.claude/**`. A default-exported config you merge your app-specific bits onto. |
 | `@kvnwolf/dobby/vitest/react` | The React-app Vitest variant — the base plus `@vitejs/plugin-react`, native tsconfig paths, and import-time env loading (`loadEnv`). Lives apart from the base so the base stays importable without Vite. |
@@ -64,6 +64,8 @@ The tsconfig and Biome presets are `extends` targets; the Vite/Vitest/drizzle pr
 ```jsonc
 { "extends": ["@kvnwolf/dobby/biome/core", "@kvnwolf/dobby/biome/react"] }
 ```
+
+The react preset already ships the TanStack Router `src/routes/**` override (relaxing `useFilenamingConvention` + `useSortedKeys` where the router owns the file shapes and `head()`/`loader` order) — it travels through `extends`, so you don't hand-write it. The preset also turns off a small house set of rules whose cost exceeds their value for AI-written code (`noUnnecessaryConditions`, `noVoid`, `noNamespaceImport`, `noAwaitInLoops`, `noArrayIndexKey`, `noJsxPropsBind`) and excludes `**/*.css` (biome's CSS parser rejects Tailwind 4 `@apply`/`@theme`).
 
 For a **progressive migration**, use a **denylist**: biome unions `files.includes` across `extends`, so the preset's `**` always applies — you subtract paths to opt out (an allowlist can't survive it, since `"!**"` would exclude everything):
 
