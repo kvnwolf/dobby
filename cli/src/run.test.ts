@@ -3508,6 +3508,10 @@ const NEON_ENV_LOCAL =
 const LIVENESS_RETRIES = "DOBBY_LIVENESS_RETRIES";
 // A probe count no run reaches: the stub `curl` then NEVER succeeds.
 const NEVER_SUCCEEDS = 999;
+// The dev-start line up types into the run pane — the literal WE expect (never
+// recomputed by the code under test). Asserted as a NEGATIVE on the already-live path:
+// re-running up on a live app must never start a second dev server.
+const DEV_START_LINE = "dobby dev";
 
 // Restore an env var to the value captured before a slice mutated it (unset when it
 // was unset) — the beforeAll/afterAll dance the lifecycle slices repeat.
@@ -3533,7 +3537,9 @@ function writeStubBin(dir: string, name: string, body: string): void {
 //   - `cmux`  — records `cmux <argv>` and answers `new-pane` with an
 //     `OK surface:<pid> pane:7 workspace:1` line (the shape the real cmux prints, so
 //     the surface-ref capture succeeds); every other subcommand is a silent exit 0,
-//     which makes pane DISCOVERY find nothing (so up creates the kit panes).
+//     which makes pane DISCOVERY find nothing — so a FRESH-START up creates both kit
+//     panes, while an ALREADY-LIVE up (which starts nothing) creates only the browser
+//     pane and never replaces the missing run one.
 //   - `curl`  — records `curl-ok` / `curl-fail` per probe, succeeding from the
 //     `succeedFrom`-th call on (1 = already live, NEVER_SUCCEEDS = unreachable).
 //   - `portless` — a safety net only: dobby resolves portless from its OWN bundled
@@ -3868,7 +3874,9 @@ describe("run() — up command (cmux present: kit panes in liveness order)", () 
 //     `curl-fail`).
 // One log ⇒ one TOTAL ORDER of what up really did — the seam that makes the ordering
 // falsifiable: a browser `new-pane` recorded before the first `curl-ok` fails the
-// test, and a run that never becomes reachable must record NO browser pane at all.
+// test, a run that never becomes reachable must record NO browser pane at all, and an
+// up that finds the app ALREADY live must record NO `cmux send` at all (starting a
+// second dev server against a healthy app is the double-start hazard).
 // Every expected value is a literal from the stubs WE wrote (record prefixes, the
 // surface ref, the exit codes), never recomputed by the code under test. The two
 // documented test seams keep the run cheap: `DOBBY_SKIP_INSTALL=1` (no bun install)
@@ -3977,14 +3985,40 @@ describe("run() — up command (real run: the browser pane waits for liveness)",
     expect(result.exitCode, combined(result)).toBe(0);
 
     const lines = stubRecords(log);
-    // Exactly one probe was needed (the short-circuit), and BOTH kit panes exist.
+    // Exactly one probe was needed (the short-circuit) and the browser pane opened.
     expect(lines.filter((l) => l.startsWith("curl-ok")).length).toBe(1);
     expect(lines.some((l) => l.includes("--type browser"))).toBe(true);
+  }, 30_000);
+
+  it("starts NOTHING when the app is ALREADY live and the run pane is gone (no double start)", async () => {
+    // The double-start hazard: the stub cmux answers pane DISCOVERY with nothing, so
+    // the `dobby-run-<slug>` pane is MISSING — the state after the user closed it, or
+    // when the server that answers the probe is a detached process from an earlier
+    // session and THIS up runs under cmux. Recreating that pane and sending it
+    // `dobby dev` would boot a SECOND dev server against the same portless route for
+    // an app that is already healthy, so up must send nothing and create no run pane.
+    const { binDir, log } = makeUpStubs(dirs, { succeedFrom: 1 });
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    const repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+
+    const result = await run(["up"], repo);
+    expect(result.exitCode, combined(result)).toBe(0);
+
+    const lines = stubRecords(log);
+    // Positive anchor: up really took the already-live path (one answering probe) and
+    // really talked to cmux (the browser pane), so the negatives below cannot pass
+    // vacuously on a run that did nothing at all.
+    expect(lines.filter((l) => l.startsWith("curl-ok")).length).toBe(1);
+    expect(lines.some((l) => l.includes("--type browser"))).toBe(true);
+    // The load-bearing negatives: no dev-start line was sent to any surface, and no
+    // run (non-browser) pane was created to send one into.
+    expect(lines.some((l) => l.startsWith("cmux send"))).toBe(false);
+    expect(lines.some((l) => l.includes(DEV_START_LINE))).toBe(false);
     expect(
       lines.some(
         (l) => l.startsWith("cmux new-pane") && !l.includes("--type browser")
       )
-    ).toBe(true);
+    ).toBe(false);
   }, 30_000);
 });
 

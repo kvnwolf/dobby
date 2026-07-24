@@ -1073,6 +1073,12 @@ const DEV_START_COMMAND = "bunx dobby dev";
 // the cmux BROWSER pane. The browser pane comes LAST on purpose: opened while the
 // server is still booting it renders a 404, so it waits for liveness (the run pane
 // keeps opening immediately — watching the server boot is its whole purpose).
+//
+// This is the FRESH-START shape, and it is unconditional: `--dry-run` executes
+// NOTHING (the probe is a planned ACTION, never performed while planning), so there is
+// no already-live plan variant to build. The already-live short-circuit is decided at
+// EXECUTION time by the probe's answer — it skips every start/wait action listed here
+// and only reconciles the browser pane (see executeUp step 1).
 function buildUpActions(context: UpContext): UpAction[] {
   const actions: UpAction[] = [{ kind: "probe", url: context.devUrl }];
 
@@ -1126,15 +1132,22 @@ function executeUp(context: UpContext): {
   exitCode: number;
   failure: string | null;
 } {
-  // (1) Already up? A single probe short-circuits — ensure the kit panes exist
-  // (idempotent) under cmux, then done. The app IS live here, so the browser pane
-  // opens immediately: it renders the running app, never a 404.
+  // (1) Already up? A single probe short-circuits — under cmux the BROWSER pane is
+  // reconciled (the app IS live here, so it opens immediately: it renders the running
+  // app, never a 404) and the RUN pane is deliberately LEFT ALONE.
+  //
+  // NOTHING is started on this path — no dev-start line is ever sent. The server that
+  // answers the probe need not live in a pane we can see: the user may have closed the
+  // run pane, or the server may be a detached process from an earlier session while
+  // THIS `up` runs under cmux. Recreating the pane and sending `dobby dev` into it
+  // would boot a SECOND dev server against the same portless route for an app that is
+  // already healthy — so a surviving `dobby-run-<slug>` pane simply keeps running, and
+  // a missing one is NOT replaced (there would be nothing useful to run in it).
   if (
     context.devUrl !== null &&
     probeLiveness(context.workroot, context.devUrl)
   ) {
     if (context.cmux !== null) {
-      ensureRunPane(context, context.cmux);
       ensureBrowserPane(context, context.cmux);
     }
     return { exitCode: 0, failure: null };
@@ -1354,8 +1367,11 @@ function renameCmuxWorkspace(
 //
 // The RUN terminal opens at START time (its purpose is watching the server boot);
 // the BROWSER pane opens only once liveness confirms the devUrl responds — a pane
-// created alongside the boot renders a 404 until the server is up. Each pane is
-// therefore created INDEPENDENTLY (`new-pane --direction right`, right of Claude)
+// created alongside the boot renders a 404 until the server is up. On the ALREADY-LIVE
+// short-circuit only the BROWSER pane is reconciled: up starts nothing there, so a
+// missing run pane is left missing rather than recreated + sent a second `dobby dev`.
+//
+// Each pane is created INDEPENDENTLY (`new-pane --direction right`, right of Claude)
 // rather than by splitting its sibling: cmux's `new-split` carries no `--type`, so
 // a browser pane can only be born from `new-pane`, and the old surface-targeted
 // `new-split down` (run BELOW browser) would have forced the browser to exist first.
@@ -1368,7 +1384,10 @@ function renameCmuxWorkspace(
 
 // Ensure the RUN terminal exists and is running `dobby dev`: reuse a surviving
 // `dobby-run-<slug>` pane, else create it right of Claude, rename it, and send the
-// workroot-pinned start line. Called at START time — never gated on liveness.
+// workroot-pinned start line. Called ONLY on the FRESH-START path (where up owns the
+// start), at START time — never gated on liveness. The already-live short-circuit
+// deliberately does NOT call this: sending the start line to an app that already
+// answers would double-start the dev server (see executeUp step 1).
 function ensureRunPane(context: UpContext, cmux: string): void {
   if (discoverPanes(context.workroot, cmux).runPane !== null) {
     return;
