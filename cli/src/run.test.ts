@@ -16,6 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import pkg from "../package.json";
 import { spawnFailure } from "./check.ts";
 import { run } from "./run.ts";
+import { isLiveDev } from "./tasks.ts";
 
 // Fixture paths are anchored to THIS test file's location (never process.cwd()),
 // so `run(["env"], cwd)` reads a stable, hand-written sample project. The
@@ -3319,6 +3320,77 @@ describe("run() — dev command (removed: no ngrok share tunnel)", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("Usage: dobby");
+  });
+});
+
+// --- Slice 6: the streaming split fires ONLY on a CLEAN live-dev argv ------------
+// The flag-validation hole this slice closes (review finding): index.ts routes a
+// live `dobby dev` to the STREAMING path BEFORE run()'s strict parseArgs ever sees
+// the argv, so a split that merely asks "is the command `dev` and is `--dry-run`
+// absent?" runs `dobby dev --no-share` LIVE with the flag SILENTLY ignored — while
+// the identical flag exits 1 + usage on `dev --dry-run` (slice 5) and on `up`
+// (task-9 slice). The split predicate therefore lives PURE in `tasks.isLiveDev`
+// and is asserted DIRECTLY here: index.ts is a bin (top-level await +
+// process.exit), never an import target, so the run() seam the rest of this suite
+// uses cannot reach the split at all — the same "unit-test what run() can't reach"
+// precedent as the `check.spawnFailure` slice above.
+//
+// Independent sources: every argv literal is hand-written here, and the RULE they
+// are judged against is the contract itself — stream ONLY a clean live dev (the
+// `dev` positional, no flags), defer EVERY flagged argv to run()'s strict parse,
+// which stays the single flag validator.
+describe("isLiveDev() — the streaming split fires only on a clean live dev", () => {
+  it("streams the bare `dev` invocation (the one live-dev form)", () => {
+    expect(isLiveDev(["dev"])).toBe(true);
+  });
+
+  it("does NOT stream `dev --dry-run` (the plan belongs to the capture path)", () => {
+    expect(isLiveDev(["dev", "--dry-run"])).toBe(false);
+  });
+
+  it("does NOT stream `dev --no-share` — the removed flag must reach the strict parse", () => {
+    expect(isLiveDev(["dev", "--no-share"])).toBe(false);
+  });
+
+  it("does NOT stream a dev carrying ANY unknown flag (a future or typo'd one included)", () => {
+    expect(isLiveDev(["dev", "--frobnicate"])).toBe(false);
+    expect(isLiveDev(["dev", "-x"])).toBe(false);
+  });
+
+  it("does NOT stream a dev whose flag PRECEDES the positional", () => {
+    // The old predicate scanned for the first NON-flag token, so a LEADING flag was
+    // invisible to it; a flagged argv must defer to run() wherever the flag sits.
+    expect(isLiveDev(["--json", "dev"])).toBe(false);
+    expect(isLiveDev(["--no-share", "dev"])).toBe(false);
+  });
+
+  it("never streams a non-dev argv (every finite command routes through run())", () => {
+    expect(isLiveDev([])).toBe(false);
+    expect(isLiveDev(["up"])).toBe(false);
+    expect(isLiveDev(["check"])).toBe(false);
+    expect(isLiveDev(["-v"])).toBe(false);
+    // `dev` as an ARGUMENT of another command is not a live dev either.
+    expect(isLiveDev(["db:push", "dev"])).toBe(false);
+  });
+});
+
+// The fall-through half of that contract, observed through the run() seam: what the
+// split now defers really does land on the strict parse. `dev --no-share` WITHOUT
+// --dry-run — the exact argv the old split swallowed — must be rejected exactly like
+// its `--dry-run` sibling (slice 5) and like `up --no-share`: exit 1, empty stdout,
+// the parse error BEFORE the usage. It also proves parseArgs runs AHEAD of the dev
+// arm — no dev plan is rendered on the way out.
+describe("run() — a flagged live dev falls through to the strict parse", () => {
+  it("rejects `dev --no-share` (no --dry-run) with exit 1 + usage, printing no plan", async () => {
+    const result = await run(["dev", "--no-share"], fixture("dev-admin"));
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Usage: dobby");
+    // Spec order: the parse-error message precedes the usage.
+    expect(result.stderr.startsWith("Usage: dobby")).toBe(false);
+    // Anti-tautology: NOT the unknown-command branch, and no dev plan was produced.
+    expect(result.stderr).not.toContain("unknown command");
+    expect(combined(result)).not.toContain("portless run");
   });
 });
 

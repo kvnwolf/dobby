@@ -196,9 +196,13 @@ export async function run(
     // The dev PLAN — the `--dry-run` capture output — plus the no-app gate. A LIVE
     // dev (a managed group of the portless-wrapped main + concurrent secondaries
     // with signal forwarding) is owned by the bin's STREAMING path: index.ts
-    // intercepts `dobby dev` before run() is reached, so run() only ever PLANS and
-    // never spawns a dev server (a would-be-live dev reaching here still just prints
-    // the plan). No app (no vite) is a hard error: exit 1 with 'nothing to run'.
+    // intercepts a CLEAN `dobby dev` (the positional, no flags — `tasks.isLiveDev`)
+    // before run() is reached, so run() only ever PLANS and never spawns a dev
+    // server. A FLAGGED dev always lands here, and the strict parseArgs above has
+    // already had its say — an unknown flag (`dev --no-share`) never reaches this
+    // arm at all (exit 1 + usage), so a would-be-live dev that gets here is one
+    // whose flags parsed, and it just prints the plan. No app (no vite) is a hard
+    // error: exit 1 with 'nothing to run'.
     const report = planDev(cwd);
     if (!report.ok) {
       return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };

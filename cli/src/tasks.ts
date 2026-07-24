@@ -541,6 +541,32 @@ function describeDbCommand(command: DbCommand): string {
 }
 
 // ---------------------------------------------------------------------------
+// The bin's STREAMING-SPLIT predicate — PURE, and therefore unit-testable
+// (index.ts is a bin, never an import target).
+//
+// index.ts hands a LIVE `dobby dev` to `lifecycle.runDev` (the streaming path)
+// instead of `run()` (the capture seam). That interception happens BEFORE run()'s
+// strict `parseArgs`, so whatever it swallows is never flag-validated: a naive
+// "is the command `dev` and is `--dry-run` absent?" split runs `dobby dev
+// --no-share` (or any unknown flag) live with the flag SILENTLY ignored, while
+// the very same flag exits 1 + usage on `dev --dry-run` / `up`.
+//
+// So the split fires ONLY on a CLEAN live dev: the `dev` positional with NO flag
+// token at all. ANY flagged argv (`dev --dry-run`, `dev --json`, `dev
+// --no-share`) falls through to run(), whose strict parse is the ONE flag
+// validator — a known flag is handled there (`--dry-run` prints the plan), an
+// unknown one exits 1 with the usage. Nothing is duplicated here: the rule is
+// simply "no flags", which is exactly right because NO flag is meaningful to a
+// live dev (`--dry-run` makes it not-live, and every other flag belongs to
+// another command). Extra POSITIONALS still stream (`run()` ignores extra
+// positionals for every command, so they are not a validation signal).
+// ---------------------------------------------------------------------------
+export function isLiveDev(argv: string[]): boolean {
+  const flagless = argv.every((arg) => !arg.startsWith("-"));
+  return flagless && argv[0] === "dev";
+}
+
+// ---------------------------------------------------------------------------
 // `dobby dev` composition inference
 //
 // `devPlan(capabilities, config)` maps the DETECTED capabilities to the ordered
