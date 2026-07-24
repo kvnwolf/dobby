@@ -541,47 +541,6 @@ function describeDbCommand(command: DbCommand): string {
 }
 
 // ---------------------------------------------------------------------------
-// Share (ngrok tunnel) decision — PURE (the probe is IMPURE, in lifecycle.ts).
-//
-// The ngrok tunnel is ON BY DEFAULT (a maintainer decision): `dobby dev`/`dobby up`
-// wrap the app in `portless run --ngrok …` so it is reachable from the maintainer's
-// phone. `--no-share` opts out. Because share is the DEFAULT, a machine WITHOUT the
-// `ngrok` binary must not lose its bring-up: it DEGRADES — dropping `--ngrok` and
-// surfacing ONE note — never failing. The ngrok-present fact is discovered by an
-// IMPURE probe (`ngrokAvailable`, lifecycle.ts); this decision takes that fact as
-// DATA so it stays pure and both branches are deterministically testable.
-// ---------------------------------------------------------------------------
-
-// The single note surfaced when share was requested (the default) but the `ngrok`
-// binary is missing — dobby degraded to no tunnel. Names the two one-time fixes.
-const SHARE_OFF_NOTE =
-  "share: off (ngrok not installed — https://ngrok.com/download + ngrok config add-authtoken)";
-
-// The resolved share decision consumed by the dev/up executors:
-//   - `ngrok` — whether `--ngrok` is ACTUALLY applied (share requested AND ngrok present).
-//   - `note`  — the degrade note when share was requested but ngrok is missing, else null.
-export interface ShareDecision {
-  ngrok: boolean;
-  note: string | null;
-}
-
-// Decide the share outcome from the requested intent + the (impurely probed) ngrok
-// presence. Opted out (`share=false`) → no tunnel, no note. Requested + ngrok present
-// → tunnel on. Requested + ngrok absent → DEGRADE (no tunnel, the one note). Pure.
-export function shareDecision(
-  share: boolean,
-  ngrokPresent: boolean
-): ShareDecision {
-  if (!share) {
-    return { ngrok: false, note: null };
-  }
-  if (ngrokPresent) {
-    return { ngrok: true, note: null };
-  }
-  return { ngrok: false, note: SHARE_OFF_NOTE };
-}
-
-// ---------------------------------------------------------------------------
 // `dobby dev` composition inference
 //
 // `devPlan(capabilities, config)` maps the DETECTED capabilities to the ordered

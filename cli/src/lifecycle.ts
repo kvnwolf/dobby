@@ -14,7 +14,7 @@ import {
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { detectCapabilities, scanCapabilities } from "./detect.ts";
-import { discoverPanes, resolveDevUrl, resolveShareUrl } from "./envinfo.ts";
+import { discoverPanes, resolveDevUrl } from "./envinfo.ts";
 import {
   configArgs,
   requireWorkroot,
@@ -34,8 +34,6 @@ import {
   dbTasks,
   devPlan,
   drizzleConfigSpec,
-  type ShareDecision,
-  shareDecision,
   UPDATE_ARGS,
   viteBlockedMessage,
   viteConfigSpec,
@@ -415,48 +413,6 @@ function executeDbCommand(
 }
 
 // ---------------------------------------------------------------------------
-// Share (ngrok tunnel) preflight — the IMPURE ngrok-presence probe.
-//
-// Share is ON BY DEFAULT (the tunnel makes the dev app reachable from a phone);
-// `--no-share` opts out. Because it is the default, a machine without the `ngrok`
-// binary must DEGRADE (drop the tunnel + one note), never fail the bring-up. The
-// pure DECISION lives in tasks.ts (`shareDecision`); the PRESENCE fact is discovered
-// HERE by a cheap `ngrok version` probe (a bare system tool, workroot-pinned) — kept
-// out of the pure planners. The result is threaded as DATA into `shareDecision` so
-// both branches stay deterministic; `DOBBY_NGROK` is the documented test seam.
-// ---------------------------------------------------------------------------
-
-// The documented test seam (never set in production): force the ngrok-presence probe
-// deterministically so tests can assert BOTH the tunnel-on and the degrade branch
-// regardless of whether the runner happens to have ngrok installed. "1" → present,
-// "0" → absent, unset → the real `ngrok version` probe.
-const NGROK_FORCE_ENV = "DOBBY_NGROK";
-
-// Whether the `ngrok` binary is available on this machine. `ngrok version` exits 0
-// when installed; a missing binary makes the spawn error (folded to false). System
-// tool → BARE (never resolveBin), pinned to the workroot like every other spawn.
-function ngrokAvailable(root: string): boolean {
-  const forced = process.env[NGROK_FORCE_ENV];
-  if (forced === "0") {
-    return false;
-  }
-  if (forced === "1") {
-    return true;
-  }
-  const result = runCapture("ngrok", ["version"], { root });
-  return !result.error && result.status === 0;
-}
-
-// Resolve the share outcome (whether `--ngrok` applies + the degrade note) for a
-// requested-share flag against `root`: probe ngrok ONLY when share is requested (no
-// point probing when opted out), then let the pure `shareDecision` decide. A null
-// root (a dev dry-run outside a git repo) cannot probe → treated as absent (degrade).
-function resolveShare(share: boolean, root: string | null): ShareDecision {
-  const ngrokPresent = share && root !== null && ngrokAvailable(root);
-  return shareDecision(share, ngrokPresent);
-}
-
-// ---------------------------------------------------------------------------
 // `dobby dev` — the run composition (streaming split, part c)
 //
 // The pure ordered plan lives in `tasks.ts` (`devPlan`); this executor has two
@@ -484,19 +440,15 @@ export interface ResolvedDevCommand {
 
 // The `dobby dev` plan with every bin resolved (part c: the dry-run render shows
 // resolved paths). `secondaries` are CONSUMER-local; the main app command is
-// wrapped by the BUNDLED portless (also resolved from dobby's tree), with `ngrok`
-// telling the renderer/executor whether to insert `--ngrok` (the share tunnel).
-// `cacheClears` stay logical (a native `rm`, never spawned). `shareNote` carries the
-// degrade note when share was requested but ngrok is missing (else null).
+// wrapped by the BUNDLED portless (also resolved from dobby's tree).
+// `cacheClears` stay logical (a native `rm`, never spawned).
 export interface ResolvedDevPlan {
   cacheClears: DevCommand[];
   main: {
     portless: string;
-    ngrok: boolean;
     command: ResolvedDevCommand;
   } | null;
   secondaries: ResolvedDevCommand[];
-  shareNote: string | null;
 }
 
 // The outcome of planning `dobby dev`:
@@ -511,10 +463,8 @@ export type DevReport =
 // spawn). Capabilities are detected from `cwd` (a single-package project runs
 // dobby at its root); `config` is threaded for signature-completeness (v1 has no
 // config-driven dev behavior). No vite app → the "nothing to run" gate (exit 1);
-// `up` is the graceful path for a project with nothing to serve. `share` (ON BY
-// DEFAULT; `--no-share` opts out) decides the ngrok tunnel — resolved here so the
-// dry-run plan reflects the real ngrok-presence probe (degrade note when missing).
-export function planDev(cwd: string, opts: { share: boolean }): DevReport {
+// `up` is the graceful path for a project with nothing to serve.
+export function planDev(cwd: string): DevReport {
   // Scan ONCE for both the capabilities AND the raw dependency set — the latter
   // feeds `viteConfigSpec`'s require-all-imports guard (the tanstack preset is
   // picked only when every package it imports is declared).
@@ -546,12 +496,7 @@ export function planDev(cwd: string, opts: { share: boolean }): DevReport {
   }
   return {
     ok: true,
-    plan: resolveDevPlan(
-      plan,
-      root,
-      viteCfg.args,
-      resolveShare(opts.share, root)
-    ),
+    plan: resolveDevPlan(plan, root, viteCfg.args),
   };
 }
 
@@ -566,8 +511,7 @@ export function planDev(cwd: string, opts: { share: boolean }): DevReport {
 function resolveDevPlan(
   plan: DevPlan,
   root: string | null,
-  viteConfigArgs: string[],
-  share: ShareDecision
+  viteConfigArgs: string[]
 ): ResolvedDevPlan {
   const consumer = (command: DevCommand): ResolvedDevCommand => ({
     args: command.args,
@@ -588,8 +532,6 @@ function resolveDevPlan(
         args: [...command.args, ...viteConfigArgs],
         bin: command.bin,
       },
-      // `--ngrok` (the share tunnel) is applied when share is on AND ngrok is present.
-      ngrok: share.ngrok,
       portless: resolveBin("portless", { scope: "bundled" }),
     };
   })();
@@ -597,20 +539,14 @@ function resolveDevPlan(
     cacheClears: plan.main?.cacheClears ?? [],
     main,
     secondaries: plan.secondaries.map(consumer),
-    shareNote: share.note,
   };
 }
 
 // Execute a live `dobby dev` (the STREAMING path). Returns the process exit code
 // once the managed group tears down. The bin (index.ts) is the ONLY caller — it
-// installs no output capture, so children stream straight to the terminal. `share`
-// (ON BY DEFAULT; `--no-share` opts out) drives the ngrok tunnel — resolved inside
-// `planDev` (the same probe the dry-run uses), so the degrade note prints once here.
-export async function runDev(
-  cwd: string,
-  opts: { share: boolean }
-): Promise<number> {
-  const report = planDev(cwd, { share: opts.share });
+// installs no output capture, so children stream straight to the terminal.
+export async function runDev(cwd: string): Promise<number> {
+  const report = planDev(cwd);
   if (!report.ok) {
     process.stderr.write(`${report.error}\n`);
     return 1;
@@ -626,16 +562,10 @@ export async function runDev(
     return 1;
   }
 
-  const { cacheClears, main, secondaries, shareNote } = report.plan;
+  const { cacheClears, main, secondaries } = report.plan;
   if (main === null) {
     // Unreachable: planDev returns ok only when the app main exists.
     return 1;
-  }
-
-  // Surface the degrade note (share requested but ngrok missing) before the group
-  // starts, so the user knows the app is local-only this session.
-  if (shareNote !== null) {
-    process.stderr.write(`${shareNote}\n`);
   }
 
   // (1) Cache-clear (`rm -rf node_modules/.vite`) — done natively, before spawning.
@@ -657,14 +587,7 @@ export async function runDev(
     return 1;
   }
   const mainSpawn = {
-    args: [
-      main.portless,
-      "run",
-      // `--ngrok` opens the share tunnel; omitted when share is off or ngrok is absent.
-      ...(main.ngrok ? ["--ngrok"] : []),
-      main.command.bin,
-      ...main.command.args,
-    ],
+    args: [main.portless, "run", main.command.bin, ...main.command.args],
     bin: process.execPath,
   };
   const secondarySpawns = secondaries.map((secondary) => ({
@@ -892,7 +815,9 @@ export function runUpdate(cwd: string): UpdateReport {
 // neonctl and is covered by the verifier's live recipe + the wrap-stage human
 // smoke — NOT CI (mirroring how `dev`'s streaming path is handled). The cmux stdout
 // ref format is runtime-unverified, so the orchestration carries the spec-mandated
-// discovery-diff fallback.
+// discovery-diff fallback. The ONE execution property CI does pin is the pane-vs-
+// liveness ORDER (browser pane strictly after a successful probe), through a real
+// `up` run against stub `cmux`/`curl` bins on PATH.
 //
 // slug = workroot basename (a spec Decision); the neon branch is `dobby/<slug>`
 // (SLASH), the kit panes are `dobby-{browser,run}-<slug>` (DASHES).
@@ -904,6 +829,20 @@ const LIVENESS_MAX_TIME_SEC = 5;
 const LIVENESS_RETRIES = 6;
 const LIVENESS_INTERVAL_SEC = 5;
 
+// The documented TEST SEAM for the retry wait (the sibling of `DOBBY_SKIP_INSTALL`):
+// `DOBBY_LIVENESS_RETRIES=<n>` caps the number of probes, so a test can exercise the
+// never-reachable path (which must NOT open the browser pane) without sitting through
+// minutes of real `sleepSync`. Test-only; never set in production. The PLAN reads the
+// same resolved value, so `--dry-run` never lies about how long a real run would wait.
+const LIVENESS_RETRIES_ENV = "DOBBY_LIVENESS_RETRIES";
+
+// The effective probe count: the seam's positive integer when set, else the default.
+function livenessRetries(): number {
+  const raw = process.env[LIVENESS_RETRIES_ENV];
+  const parsed = raw === undefined ? Number.NaN : Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : LIVENESS_RETRIES;
+}
+
 // One planned `up` action, discriminated by `kind`. `run.ts` renders each to its
 // shell-style plan line(s); `executeUp` performs the real operation. Every literal
 // a test reads (the cmux command shape, the neon branch verb, the pane names, the
@@ -912,12 +851,16 @@ export type UpAction =
   | { kind: "probe"; url: string | null }
   | { kind: "neon-branch"; branch: string; projectId: string }
   | {
-      kind: "cmux-panes";
+      kind: "cmux-run-pane";
+      workspace: string;
+      runName: string;
+      sendLine: string;
+    }
+  | {
+      kind: "cmux-browser-pane";
       workspace: string;
       devUrl: string | null;
       browserName: string;
-      runName: string;
-      sendLine: string;
     }
   | { kind: "detached"; command: string; pidRel: string; logRel: string }
   | { kind: "wait"; url: string | null; retries: number; intervalSec: number };
@@ -938,9 +881,6 @@ export interface UpPlan {
   renameWorkspace: { workspace: string; title: string } | null;
   runSkipped: string | null;
   setup: SetupAction[];
-  // The share degrade note (share on by default, but ngrok is missing) — surfaced in
-  // the plan just like the dev plan's, or null (share off, ngrok present, or no app).
-  shareNote: string | null;
   slug: string;
   workroot: string;
 }
@@ -953,9 +893,8 @@ export interface UpPlan {
 //     vite capability has nothing to serve ('no app to run', exit 0) — the graceful
 //     counterpart to `dev`'s hard 'nothing to run'.
 //   - `{ ok: true, kind: "plan", plan }` — `--dry-run`: the ordered plan to render.
-//   - `{ ok: true, kind: "ran", exitCode, failure, note }` — a real run executed;
-//     `note` carries any advisory (the share degrade note, or the already-live
-//     no-tunnel restart hint), rendered on stdout, distinct from a `failure`.
+//   - `{ ok: true, kind: "ran", exitCode, failure }` — a real run executed; `failure`
+//     names what went wrong (else null), rendered on stderr.
 export type UpReport =
   | { ok: false; error: string }
   | { ok: true; kind: "noop"; message: string }
@@ -965,20 +904,15 @@ export type UpReport =
       kind: "ran";
       exitCode: number;
       failure: string | null;
-      note: string | null;
     };
 
 // The decisions `up` resolves ONCE (git precondition, capabilities, devUrl, cmux,
-// neon creds, share intent) — the single source both the plan and the imperative
-// execution derive from, so `--dry-run` never lies about what a real run would do.
+// neon creds) — the single source both the plan and the imperative execution derive
+// from, so `--dry-run` never lies about what a real run would do.
 interface UpContext {
   cmux: string | null;
   devUrl: string | null;
   neon: { apiKey: string; projectId: string } | null;
-  // The requested share intent (true by default; false with `--no-share`). Drives
-  // whether the started `dobby dev` carries `--no-share`, and whether the already-live
-  // path hints at restarting for a tunnel.
-  share: boolean;
   slug: string;
   workroot: string;
 }
@@ -995,10 +929,7 @@ interface UpContext {
 //       creds fails hard (guaranteed branch isolation, no main-DB fallback).
 // `--dry-run` prints the FULL ordered plan (setup phase + run phase, or the skip
 // reason) without executing anything.
-export function runUp(
-  cwd: string,
-  opts: { dryRun: boolean; share: boolean }
-): UpReport {
+export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
   let workroot: string;
   try {
     workroot = requireWorkroot(cwd);
@@ -1026,12 +957,6 @@ export function runUp(
   const cmux = process.env.CMUX_WORKSPACE_ID || null;
   const renameWorkspace =
     cmux === null ? null : { title: slug, workspace: cmux };
-  // Share is resolved (ngrok probe) ONLY for a project that actually starts an app —
-  // a no-app project has nothing to tunnel, so no degrade note. The started `dobby dev`
-  // re-probes and applies `--ngrok` itself; `up` surfaces the degrade note as a preview.
-  const share: ShareDecision = hasApp
-    ? resolveShare(opts.share, workroot)
-    : { ngrok: false, note: null };
 
   if (opts.dryRun) {
     // No app → the run phase is skipped, but the FULL plan still shows the setup
@@ -1046,19 +971,12 @@ export function runUp(
           renameWorkspace,
           runSkipped: "no app to run",
           setup: setupPlan,
-          shareNote: share.note,
           slug,
           workroot,
         },
       };
     }
-    const resolved = resolveUpContext(
-      cwd,
-      workroot,
-      slug,
-      capabilities,
-      opts.share
-    );
+    const resolved = resolveUpContext(cwd, workroot, slug, capabilities);
     if (!resolved.ok) {
       return { error: resolved.error, ok: false };
     }
@@ -1070,7 +988,6 @@ export function runUp(
         renameWorkspace,
         runSkipped: null,
         setup: setupPlan,
-        shareNote: share.note,
         slug,
         workroot,
       },
@@ -1085,7 +1002,6 @@ export function runUp(
       exitCode: setupOutcome.exitCode,
       failure: setupOutcome.failure,
       kind: "ran",
-      note: null,
       ok: true,
     };
   }
@@ -1103,34 +1019,17 @@ export function runUp(
   }
 
   // (3) The run phase (a neon project with missing creds fails hard).
-  const resolved = resolveUpContext(
-    cwd,
-    workroot,
-    slug,
-    capabilities,
-    opts.share
-  );
+  const resolved = resolveUpContext(cwd, workroot, slug, capabilities);
   if (!resolved.ok) {
     return { error: resolved.error, ok: false };
   }
   const outcome = executeUp(resolved.context);
-  // The degrade note (share requested but ngrok missing) and any already-live
-  // restart hint from execution both surface as advisories on the ran report.
-  const note = joinNotes(share.note, outcome.note);
   return {
     exitCode: outcome.exitCode,
     failure: outcome.failure,
     kind: "ran",
-    note,
     ok: true,
   };
-}
-
-// Join up to two advisory notes into one block (dropping nulls), or null when both
-// are absent — so a real `up` can carry the degrade note AND the already-live hint.
-function joinNotes(a: string | null, b: string | null): string | null {
-  const notes = [a, b].filter((n): n is string => n !== null);
-  return notes.length === 0 ? null : notes.join("\n");
 }
 
 // Resolve the run-phase decisions (devUrl, cmux, neon creds) for a vite app into an
@@ -1141,8 +1040,7 @@ function resolveUpContext(
   cwd: string,
   workroot: string,
   slug: string,
-  capabilities: string[],
-  share: boolean
+  capabilities: string[]
 ): { ok: false; error: string } | { ok: true; context: UpContext } {
   const devUrl = resolveDevUrl(cwd, workroot, capabilities);
   const cmux = process.env.CMUX_WORKSPACE_ID || null;
@@ -1162,18 +1060,19 @@ function resolveUpContext(
     neon = { apiKey: creds.apiKey, projectId: creds.projectId };
   }
 
-  return { context: { cmux, devUrl, neon, share, slug, workroot }, ok: true };
+  return { context: { cmux, devUrl, neon, slug, workroot }, ok: true };
 }
 
-// The `bunx dobby dev` command `up` starts (via a cmux pane or a detached spawn),
-// carrying `--no-share` ONLY when the user opted out — so the inner dev tunnels by
-// default. The degrade-on-missing-ngrok is the inner dev's own concern (it re-probes).
-function devStartCommand(context: UpContext): string {
-  return context.share ? "bunx dobby dev" : "bunx dobby dev --no-share";
-}
+// The `bunx dobby dev` command `up` starts — via a cmux pane (typed into the run
+// pane) or a detached spawn. One literal, shared by the plan and the real run so
+// they can never diverge.
+const DEV_START_COMMAND = "bunx dobby dev";
 
 // The ordered `up` plan derived from the resolved decisions: probe → neon branch
-// (when neon) → start (cmux panes XOR detached run) → liveness wait.
+// (when neon) → start (the cmux RUN pane XOR the detached run) → liveness wait →
+// the cmux BROWSER pane. The browser pane comes LAST on purpose: opened while the
+// server is still booting it renders a 404, so it waits for liveness (the run pane
+// keeps opening immediately — watching the server boot is its whole purpose).
 function buildUpActions(context: UpContext): UpAction[] {
   const actions: UpAction[] = [{ kind: "probe", url: context.devUrl }];
 
@@ -1187,18 +1086,16 @@ function buildUpActions(context: UpContext): UpAction[] {
 
   if (context.cmux === null) {
     actions.push({
-      command: devStartCommand(context),
+      command: DEV_START_COMMAND,
       kind: "detached",
       logRel: ".dobby/dev.log",
       pidRel: ".dobby/dev.pid",
     });
   } else {
     actions.push({
-      browserName: `dobby-browser-${context.slug}`,
-      devUrl: context.devUrl,
-      kind: "cmux-panes",
+      kind: "cmux-run-pane",
       runName: `dobby-run-${context.slug}`,
-      sendLine: `cd ${context.workroot} && ${devStartCommand(context)}`,
+      sendLine: `cd ${context.workroot} && ${DEV_START_COMMAND}`,
       workspace: context.cmux,
     });
   }
@@ -1206,59 +1103,66 @@ function buildUpActions(context: UpContext): UpAction[] {
   actions.push({
     intervalSec: LIVENESS_INTERVAL_SEC,
     kind: "wait",
-    retries: LIVENESS_RETRIES,
+    retries: livenessRetries(),
     url: context.devUrl,
   });
+
+  // AFTER the wait — a real run only reaches this once the devUrl responds.
+  if (context.cmux !== null) {
+    actions.push({
+      browserName: `dobby-browser-${context.slug}`,
+      devUrl: context.devUrl,
+      kind: "cmux-browser-pane",
+      workspace: context.cmux,
+    });
+  }
   return actions;
 }
 
-// Execute a real `up` (liveness-first, idempotent). NOT CI-tested — needs a live
-// server / cmux / neonctl.
+// Execute a real `up` (liveness-first, idempotent). Its cmux/neon MECHANICS need a
+// live server / cmux / neonctl (not CI-tested), but the pane-vs-liveness ORDERING
+// below IS — a real run against stub `cmux`/`curl` bins recording into one log.
 function executeUp(context: UpContext): {
   exitCode: number;
   failure: string | null;
-  note: string | null;
 } {
   // (1) Already up? A single probe short-circuits — ensure the kit panes exist
-  // (idempotent) under cmux, then done. If share was requested but the RUNNING
-  // instance has no ngrok tunnel (shareUrl null in portless's routes.json), we do
-  // NOT restart automatically — we just note that a restart would add the tunnel.
+  // (idempotent) under cmux, then done. The app IS live here, so the browser pane
+  // opens immediately: it renders the running app, never a 404.
   if (
     context.devUrl !== null &&
     probeLiveness(context.workroot, context.devUrl)
   ) {
     if (context.cmux !== null) {
-      createPanes(context, context.cmux);
+      ensureRunPane(context, context.cmux);
+      ensureBrowserPane(context, context.cmux);
     }
-    const note =
-      context.share && resolveShareUrl(context.devUrl) === null
-        ? "the running app has no share tunnel — `bunx dobby down && bunx dobby up` to restart with the default share"
-        : null;
-    return { exitCode: 0, failure: null, note };
+    return { exitCode: 0, failure: null };
   }
 
   // (2) Neon branch — create idempotently and rewrite the worktree's .env.local.
   if (context.neon !== null) {
     const failure = provisionNeonBranch(context);
     if (failure !== null) {
-      return { exitCode: 1, failure, note: null };
+      return { exitCode: 1, failure };
     }
   }
 
-  // (3) Start: cmux owns the process in named panes, else spawn detached. A failed
-  // detached spawn fails `up` NOW (never entering the liveness wait for a server
-  // that never started); the cmux path is owned by cmux and unaffected.
+  // (3) Start: cmux owns the process in the named RUN pane (opened NOW — watching
+  // the server boot is that pane's purpose), else spawn detached. A failed detached
+  // spawn fails `up` NOW (never entering the liveness wait for a server that never
+  // started); the cmux path is owned by cmux and unaffected.
   if (context.cmux !== null) {
-    createPanes(context, context.cmux);
+    ensureRunPane(context, context.cmux);
   } else if (!startDetached(context)) {
     return {
       exitCode: 1,
       failure: "could not start `bunx dobby dev` — see .dobby/dev.log",
-      note: null,
     };
   }
 
-  // (4) Wait for liveness (retry loop). Never reachable → fail with the trust hint.
+  // (4) Wait for liveness (retry loop). Never reachable → fail with the trust hint,
+  // and NO browser pane: a dead/404 browser pane is pure noise.
   if (
     context.devUrl === null ||
     !waitForLiveness(context.workroot, context.devUrl)
@@ -1267,10 +1171,16 @@ function executeUp(context: UpContext): {
       exitCode: 1,
       failure:
         "the app never became reachable — check that the portless daemon is running and the local CA is trusted (`portless trust`)",
-      note: null,
     };
   }
-  return { exitCode: 0, failure: null, note: null };
+
+  // (5) The app responds → open the browser pane on the devUrl. Deliberately AFTER
+  // the wait: created alongside the boot it would render a 404 until the server came
+  // up (the field annoyance this ordering fixes).
+  if (context.cmux !== null) {
+    ensureBrowserPane(context, context.cmux);
+  }
+  return { exitCode: 0, failure: null };
 }
 
 // A single liveness probe: `curl -sf --max-time 5 <url>` (HTTP 200 → alive).
@@ -1285,14 +1195,15 @@ function probeLiveness(workroot: string, url: string): boolean {
   return !result.error && result.status === 0;
 }
 
-// Probe up to LIVENESS_RETRIES times, LIVENESS_INTERVAL_SEC apart (a blocking wait
+// Probe up to `livenessRetries()` times, LIVENESS_INTERVAL_SEC apart (a blocking wait
 // via Atomics — the executor is synchronous, mirroring the sibling action runners).
 function waitForLiveness(workroot: string, url: string): boolean {
-  for (let attempt = 0; attempt < LIVENESS_RETRIES; attempt += 1) {
+  const retries = livenessRetries();
+  for (let attempt = 0; attempt < retries; attempt += 1) {
     if (probeLiveness(workroot, url)) {
       return true;
     }
-    if (attempt < LIVENESS_RETRIES - 1) {
+    if (attempt < retries - 1) {
       sleepSync(LIVENESS_INTERVAL_SEC * 1000);
     }
   }
@@ -1425,8 +1336,8 @@ function togglePooler(uri: string, pooled: boolean): string {
 
 // Rename the cmux WORKSPACE to the plain goal `title` (the slug) so the user can tell
 // which workspace belongs to which goal at a glance. Workspace-scoped like the pane
-// commands, so `--workspace` is passed explicitly (matching createPanes' new-pane /
-// list-panes style). Idempotent by nature (re-running re-renames to the same title).
+// commands, so `--workspace` is passed explicitly (matching createNamedPane's new-pane
+// / list-panes style). Idempotent by nature (re-running re-renames to the same title).
 // Best-effort — a cmux failure never blocks the run. NOT CI-tested.
 function renameCmuxWorkspace(
   workroot: string,
@@ -1439,113 +1350,100 @@ function renameCmuxWorkspace(
 }
 
 // ---------------------------------------------------------------------------
-// cmux pane orchestration (up) — browser right of Claude, run terminal below it.
+// cmux pane orchestration (up) — the two kit panes, created in TIME order.
+//
+// The RUN terminal opens at START time (its purpose is watching the server boot);
+// the BROWSER pane opens only once liveness confirms the devUrl responds — a pane
+// created alongside the boot renders a 404 until the server is up. Each pane is
+// therefore created INDEPENDENTLY (`new-pane --direction right`, right of Claude)
+// rather than by splitting its sibling: cmux's `new-split` carries no `--type`, so
+// a browser pane can only be born from `new-pane`, and the old surface-targeted
+// `new-split down` (run BELOW browser) would have forced the browser to exist first.
+//
+// Both are create-missing-only (spec up step 1): a surviving kit pane is REUSED by
+// its discovered surface ref, never duplicated. Surface refs are captured from cmux
+// stdout with the spec-mandated discovery-diff fallback (the stdout ref format is
+// runtime-unverified). NOT CI-tested for the real cmux; the ORDERING is.
 // ---------------------------------------------------------------------------
 
-// Create (or REUSE) the kit panes: browser to the RIGHT of Claude, run terminal
-// BELOW the browser via a surface-targeted `new-split down` (never focus-dependent).
-// Create-missing-only (spec up step 1): each kit pane is reused INDIVIDUALLY by its
-// discovered surface ref — both present → no-op; exactly one survivor → reuse it and
-// create only the missing pane (never a duplicate). Surface refs are captured from
-// cmux stdout, with the spec-mandated discovery-diff fallback (the stdout ref format
-// is runtime-unverified). NOT CI-tested.
-function createPanes(context: UpContext, cmux: string): void {
-  const existing = discoverPanes(context.workroot, cmux);
-  // Both kit panes already present → nothing to do (idempotent).
-  if (existing.browserPane !== null && existing.runPane !== null) {
+// Ensure the RUN terminal exists and is running `dobby dev`: reuse a surviving
+// `dobby-run-<slug>` pane, else create it right of Claude, rename it, and send the
+// workroot-pinned start line. Called at START time — never gated on liveness.
+function ensureRunPane(context: UpContext, cmux: string): void {
+  if (discoverPanes(context.workroot, cmux).runPane !== null) {
     return;
   }
-
-  // Reuse a surviving browser pane, else create it (right of Claude); a failure to
-  // capture its surface ref aborts — the run split can't be targeted without it.
-  const browserRef = existing.browserPane ?? createBrowserPane(context, cmux);
-  if (browserRef === null) {
-    return;
-  }
-
-  // Create the run terminal (below the browser) ONLY when it did not survive —
-  // create-missing-only, never duplicating an existing kit pane.
-  if (existing.runPane === null) {
-    createRunPane(context, cmux, browserRef);
-  }
-}
-
-// Create the browser pane (right of Claude), rename it `dobby-browser-<slug>`, and
-// return its surface ref (captured from stdout, discovery-diff fallback) — or null
-// when the ref can't be resolved.
-function createBrowserPane(context: UpContext, cmux: string): string | null {
-  const before = listAllSurfaces(context.workroot, cmux);
-  const created = runCapture(
-    "cmux",
-    [
-      "new-pane",
-      "--workspace",
-      cmux,
-      "--type",
-      "browser",
-      ...(context.devUrl === null ? [] : ["--url", context.devUrl]),
-      "--direction",
-      "right",
-    ],
-    { root: context.workroot }
+  const runRef = createNamedPane(
+    context,
+    cmux,
+    ["--direction", "right"],
+    `dobby-run-${context.slug}`
   );
-  const browserRef =
-    captureSurfaceRef(created.stdout) ??
-    diffNewSurface(before, listAllSurfaces(context.workroot, cmux));
-  if (browserRef === null) {
-    return null;
-  }
-  runCapture(
-    "cmux",
-    ["rename-tab", "--surface", browserRef, `dobby-browser-${context.slug}`],
-    {
-      root: context.workroot,
-    }
-  );
-  return browserRef;
-}
-
-// Create the run terminal BELOW the browser via a surface-targeted `new-split down`
-// (never focus-dependent), rename it `dobby-run-<slug>`, and send the `dobby dev`
-// line. Surface ref captured from stdout with the discovery-diff fallback.
-function createRunPane(
-  context: UpContext,
-  cmux: string,
-  browserRef: string
-): void {
-  const before = listAllSurfaces(context.workroot, cmux);
-  const split = runCapture(
-    "cmux",
-    ["new-split", "down", "--surface", browserRef],
-    {
-      root: context.workroot,
-    }
-  );
-  const runRef =
-    captureSurfaceRef(split.stdout) ??
-    diffNewSurface(before, listAllSurfaces(context.workroot, cmux));
+  // No ref → the pane can't be targeted; nothing to send into.
   if (runRef === null) {
     return;
   }
-  runCapture(
-    "cmux",
-    ["rename-tab", "--surface", runRef, `dobby-run-${context.slug}`],
-    {
-      root: context.workroot,
-    }
-  );
   runCapture(
     "cmux",
     [
       "send",
       "--surface",
       runRef,
-      `cd ${context.workroot} && ${devStartCommand(context)}\n`,
+      `cd ${context.workroot} && ${DEV_START_COMMAND}\n`,
     ],
     {
       root: context.workroot,
     }
   );
+}
+
+// Ensure the BROWSER pane exists on the devUrl: reuse a surviving
+// `dobby-browser-<slug>` pane, else create it right of Claude and rename it. Called
+// ONLY when the app is confirmed live (the already-up short-circuit, or after the
+// liveness wait succeeded) — never while the server is still booting.
+function ensureBrowserPane(context: UpContext, cmux: string): void {
+  if (discoverPanes(context.workroot, cmux).browserPane !== null) {
+    return;
+  }
+  createNamedPane(
+    context,
+    cmux,
+    [
+      "--type",
+      "browser",
+      ...(context.devUrl === null ? [] : ["--url", context.devUrl]),
+      "--direction",
+      "right",
+    ],
+    `dobby-browser-${context.slug}`
+  );
+}
+
+// Create a cmux pane (`new-pane --workspace <id> <args…>`), resolve its surface ref
+// (stdout token, discovery-diff fallback) and rename it `title`. Returns the ref, or
+// null when it can't be resolved (nothing to rename or target).
+function createNamedPane(
+  context: UpContext,
+  cmux: string,
+  args: string[],
+  title: string
+): string | null {
+  const before = listAllSurfaces(context.workroot, cmux);
+  const created = runCapture(
+    "cmux",
+    ["new-pane", "--workspace", cmux, ...args],
+    { root: context.workroot }
+  );
+  const ref =
+    captureSurfaceRef(created.stdout) ??
+    diffNewSurface(before, listAllSurfaces(context.workroot, cmux));
+  if (ref === null) {
+    return null;
+  }
+  runCapture("cmux", ["rename-tab", "--surface", ref, title], {
+    root: context.workroot,
+  });
+  return ref;
 }
 
 // The first `surface:<ref>` token in cmux stdout, or null (format runtime-unverified).
@@ -1612,11 +1510,7 @@ function startDetached(context: UpContext): boolean {
   const dobbyDir = join(context.workroot, ".dobby");
   mkdirSync(dobbyDir, { recursive: true });
   ensureGitignored(context.workroot, ".dobby/");
-  // `--no-share` only when the user opted out; the default shares (inner dev re-probes).
-  const devArgs = context.share
-    ? ["dobby", "dev"]
-    : ["dobby", "dev", "--no-share"];
-  const pid = spawnBackground("bunx", devArgs, {
+  const pid = spawnBackground("bunx", ["dobby", "dev"], {
     logPath: join(dobbyDir, "dev.log"),
     root: context.workroot,
   });

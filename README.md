@@ -48,7 +48,7 @@ dobby runs in a plain `claude` session — your terminal, including over ssh, an
 - `/dobby:execute` re-runs `bunx dobby up` — idempotent and liveness-first, so a re-run never double-starts.
 - `/dobby:finish` tears it all down with `bunx dobby down` after your PR merges.
 
-When it detects **cmux** (`CMUX_WORKSPACE_ID` is set in every cmux pane), `dobby up` enriches the run: the dev server gets its own named pane, a browser pane opens at the app URL, and the verifier drives the UI through cmux's browser CLI. A plain ssh/tmux session (no cmux) degrades gracefully — the app runs as a detached background job, no panes.
+When it detects **cmux** (`CMUX_WORKSPACE_ID` is set in every cmux pane), `dobby up` enriches the run: the dev server gets its own named pane, a browser pane opens at the app URL once the app reports live (never on a booting 404), and the verifier drives the UI through cmux's browser CLI. A plain ssh/tmux session (no cmux) degrades gracefully — the app runs as a detached background job, no panes.
 
 The coordinator and verifier reach the running app the same way everywhere: `bunx dobby env` resolves a stable per-worktree dev URL (via `portless get`) and a curl health-check confirms it's live.
 

@@ -17,10 +17,7 @@ import { run } from "./run.ts";
 const argv = process.argv.slice(2);
 
 if (isLiveDev(argv)) {
-  // Share (the ngrok tunnel) is ON BY DEFAULT; `--no-share` opts out.
-  process.exit(
-    await runDev(process.cwd(), { share: !argv.includes("--no-share") })
-  );
+  process.exit(await runDev(process.cwd()));
 }
 
 const stdin = argv.includes("--hook") ? await readStdin() : undefined;

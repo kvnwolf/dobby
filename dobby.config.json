@@ -28,6 +28,13 @@
       ]
     },
     {
+      "path": "cli/README.md",
+      "update_when": [
+        "When the CLI's npm-facing interface changes (commands, flags, `env` output, lifecycle behavior)",
+        "When a bundled tool or shared preset (tsconfig/biome) is added, removed, or changes shape"
+      ]
+    },
+    {
       "path": "cli/CONTEXT.md",
       "update_when": [
         "When the CLI's interface changes (commands, flags, output format, exit codes)",
