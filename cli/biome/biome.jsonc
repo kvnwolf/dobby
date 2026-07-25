@@ -1,0 +1,24 @@
+// Internal PROJECT-ROOT MARKER for dobby's shipped biome presets — not a preset,
+// not a consumer extends target (package.json `exports` expose ONLY ./biome/core
+// and ./biome/react). It is named `biome.jsonc` precisely so BIOME finds it.
+//
+// Why it exists: when the config-less default points `--config-path` at a preset in
+// THIS directory, biome resolves the project root by walking UP from that file until
+// it finds a `biome.json(c)`, then SCANS that whole project for nested root
+// configurations. Without this marker the adopted project is whatever tree dobby's
+// package happens to sit in (in the dev repo: dobby itself), so an unrelated nested
+// root `biome.jsonc` anywhere in it — e.g. a git worktree under `.claude/worktrees/`,
+// which the kit itself creates — makes biome exit with "Found a nested root
+// configuration" and NO JSON, hard-failing EVERY config-less `dobby check` in a
+// project that has nothing to do with it. Neither `files.includes` negations nor the
+// consumer's `--vcs-root` ignore file suppress that scan (the ignore file belongs to
+// the consumer's repo, not to the adopted foreign project) — both lab-verified
+// against bundled biome 2.5.4.
+//
+// Stopping the walk here keeps the config-less default HERMETIC: the adopted project
+// is this directory (preset files only), never dobby's or the consumer's
+// surroundings. The checked paths still come from the spawn cwd, so findings are
+// unchanged.
+{
+  "root": true
+}

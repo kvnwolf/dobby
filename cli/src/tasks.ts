@@ -154,6 +154,13 @@ export interface ConfigDefaultSpec {
 // target — lab-verified against bundled biome 2.5.4). The wrapper is NOT a consumer
 // extends target (package.json exports only `./biome/core` + `./biome/react`) — a
 // consumer with deltas extends BOTH flat files themselves.
+//
+// EITHER asset is shielded by the sibling project-root MARKER `biome/biome.jsonc`
+// (`{ root: true }`): biome derives the project root by walking UP from the
+// `--config-path` file and then scans that project for nested root configs, so
+// without the marker it adopts whatever tree dobby's package sits in and one stray
+// nested `biome.jsonc` there (a `.claude/worktrees/` worktree, a monorepo sibling)
+// aborts the run with a config error and NO JSON. See that file's header.
 export function biomeConfigSpec(capabilities: string[]): ConfigDefaultSpec {
   const react = capabilities.includes("react");
   return {

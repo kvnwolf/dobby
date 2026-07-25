@@ -1256,6 +1256,28 @@ describe("dobby preset — biome/configless.react.jsonc (internal wrapper)", () 
   });
 });
 
+// --- biome/biome.jsonc — the project-root MARKER (hermetic config-less runs) --
+// Biome resolves a project root by walking UP from the `--config-path` file until it
+// finds a `biome.json(c)`, then scans that project for nested root configs. Without a
+// marker in the preset dir the adopted project is whatever tree dobby's package sits
+// in (in the dev repo: dobby itself), so one unrelated nested root `biome.jsonc` in
+// it — e.g. a git worktree under `.claude/worktrees/`, which the kit itself creates —
+// aborts biome with a config error and NO JSON, failing every config-less
+// `dobby check` in an unrelated project. Read as a file (a shipped asset, like the
+// presets); the behavior it protects is covered by the config-less biome slices below.
+describe("dobby preset — biome/biome.jsonc (project-root marker)", () => {
+  it("exists beside the presets so biome's project-root walk stops there", () => {
+    expect(existsSync(cliFile("biome/biome.jsonc"))).toBe(true);
+    expect(safeRead("biome/biome.jsonc")).toMatch(/"root"\s*:\s*true/);
+  });
+
+  it("is NOT a consumer extends target (exports expose only core + react)", () => {
+    const { exports } = readCliManifest();
+    expect(exports?.["./biome"]).toBeUndefined();
+    expect(exports?.["./biome/biome"]).toBeUndefined();
+  });
+});
+
 // --- vitest preset — the universal test wiring consumers merge on top ---------
 // The default-exported config asset (@kvnwolf/dobby/vitest) carries the two
 // ingredients every consumer was re-deriving by hand: inline zod (so vitest-under-
