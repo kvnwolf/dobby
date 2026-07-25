@@ -2,6 +2,8 @@
 
 Kevin Wolf's agentic engineering kit for Claude Code, shipped as two surfaces from one repo: the **plugin** (skills + agents + hooks) and the **`@kvnwolf/dobby` CLI**. dobby doesn't make Claude Code smarter — it makes it **disciplined**: the main thread stays an architect that frames, asks, decides, and reviews but never writes code, while four worker agents do the hands-on work. Every change is implemented, code-reviewed, and verified by **separate** agents before it counts as done.
 
+> **Standing on Matt Pocock's shoulders**: many of dobby's skills and agents are adapted from [mattpocock/skills](https://github.com/mattpocock/skills) — each adapted file credits its exact source in a footer. If you want to get better at working with AI, go visit [aihero.dev](https://aihero.dev/).
+
 ## Install
 
 ```
@@ -274,6 +276,3 @@ claude --plugin-dir ./plugin
 ```
 
 Skill edits hot-reload; agents and hooks need `/reload-plugins`.
-
----
-*`/dobby:prototype` is adapted from [mattpocock/skills](https://github.com/mattpocock/skills) `engineering/prototype`.*
