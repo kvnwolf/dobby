@@ -16,6 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import pkg from "../package.json";
 import { spawnFailure } from "./check.ts";
 import { run } from "./run.ts";
+import { isLiveDev } from "./tasks.ts";
 
 // Fixture paths are anchored to THIS test file's location (never process.cwd()),
 // so `run(["env"], cwd)` reads a stable, hand-written sample project. The
@@ -762,123 +763,6 @@ describe("run() — env command (devUrl resolution)", () => {
     const { devUrl } = JSON.parse(result.stdout);
     expect(devUrl).not.toBe(null);
     expect(devUrl).toContain("scratch-vite");
-  }, 20_000);
-});
-
-// run(["env"], cwd) — shareUrl (the public ngrok tunnel URL) resolution.
-//
-// shareUrl is read from portless's LOCAL routes.json (network-free): the route whose
-// hostname matches the app's devUrl host, its `ngrokUrl`. `portless get` can never
-// return the public URL, so this is a file read — the env network-free invariant
-// holds. Independent expected values: PORTLESS_STATE_DIR points at a temp dir WE
-// create, and the routes.json + its `ngrokUrl` are literals WE write; the hostname to
-// key on is READ BACK from the code's OWN devUrl output (a different mechanism — the
-// bundled portless resolve — than the shareUrl file read under test), so the match is
-// exact without hard-coding portless's hostname scheme. A missing/mismatched route → null.
-describe("run() — env command (shareUrl from portless routes.json)", () => {
-  const STATE = "PORTLESS_STATE_DIR";
-  const stateDirs: string[] = [];
-  let gitVite: string;
-  let originalCmux: string | undefined;
-  let originalState: string | undefined;
-
-  beforeAll(() => {
-    originalCmux = process.env[CMUX];
-    originalState = process.env[STATE];
-    gitVite = makeGitRepo("dobby-share", {
-      pkg: { dependencies: { vite: "^5.0.0" }, name: "scratch-share" },
-    });
-  });
-
-  afterAll(() => {
-    if (originalCmux === undefined) {
-      delete process.env[CMUX];
-    } else {
-      process.env[CMUX] = originalCmux;
-    }
-    if (originalState === undefined) {
-      delete process.env[STATE];
-    } else {
-      process.env[STATE] = originalState;
-    }
-    rmSync(gitVite, { force: true, recursive: true });
-    for (const d of stateDirs) {
-      rmSync(d, { force: true, recursive: true });
-    }
-    stateDirs.length = 0;
-  });
-
-  beforeEach(() => {
-    delete process.env[CMUX];
-    delete process.env[STATE];
-  });
-
-  // Write a routes.json into a fresh temp state dir; return the dir for PORTLESS_STATE_DIR.
-  function craftStateDir(routes: unknown): string {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-portless-")));
-    stateDirs.push(dir);
-    writeFileSync(join(dir, "routes.json"), JSON.stringify(routes));
-    return dir;
-  }
-
-  // The devUrl hostname the bundled portless assigns this project — read from env's OWN
-  // output (STATE unset → shareUrl irrelevant), so routes.json can be keyed to match it.
-  async function devHostname(): Promise<string> {
-    delete process.env[STATE];
-    const result = await run(["env"], gitVite);
-    const { devUrl } = parseEnvText(result.stdout);
-    if (devUrl === undefined || devUrl === "null") {
-      throw new Error(`expected a resolved devUrl, got: ${devUrl}`);
-    }
-    return new URL(devUrl).hostname;
-  }
-
-  it("reports shareUrl (the ngrokUrl) when routes.json has a route matching the devUrl hostname", async () => {
-    const hostname = await devHostname();
-    process.env[STATE] = craftStateDir({
-      [hostname]: { ngrokUrl: "https://abc123.ngrok.app" },
-    });
-    const result = await run(["env"], gitVite);
-    expect(result.exitCode).toBe(0);
-    const env = parseEnvText(result.stdout);
-    expect(env.devUrl).toContain("scratch-share");
-    expect(env.shareUrl).toBe("https://abc123.ngrok.app");
-    // Ordering: shareUrl sits right after devUrl in the text output.
-    expect(result.stdout.indexOf("devUrl:")).toBeLessThan(
-      result.stdout.indexOf("shareUrl:")
-    );
-  }, 20_000);
-
-  it("reports shareUrl null when routes.json has only a DIFFERENT hostname (no match)", async () => {
-    process.env[STATE] = craftStateDir({
-      "someone-else.localhost": { ngrokUrl: "https://other.ngrok.app" },
-    });
-    const result = await run(["env"], gitVite);
-    expect(result.exitCode).toBe(0);
-    expect(parseEnvText(result.stdout).shareUrl).toBe("null");
-  }, 20_000);
-
-  it("reports shareUrl null when the state dir has no routes.json (tolerant of a missing file)", async () => {
-    const dir = realpathSync(
-      mkdtempSync(join(tmpdir(), "dobby-portless-empty-"))
-    );
-    stateDirs.push(dir);
-    process.env[STATE] = dir;
-    const result = await run(["env"], gitVite);
-    expect(result.exitCode).toBe(0);
-    expect(parseEnvText(result.stdout).shareUrl).toBe("null");
-  }, 20_000);
-
-  it("carries shareUrl (the matched tunnel URL) in --json", async () => {
-    const hostname = await devHostname();
-    process.env[STATE] = craftStateDir({
-      [hostname]: { ngrokUrl: "https://json123.ngrok.app" },
-    });
-    const result = await run(["env", "--json"], gitVite);
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout).shareUrl).toBe(
-      "https://json123.ngrok.app"
-    );
   }, 20_000);
 });
 
@@ -3427,129 +3311,109 @@ describe("run() — dev command (no app capability: nothing to run)", () => {
   });
 });
 
-// ===========================================================================
-// SHARE — the ngrok tunnel is ON BY DEFAULT for `dobby dev`; `--no-share` opts out.
-//
-// `dev --dry-run` wraps the portless main in `portless run --ngrok …` by default.
-// Because share is the DEFAULT, a machine WITHOUT ngrok must DEGRADE (drop `--ngrok`
-// + emit ONE note), never fail. The ngrok-presence probe is IMPURE, so it is made
-// deterministic through the documented `DOBBY_NGROK` test seam ("1"=present,
-// "0"=absent) — letting BOTH branches be asserted through the run() seam regardless
-// of whether the runner has ngrok. One integration-ish case (below) exercises the
-// REAL `ngrok version` probe via a PATH-stubbed binary. Independent expected values:
-// the `--ngrok` literal, the degrade-note wording, and `--no-share` are all spec/
-// maintainer literals, never recomputed by the code under test.
-// ===========================================================================
-
-const NGROK = "DOBBY_NGROK";
-
-describe("run() — dev command (ngrok share tunnel: on by default, --no-share opts out)", () => {
-  let originalNgrok: string | undefined;
-
-  beforeAll(() => {
-    originalNgrok = process.env[NGROK];
-  });
-
-  afterAll(() => {
-    if (originalNgrok === undefined) {
-      delete process.env[NGROK];
-    } else {
-      process.env[NGROK] = originalNgrok;
-    }
-  });
-
-  beforeEach(() => {
-    delete process.env[NGROK];
-  });
-
-  it("wraps the portless main in `--ngrok` by default when ngrok is present", async () => {
-    process.env[NGROK] = "1";
+// --- Slice 5: removal proof — the share tunnel (`--ngrok` / `--no-share`) is GONE
+// The share feature was removed: portless still wraps the main, but WITHOUT the
+// `--ngrok` flag and with NO degrade note, and `--no-share` is no longer a flag at all
+// (parseArgs is strict, so it lands on the parse-error branch: exit 1 + the usage
+// text). The portless main is the positive anchor proving a real plan was produced, so
+// the negatives are not vacuous. The negatives name the REMOVED LITERALS (`--ngrok`,
+// the degrade wording) rather than a bare /ngrok/ — the rendered portless bin is an
+// absolute path under dobby's own tree, which a substring match could hit spuriously.
+describe("run() — dev command (removed: no ngrok share tunnel)", () => {
+  it("wraps the main in `portless run` WITHOUT `--ngrok`, and emits no degrade note", async () => {
     const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
     expect(result.exitCode).toBe(0);
-    // One line carries the portless wrapper, the `--ngrok` tunnel flag, AND the vite
-    // dev — proving `--ngrok` sits inside the portless-wrapped main, not elsewhere.
-    expect(
-      hasNoteLine(result.stdout, [/portless run/, /--ngrok/, /\bdev\b/])
-    ).toBe(true);
-    // No degrade note when ngrok is present.
-    expect(result.stdout).not.toMatch(/ngrok not installed/);
+    // Positive anchor: a real portless main IS produced.
+    expect(portlessMainLine(result.stdout)).toBe(true);
+    const portlessLine = result.stdout
+      .split("\n")
+      .find((l) => l.includes("portless run"));
+    expect(portlessLine).not.toContain("--ngrok");
+    // The former degrade note ("share: off (ngrok not installed — …)") is gone.
+    expect(result.stdout).not.toMatch(/share: off/);
+    expect(result.stdout).not.toContain("ngrok.com/download");
   });
 
-  it("omits `--ngrok` under --no-share (and emits no degrade note — opt-out wins over the probe)", async () => {
-    // Force ngrok PRESENT to prove `--no-share` — not ngrok absence — is what drops it.
-    process.env[NGROK] = "1";
+  it("rejects `--no-share` as an unknown flag (exit 1 + usage)", async () => {
     const result = await run(
       ["dev", "--dry-run", "--no-share"],
       fixture("dev-admin")
     );
-    expect(result.exitCode).toBe(0);
-    // The portless main is still planned (a real plan), just without the tunnel flag.
-    expect(portlessMainLine(result.stdout)).toBe(true);
-    const portlessLine = result.stdout
-      .split("\n")
-      .find((l) => l.includes("portless run"));
-    expect(portlessLine).not.toContain("--ngrok");
-    expect(result.stdout).not.toMatch(/ngrok not installed/);
-  });
-
-  it("DEGRADES when ngrok is missing: drops `--ngrok` and emits the one degrade note (names the two fixes)", async () => {
-    process.env[NGROK] = "0";
-    const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
-    expect(result.exitCode).toBe(0);
-    // Positive anchor: a real portless main IS produced (so the negative below is not
-    // vacuous), just without `--ngrok`.
-    expect(portlessMainLine(result.stdout)).toBe(true);
-    const portlessLine = result.stdout
-      .split("\n")
-      .find((l) => l.includes("portless run"));
-    expect(portlessLine).not.toContain("--ngrok");
-    // The single degrade note names the binary install + the authtoken step.
-    expect(result.stdout).toMatch(/share: off/);
-    expect(result.stdout).toContain("ngrok.com/download");
-    expect(result.stdout).toContain("add-authtoken");
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Usage: dobby");
   });
 });
 
-// The one integration-ish case: the REAL `ngrok version` probe (NOT the DOBBY_NGROK
-// seam). A stub `ngrok` whose `version` exits 0 is prepended to PATH (keeping git/curl
-// on the real PATH), so the genuine probe must find it and apply `--ngrok` by default.
-describe("run() — dev command (ngrok preflight via the real PATH probe)", () => {
-  let stubDir: string;
-  let originalPath: string | undefined;
-  let originalNgrok: string | undefined;
-
-  beforeAll(() => {
-    originalPath = process.env.PATH;
-    originalNgrok = process.env[NGROK];
-    stubDir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-ngrok-stub-")));
-    const binPath = join(stubDir, "ngrok");
-    writeFileSync(binPath, "#!/bin/sh\nexit 0\n");
-    chmodSync(binPath, 0o755);
+// --- Slice 6: the streaming split fires ONLY on a CLEAN live-dev argv ------------
+// The flag-validation hole this slice closes (review finding): index.ts routes a
+// live `dobby dev` to the STREAMING path BEFORE run()'s strict parseArgs ever sees
+// the argv, so a split that merely asks "is the command `dev` and is `--dry-run`
+// absent?" runs `dobby dev --no-share` LIVE with the flag SILENTLY ignored — while
+// the identical flag exits 1 + usage on `dev --dry-run` (slice 5) and on `up`
+// (task-9 slice). The split predicate therefore lives PURE in `tasks.isLiveDev`
+// and is asserted DIRECTLY here: index.ts is a bin (top-level await +
+// process.exit), never an import target, so the run() seam the rest of this suite
+// uses cannot reach the split at all — the same "unit-test what run() can't reach"
+// precedent as the `check.spawnFailure` slice above.
+//
+// Independent sources: every argv literal is hand-written here, and the RULE they
+// are judged against is the contract itself — stream ONLY a clean live dev (the
+// `dev` positional, no flags), defer EVERY flagged argv to run()'s strict parse,
+// which stays the single flag validator.
+describe("isLiveDev() — the streaming split fires only on a clean live dev", () => {
+  it("streams the bare `dev` invocation (the one live-dev form)", () => {
+    expect(isLiveDev(["dev"])).toBe(true);
   });
 
-  afterAll(() => {
-    if (originalPath === undefined) {
-      delete process.env.PATH;
-    } else {
-      process.env.PATH = originalPath;
-    }
-    if (originalNgrok === undefined) {
-      delete process.env[NGROK];
-    } else {
-      process.env[NGROK] = originalNgrok;
-    }
-    rmSync(stubDir, { force: true, recursive: true });
+  it("does NOT stream `dev --dry-run` (the plan belongs to the capture path)", () => {
+    expect(isLiveDev(["dev", "--dry-run"])).toBe(false);
   });
 
-  it("applies `--ngrok` by default when a real `ngrok` is on PATH (probe, not the DOBBY_NGROK seam)", async () => {
-    // No DOBBY_NGROK override — exercise the genuine probe. Prepend the stub dir.
-    delete process.env[NGROK];
-    process.env.PATH = `${stubDir}:${originalPath ?? ""}`;
-    const result = await run(["dev", "--dry-run"], fixture("dev-admin"));
-    expect(result.exitCode).toBe(0);
-    expect(hasNoteLine(result.stdout, [/portless run/, /--ngrok/])).toBe(true);
-    expect(result.stdout).not.toMatch(/ngrok not installed/);
-  }, 20_000);
+  it("does NOT stream `dev --no-share` — the removed flag must reach the strict parse", () => {
+    expect(isLiveDev(["dev", "--no-share"])).toBe(false);
+  });
+
+  it("does NOT stream a dev carrying ANY unknown flag (a future or typo'd one included)", () => {
+    expect(isLiveDev(["dev", "--frobnicate"])).toBe(false);
+    expect(isLiveDev(["dev", "-x"])).toBe(false);
+  });
+
+  it("does NOT stream a dev whose flag PRECEDES the positional", () => {
+    // The old predicate scanned for the first NON-flag token, so a LEADING flag was
+    // invisible to it; a flagged argv must defer to run() wherever the flag sits.
+    expect(isLiveDev(["--json", "dev"])).toBe(false);
+    expect(isLiveDev(["--no-share", "dev"])).toBe(false);
+  });
+
+  it("never streams a non-dev argv (every finite command routes through run())", () => {
+    expect(isLiveDev([])).toBe(false);
+    expect(isLiveDev(["up"])).toBe(false);
+    expect(isLiveDev(["check"])).toBe(false);
+    expect(isLiveDev(["-v"])).toBe(false);
+    // `dev` as an ARGUMENT of another command is not a live dev either.
+    expect(isLiveDev(["db:push", "dev"])).toBe(false);
+  });
+});
+
+// The fall-through half of that contract, observed through the run() seam: what the
+// split now defers really does land on the strict parse. `dev --no-share` WITHOUT
+// --dry-run — the exact argv the old split swallowed — must be rejected exactly like
+// its `--dry-run` sibling (slice 5) and like `up --no-share`: exit 1, empty stdout,
+// the parse error BEFORE the usage. It also proves parseArgs runs AHEAD of the dev
+// arm — no dev plan is rendered on the way out.
+describe("run() — a flagged live dev falls through to the strict parse", () => {
+  it("rejects `dev --no-share` (no --dry-run) with exit 1 + usage, printing no plan", async () => {
+    const result = await run(["dev", "--no-share"], fixture("dev-admin"));
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Usage: dobby");
+    // Spec order: the parse-error message precedes the usage.
+    expect(result.stderr.startsWith("Usage: dobby")).toBe(false);
+    // Anti-tautology: NOT the unknown-command branch, and no dev plan was produced.
+    expect(result.stderr).not.toContain("unknown command");
+    expect(combined(result)).not.toContain("portless run");
+  });
 });
 
 // ===========================================================================
@@ -3576,8 +3440,8 @@ describe("run() — dev command (ngrok preflight via the real PATH probe)", () =
 //
 // Independent sources for every expected value below:
 //   - The no-app message 'no app to run' (up step 0); the cmux command literals
-//     `cmux new-pane` / `--type browser` / `--direction right` / `new-split down`
-//     / `--surface` / `cmux send`; the pane names `dobby-browser-<slug>` /
+//     `cmux new-pane` / `--type browser` / `--direction right` / `--surface` /
+//     `cmux send`; the pane names `dobby-browser-<slug>` /
 //     `dobby-run-<slug>`; the detached-state paths `.dobby/dev.pid` /
 //     `.dobby/dev.log`; the neon branch verbs `neonctl branches create` /
 //     `neonctl branches delete` with `--project-id` and the branch `dobby/<slug>` —
@@ -3659,6 +3523,106 @@ const VITE_NEON_PKG = {
 const NEON_ENV_LOCAL =
   "NEON_API_KEY=napi_testkey\nNEON_PROJECT_ID=proj-123\n" +
   "DATABASE_URL=postgres://old@host/db\nDATABASE_URL_UNPOOLED=postgres://old@host/db_unpooled\n";
+
+// The documented TEST SEAM capping up's liveness retry loop (the sibling of
+// DOBBY_SKIP_INSTALL) — it keeps the real-run slices instant instead of sleeping
+// through the production 6×5s wait.
+const LIVENESS_RETRIES = "DOBBY_LIVENESS_RETRIES";
+// A probe count no run reaches: the stub `curl` then NEVER succeeds.
+const NEVER_SUCCEEDS = 999;
+// The dev-start line up types into the run pane — the literal WE expect (never
+// recomputed by the code under test). Asserted as a NEGATIVE on the already-live path:
+// re-running up on a live app must never start a second dev server.
+const DEV_START_LINE = "dobby dev";
+
+// Restore an env var to the value captured before a slice mutated it (unset when it
+// was unset) — the beforeAll/afterAll dance the lifecycle slices repeat.
+function restoreEnv(name: string, original: string | undefined): void {
+  if (original === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = original;
+  }
+}
+
+// Write an EXECUTABLE shell stub at <dir>/<name> (creating <dir>), so a bare-name
+// spawn resolving through PATH runs OUR script instead of the real tool.
+function writeStubBin(dir: string, name: string, body: string): void {
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, name);
+  writeFileSync(path, body);
+  chmodSync(path, 0o755);
+}
+
+// Build the stub bin dir a REAL `up` run needs, plus the shared action log both
+// stubs append to (one file = one total order of what up did):
+//   - `cmux`  — records `cmux <argv>` and answers `new-pane` with an
+//     `OK surface:<pid> pane:7 workspace:1` line (the shape the real cmux prints, so
+//     the surface-ref capture succeeds); every other subcommand is a silent exit 0,
+//     which makes pane DISCOVERY find nothing — so a FRESH-START up creates both kit
+//     panes, while an ALREADY-LIVE up (which starts nothing) creates only the browser
+//     pane and never replaces the missing run one.
+//   - `curl`  — records `curl-ok` / `curl-fail` per probe, succeeding from the
+//     `succeedFrom`-th call on (1 = already live, NEVER_SUCCEEDS = unreachable).
+//   - `portless` — a safety net only: dobby resolves portless from its OWN bundled
+//     tree, so this is reached solely if that resolution fails (portless absent),
+//     keeping devUrl non-null either way.
+function makeUpStubs(
+  track: string[],
+  opts: { succeedFrom: number }
+): { binDir: string; log: string } {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-upstub-")));
+  track.push(dir);
+  const log = join(dir, "actions.log");
+  const counter = join(dir, "curl.count");
+  const binDir = join(dir, "bin");
+
+  writeStubBin(
+    binDir,
+    "cmux",
+    `#!/bin/sh
+printf 'cmux %s\\n' "$*" >> ${log}
+if [ "$1" = "new-pane" ]; then
+  printf 'OK surface:%s pane:7 workspace:1\\n' "$$"
+fi
+exit 0
+`
+  );
+  writeStubBin(
+    binDir,
+    "curl",
+    `#!/bin/sh
+n=$(cat ${counter} 2>/dev/null || echo 0)
+n=$((n + 1))
+printf '%s' "$n" > ${counter}
+if [ "$n" -ge ${opts.succeedFrom} ]; then
+  printf 'curl-ok %s\\n' "$*" >> ${log}
+  exit 0
+fi
+printf 'curl-fail %s\\n' "$*" >> ${log}
+exit 1
+`
+  );
+  writeStubBin(
+    binDir,
+    "portless",
+    `#!/bin/sh
+printf 'https://stub-dev.localhost\\n'
+exit 0
+`
+  );
+  return { binDir, log };
+}
+
+// The stubs' shared action log as ordered records (empty when nothing ran).
+function stubRecords(log: string): string[] {
+  if (!existsSync(log)) {
+    return [];
+  }
+  return readFileSync(log, "utf8")
+    .split("\n")
+    .filter((line) => line !== "");
+}
 
 // --- Slice U1 (tracer bullet): `up` is wired and no-app-gates GRACEFULLY --------
 // up's step 0: a project with NO vite (app) capability prints 'no app to run' and
@@ -3786,13 +3750,14 @@ describe("run() — up command (fail hard outside a git repo)", () => {
   }, 20_000);
 });
 
-// --- Slice U3 (headline): cmux present -> the positional pane layout plan --------
-// The load-bearing layout decision: browser pane to the RIGHT of Claude, run
-// terminal BELOW the browser via `new-split down` TARGETED BY --surface (never
-// focus-dependent). All asserted from the --dry-run plan; CMUX_WORKSPACE_ID drives
-// the branch. Fixture is vite-ONLY (no neon) so step 2 is skipped and the plan
-// reaches step 3's pane creation.
-describe("run() — up command (cmux present: positional pane layout plan)", () => {
+// --- Slice U3 (headline): cmux present -> the two kit panes, in TIME order -------
+// The load-bearing decision: both kit panes are created right of Claude, but at
+// DIFFERENT moments — the run terminal at start time (watching the server boot is
+// its purpose) and the browser pane only AFTER the liveness wait (a pane opened
+// mid-boot renders a 404). All asserted from the --dry-run plan, whose line order IS
+// the execution order; CMUX_WORKSPACE_ID drives the branch. Fixture is vite-ONLY (no
+// neon) so step 2 is skipped and the plan reaches step 3's pane creation.
+describe("run() — up command (cmux present: kit panes in liveness order)", () => {
   const dirs: string[] = [];
   let repo: string;
   let slug: string;
@@ -3841,14 +3806,44 @@ describe("run() — up command (cmux present: positional pane layout plan)", () 
     ).toBe(true);
   }, 20_000);
 
-  it("puts the run terminal BELOW the browser via a surface-targeted `new-split down` (never focus-dependent)", async () => {
+  it("opens the run terminal right of Claude and sends it the start line through its captured --surface ref", async () => {
     const result = await run(["up", "--dry-run"], repo);
     const out = result.stdout;
-    // The split is targeted by --surface (the browser ref), not by focus — the
-    // load-bearing layout decision.
-    expect(hasNoteLine(out, [/new-split down/, /--surface/])).toBe(true);
-    // Ordering: the browser pane is created BEFORE the split that targets it.
-    expect(out.indexOf("new-pane")).toBeLessThan(out.indexOf("new-split down"));
+    // The run pane is its OWN `new-pane` (never a split off the browser — the
+    // browser does not exist yet at start time), and it is driven by the surface
+    // ref cmux hands back, not by focus.
+    const runPaneLine = out
+      .split("\n")
+      .find((l) => l.includes("new-pane") && !l.includes("--type browser"));
+    expect(runPaneLine, "expected a run-pane `new-pane` line").toBeDefined();
+    expect(runPaneLine).toContain("--direction right");
+    expect(hasNoteLine(out, [/cmux send/, /--surface/])).toBe(true);
+    // The old layout mechanism is gone: `new-split` cannot create a browser pane,
+    // so deferring the browser required the run pane to be a plain `new-pane`.
+    expect(out).not.toContain("new-split");
+  }, 20_000);
+
+  it("plans the RUN pane BEFORE the liveness wait and the BROWSER pane AFTER it (the 404 fix)", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    const lines = result.stdout.split("\n");
+    const runPaneAt = lines.findIndex(
+      (l) => l.includes("new-pane") && !l.includes("--type browser")
+    );
+    const waitAt = lines.findIndex((l) => /wait for liveness/.test(l));
+    const browserPaneAt = lines.findIndex((l) => l.includes("--type browser"));
+    // Presence guards first, so no ordering assertion can pass vacuously on a
+    // missing line (findIndex -1 < anything).
+    expect(runPaneAt, "expected a run-pane `new-pane` line").toBeGreaterThan(
+      -1
+    );
+    expect(waitAt, "expected a liveness-wait line").toBeGreaterThan(-1);
+    expect(
+      browserPaneAt,
+      "expected a browser-pane `new-pane --type browser` line"
+    ).toBeGreaterThan(-1);
+    // The invariant: run terminal at start, browser pane only once the app answers.
+    expect(runPaneAt).toBeLessThan(waitAt);
+    expect(browserPaneAt).toBeGreaterThan(waitAt);
   }, 20_000);
 
   it("names the panes `dobby-browser-<slug>` and `dobby-run-<slug>` (slug = workroot basename)", async () => {
@@ -3889,6 +3884,164 @@ describe("run() — up command (cmux present: positional pane layout plan)", () 
     expect(renameLine).not.toContain(`dobby-browser-${slug}`);
     expect(renameLine).not.toContain(`dobby-run-${slug}`);
   }, 20_000);
+});
+
+// --- Slice U3b (headline): a REAL `up` — the browser pane never precedes liveness -
+// The dry-run plan proves the ORDER is planned; this slice proves the EXECUTION
+// honors it, by running a real `up` (no --dry-run) against STUB binaries on PATH:
+//   - `cmux` appends every invocation (its argv) to a shared log and answers
+//     `new-pane` with an `OK surface:<n> …` line (the shape the real cmux prints), so
+//     the surface-ref capture succeeds without a live cmux;
+//   - `curl` appends each probe to the SAME log WITH its outcome (`curl-ok` /
+//     `curl-fail`).
+// One log ⇒ one TOTAL ORDER of what up really did — the seam that makes the ordering
+// falsifiable: a browser `new-pane` recorded before the first `curl-ok` fails the
+// test, a run that never becomes reachable must record NO browser pane at all, and an
+// up that finds the app ALREADY live must record NO `cmux send` at all (starting a
+// second dev server against a healthy app is the double-start hazard).
+// Every expected value is a literal from the stubs WE wrote (record prefixes, the
+// surface ref, the exit codes), never recomputed by the code under test. The two
+// documented test seams keep the run cheap: `DOBBY_SKIP_INSTALL=1` (no bun install)
+// and `DOBBY_LIVENESS_RETRIES` (no minutes of real retry sleeps).
+describe("run() — up command (real run: the browser pane waits for liveness)", () => {
+  const dirs: string[] = [];
+  let originalCmux: string | undefined;
+  let originalSkip: string | undefined;
+  let originalRetries: string | undefined;
+  let originalPath: string | undefined;
+
+  beforeAll(() => {
+    originalCmux = process.env[CMUX];
+    originalSkip = process.env[SKIP_INSTALL];
+    originalRetries = process.env[LIVENESS_RETRIES];
+    originalPath = process.env.PATH;
+  });
+
+  afterAll(() => {
+    restoreEnv(CMUX, originalCmux);
+    restoreEnv(SKIP_INSTALL, originalSkip);
+    restoreEnv(LIVENESS_RETRIES, originalRetries);
+    restoreEnv("PATH", originalPath);
+    for (const d of dirs) {
+      rmSync(d, { force: true, recursive: true });
+    }
+    dirs.length = 0;
+  });
+
+  beforeEach(() => {
+    process.env[CMUX] = "cmux-ws-exec";
+    // The setup phase must not shell out to bun (the documented seam).
+    process.env[SKIP_INSTALL] = "1";
+    process.env.PATH = originalPath;
+    delete process.env[LIVENESS_RETRIES];
+  });
+
+  it("opens the run pane while the app is still dead, then the browser pane only after a probe answers", async () => {
+    // curl fails the first probe (the already-up short-circuit must NOT fire) and
+    // answers from the second on — the first wait attempt, so no retry sleep.
+    const { binDir, log } = makeUpStubs(dirs, { succeedFrom: 2 });
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    process.env[LIVENESS_RETRIES] = "2";
+    const repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+
+    const result = await run(["up"], repo);
+    // A resolvable devUrl is a precondition of this path (portless resolves one
+    // locally); a null devUrl would fail the wait, so surface that loudly.
+    expect(result.exitCode, combined(result)).toBe(0);
+
+    const lines = stubRecords(log);
+    const runPaneAt = lines.findIndex(
+      (l) => l.startsWith("cmux new-pane") && !l.includes("--type browser")
+    );
+    const liveAt = lines.findIndex((l) => l.startsWith("curl-ok"));
+    const browserPaneAt = lines.findIndex((l) => l.includes("--type browser"));
+    // Presence guards first, so no ordering assertion passes vacuously (-1).
+    expect(runPaneAt, "expected a run-pane `new-pane` record").toBeGreaterThan(
+      -1
+    );
+    expect(liveAt, "expected a successful curl probe record").toBeGreaterThan(
+      -1
+    );
+    expect(browserPaneAt, "expected a browser-pane record").toBeGreaterThan(-1);
+    // The invariant, both directions: the run pane opened BEFORE the app answered
+    // (its purpose is watching the boot) and the browser pane strictly AFTER.
+    expect(runPaneAt).toBeLessThan(liveAt);
+    expect(browserPaneAt).toBeGreaterThan(liveAt);
+  }, 30_000);
+
+  it("opens NO browser pane when the app never becomes reachable (exit 1, run pane still opened)", async () => {
+    // curl NEVER succeeds; one retry keeps the wait instant. A 404/dead browser pane
+    // is noise — the failure report stays, the pane must not appear.
+    const { binDir, log } = makeUpStubs(dirs, { succeedFrom: NEVER_SUCCEEDS });
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    process.env[LIVENESS_RETRIES] = "1";
+    const repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+
+    const result = await run(["up"], repo);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).not.toContain("unknown command");
+    expect(combined(result)).toMatch(/never became reachable/i);
+
+    const lines = stubRecords(log);
+    // Positive anchors: the start DID happen (run pane created + the dev line sent),
+    // so the negative below cannot pass vacuously on an up that did nothing.
+    expect(
+      lines.some(
+        (l) => l.startsWith("cmux new-pane") && !l.includes("--type browser")
+      )
+    ).toBe(true);
+    expect(lines.some((l) => l.startsWith("cmux send"))).toBe(true);
+    // The load-bearing negative: no browser pane was ever created or named.
+    expect(lines.some((l) => l.includes("--type browser"))).toBe(false);
+    expect(lines.some((l) => l.includes("dobby-browser-"))).toBe(false);
+  }, 30_000);
+
+  it("opens the browser pane immediately when up finds the app ALREADY live (no wait to defer it)", async () => {
+    // The already-up short-circuit: the very first probe answers, so the app is live
+    // NOW — deferring the browser pane would serve nobody.
+    const { binDir, log } = makeUpStubs(dirs, { succeedFrom: 1 });
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    const repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+
+    const result = await run(["up"], repo);
+    expect(result.exitCode, combined(result)).toBe(0);
+
+    const lines = stubRecords(log);
+    // Exactly one probe was needed (the short-circuit) and the browser pane opened.
+    expect(lines.filter((l) => l.startsWith("curl-ok")).length).toBe(1);
+    expect(lines.some((l) => l.includes("--type browser"))).toBe(true);
+  }, 30_000);
+
+  it("starts NOTHING when the app is ALREADY live and the run pane is gone (no double start)", async () => {
+    // The double-start hazard: the stub cmux answers pane DISCOVERY with nothing, so
+    // the `dobby-run-<slug>` pane is MISSING — the state after the user closed it, or
+    // when the server that answers the probe is a detached process from an earlier
+    // session and THIS up runs under cmux. Recreating that pane and sending it
+    // `dobby dev` would boot a SECOND dev server against the same portless route for
+    // an app that is already healthy, so up must send nothing and create no run pane.
+    const { binDir, log } = makeUpStubs(dirs, { succeedFrom: 1 });
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    const repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+
+    const result = await run(["up"], repo);
+    expect(result.exitCode, combined(result)).toBe(0);
+
+    const lines = stubRecords(log);
+    // Positive anchor: up really took the already-live path (one answering probe) and
+    // really talked to cmux (the browser pane), so the negatives below cannot pass
+    // vacuously on a run that did nothing at all.
+    expect(lines.filter((l) => l.startsWith("curl-ok")).length).toBe(1);
+    expect(lines.some((l) => l.includes("--type browser"))).toBe(true);
+    // The load-bearing negatives: no dev-start line was sent to any surface, and no
+    // run (non-browser) pane was created to send one into.
+    expect(lines.some((l) => l.startsWith("cmux send"))).toBe(false);
+    expect(lines.some((l) => l.includes(DEV_START_LINE))).toBe(false);
+    expect(
+      lines.some(
+        (l) => l.startsWith("cmux new-pane") && !l.includes("--type browser")
+      )
+    ).toBe(false);
+  }, 30_000);
 });
 
 // --- Slice U4: NO cmux -> detached run + pidfile/log plan (the discriminator) ----
@@ -3950,24 +4103,19 @@ describe("run() — up command (no cmux: detached run + pidfile plan)", () => {
   }, 20_000);
 });
 
-// --- Slice U-share: share is on by default for the started `dobby dev` -----------
-// `up` starts `dobby dev` (via a cmux pane or a detached spawn); that inner dev shares
-// by DEFAULT, so `up`'s start command is plain `bunx dobby dev`. `up --no-share` passes
-// `--no-share` through to it. And because share is the default, `up` surfaces the SAME
-// degrade note as dev when ngrok is missing (share on, no tunnel). All asserted from
-// the --dry-run plan; DOBBY_NGROK makes the (impure) probe deterministic. Fixture is
-// vite-ONLY (no neon) so the plan reaches the start action. `--ngrok` itself never
-// appears in up's plan (the pane command stays plain `bunx dobby dev`) — the inner dev
-// owns the portless wrapper.
-describe("run() — up command (share tunnel: default vs --no-share vs degrade)", () => {
+// --- Slice U-start: the started `dobby dev` command ------------------------------
+// `up` starts `dobby dev` (via a cmux pane or a detached spawn); the start command is
+// plain `bunx dobby dev` — no share/tunnel flags (the feature was removed), and no
+// `--ngrok` anywhere in up's plan (the inner dev owns the portless wrapper). Asserted
+// from the --dry-run plan; the fixture is vite-ONLY (no neon) so the plan reaches the
+// start action.
+describe("run() — up command (the started dev command)", () => {
   const dirs: string[] = [];
   let repo: string;
   let originalCmux: string | undefined;
-  let originalNgrok: string | undefined;
 
   beforeAll(() => {
     originalCmux = process.env[CMUX];
-    originalNgrok = process.env[NGROK];
     repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
   });
 
@@ -3977,11 +4125,6 @@ describe("run() — up command (share tunnel: default vs --no-share vs degrade)"
     } else {
       process.env[CMUX] = originalCmux;
     }
-    if (originalNgrok === undefined) {
-      delete process.env[NGROK];
-    } else {
-      process.env[NGROK] = originalNgrok;
-    }
     for (const d of dirs) {
       rmSync(d, { force: true, recursive: true });
     }
@@ -3990,13 +4133,10 @@ describe("run() — up command (share tunnel: default vs --no-share vs degrade)"
 
   beforeEach(() => {
     delete process.env[CMUX];
-    // Default the probe to PRESENT so the pane/detached-command assertions are not
-    // distracted by a degrade note; the degrade case sets DOBBY_NGROK=0 explicitly.
-    process.env[NGROK] = "1";
   });
 
-  it("cmux: the pane command is plain `bunx dobby dev` (shares by default, no --no-share)", async () => {
-    process.env[CMUX] = "cmux-ws-share";
+  it("cmux: the pane command is plain `bunx dobby dev` (no share flags)", async () => {
+    process.env[CMUX] = "cmux-ws-start";
     const result = await run(["up", "--dry-run"], repo);
     expect(result.exitCode).toBe(0);
     const sendLine = result.stdout
@@ -4009,49 +4149,32 @@ describe("run() — up command (share tunnel: default vs --no-share vs degrade)"
     expect(result.stdout).not.toContain("--ngrok");
   }, 20_000);
 
-  it("cmux + --no-share: the pane command carries `bunx dobby dev --no-share`", async () => {
-    process.env[CMUX] = "cmux-ws-share";
-    const result = await run(["up", "--dry-run", "--no-share"], repo);
-    expect(result.exitCode).toBe(0);
-    const sendLine = result.stdout
-      .split("\n")
-      .find((l) => l.includes("cmux send"));
-    expect(sendLine).toContain("bunx dobby dev --no-share");
-  }, 20_000);
-
-  it("no cmux + --no-share: the detached command carries `dobby dev --no-share`", async () => {
-    const result = await run(["up", "--dry-run", "--no-share"], repo);
+  it("no cmux: the detached command is plain `bunx dobby dev` (no share flags)", async () => {
+    const result = await run(["up", "--dry-run"], repo);
     expect(result.exitCode).toBe(0);
     const detachedLine = result.stdout
       .split("\n")
       .find((l) => l.includes("spawn detached"));
     expect(detachedLine, "expected a `spawn detached` line").toBeDefined();
-    expect(detachedLine).toContain("dobby dev --no-share");
-  }, 20_000);
-
-  it("no cmux, default: the detached command is plain `dobby dev` (no --no-share)", async () => {
-    const result = await run(["up", "--dry-run"], repo);
-    expect(result.exitCode).toBe(0);
-    const detachedLine = result.stdout
-      .split("\n")
-      .find((l) => l.includes("spawn detached"));
     expect(detachedLine).toContain("bunx dobby dev");
     expect(detachedLine).not.toContain("--no-share");
   }, 20_000);
 
-  it("DEGRADES in the plan when ngrok is missing (share on by default): the degrade note appears", async () => {
-    process.env[NGROK] = "0";
+  it("plans no share degrade note (the share feature was removed)", async () => {
     const result = await run(["up", "--dry-run"], repo);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toMatch(/share: off/);
-    expect(result.stdout).toContain("ngrok.com/download");
+    // Positive anchor: a real start action IS planned, so the negatives below hold
+    // against a non-empty plan.
+    expect(result.stdout).toContain("dobby dev");
+    expect(result.stdout).not.toMatch(/share: off/);
+    expect(result.stdout).not.toContain("ngrok.com/download");
   }, 20_000);
 
-  it("emits NO degrade note under --no-share, even when ngrok is missing (opt-out wins)", async () => {
-    process.env[NGROK] = "0";
+  it("rejects `up --no-share` as an unknown flag (exit 1 + usage)", async () => {
     const result = await run(["up", "--dry-run", "--no-share"], repo);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).not.toMatch(/ngrok not installed/);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Usage: dobby");
   }, 20_000);
 });
 

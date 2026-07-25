@@ -548,44 +548,29 @@ function describeDbCommand(command: DbCommand): string {
 }
 
 // ---------------------------------------------------------------------------
-// Share (ngrok tunnel) decision — PURE (the probe is IMPURE, in lifecycle.ts).
+// The bin's STREAMING-SPLIT predicate — PURE, and therefore unit-testable
+// (index.ts is a bin, never an import target).
 //
-// The ngrok tunnel is ON BY DEFAULT (a maintainer decision): `dobby dev`/`dobby up`
-// wrap the app in `portless run --ngrok …` so it is reachable from the maintainer's
-// phone. `--no-share` opts out. Because share is the DEFAULT, a machine WITHOUT the
-// `ngrok` binary must not lose its bring-up: it DEGRADES — dropping `--ngrok` and
-// surfacing ONE note — never failing. The ngrok-present fact is discovered by an
-// IMPURE probe (`ngrokAvailable`, lifecycle.ts); this decision takes that fact as
-// DATA so it stays pure and both branches are deterministically testable.
+// index.ts hands a LIVE `dobby dev` to `lifecycle.runDev` (the streaming path)
+// instead of `run()` (the capture seam). That interception happens BEFORE run()'s
+// strict `parseArgs`, so whatever it swallows is never flag-validated: a naive
+// "is the command `dev` and is `--dry-run` absent?" split runs `dobby dev
+// --no-share` (or any unknown flag) live with the flag SILENTLY ignored, while
+// the very same flag exits 1 + usage on `dev --dry-run` / `up`.
+//
+// So the split fires ONLY on a CLEAN live dev: the `dev` positional with NO flag
+// token at all. ANY flagged argv (`dev --dry-run`, `dev --json`, `dev
+// --no-share`) falls through to run(), whose strict parse is the ONE flag
+// validator — a known flag is handled there (`--dry-run` prints the plan), an
+// unknown one exits 1 with the usage. Nothing is duplicated here: the rule is
+// simply "no flags", which is exactly right because NO flag is meaningful to a
+// live dev (`--dry-run` makes it not-live, and every other flag belongs to
+// another command). Extra POSITIONALS still stream (`run()` ignores extra
+// positionals for every command, so they are not a validation signal).
 // ---------------------------------------------------------------------------
-
-// The single note surfaced when share was requested (the default) but the `ngrok`
-// binary is missing — dobby degraded to no tunnel. Names the two one-time fixes.
-const SHARE_OFF_NOTE =
-  "share: off (ngrok not installed — https://ngrok.com/download + ngrok config add-authtoken)";
-
-// The resolved share decision consumed by the dev/up executors:
-//   - `ngrok` — whether `--ngrok` is ACTUALLY applied (share requested AND ngrok present).
-//   - `note`  — the degrade note when share was requested but ngrok is missing, else null.
-export interface ShareDecision {
-  ngrok: boolean;
-  note: string | null;
-}
-
-// Decide the share outcome from the requested intent + the (impurely probed) ngrok
-// presence. Opted out (`share=false`) → no tunnel, no note. Requested + ngrok present
-// → tunnel on. Requested + ngrok absent → DEGRADE (no tunnel, the one note). Pure.
-export function shareDecision(
-  share: boolean,
-  ngrokPresent: boolean
-): ShareDecision {
-  if (!share) {
-    return { ngrok: false, note: null };
-  }
-  if (ngrokPresent) {
-    return { ngrok: true, note: null };
-  }
-  return { ngrok: false, note: SHARE_OFF_NOTE };
+export function isLiveDev(argv: string[]): boolean {
+  const flagless = argv.every((arg) => !arg.startsWith("-"));
+  return flagless && argv[0] === "dev";
 }
 
 // ---------------------------------------------------------------------------

@@ -50,7 +50,6 @@ const OPTION_LINES = [
   "  --fix           check: apply biome's safe fixes first, then report what remains",
   "  --hook          check: edit-time PostToolUse mode (payload on stdin)",
   "  --dry-run       dev / build / db:* / up / down: print the resolved action plan without executing it",
-  "  --no-share      dev / up: disable the ngrok share tunnel (on by default)",
   "  -v, --version   Print the dobby version and exit",
 ];
 
@@ -103,8 +102,6 @@ export async function run(
   let hook: boolean | undefined;
   let fix: boolean | undefined;
   let dryRun: boolean | undefined;
-  // The ngrok share tunnel is ON BY DEFAULT; `--no-share` opts out (dev / up).
-  let noShare: boolean | undefined;
   // The selective `check` flags: any present => run ONLY the flagged steps.
   let checkFlags: CheckFlags = {};
 
@@ -119,7 +116,6 @@ export async function run(
         hook: { type: "boolean" },
         json: { type: "boolean" },
         lint: { type: "boolean" },
-        "no-share": { type: "boolean" },
         test: { type: "boolean" },
         types: { type: "boolean" },
         unused: { type: "boolean" },
@@ -128,14 +124,7 @@ export async function run(
       strict: true,
     });
     ({ positionals } = parsed);
-    ({
-      "dry-run": dryRun,
-      fix,
-      hook,
-      json,
-      "no-share": noShare,
-      version,
-    } = parsed.values);
+    ({ "dry-run": dryRun, fix, hook, json, version } = parsed.values);
     checkFlags = {
       build: parsed.values.build,
       lint: parsed.values.lint,
@@ -207,10 +196,14 @@ export async function run(
     // The dev PLAN — the `--dry-run` capture output — plus the no-app gate. A LIVE
     // dev (a managed group of the portless-wrapped main + concurrent secondaries
     // with signal forwarding) is owned by the bin's STREAMING path: index.ts
-    // intercepts `dobby dev` before run() is reached, so run() only ever PLANS and
-    // never spawns a dev server (a would-be-live dev reaching here still just prints
-    // the plan). No app (no vite) is a hard error: exit 1 with 'nothing to run'.
-    const report = planDev(cwd, { share: !noShare });
+    // intercepts a CLEAN `dobby dev` (the positional, no flags — `tasks.isLiveDev`)
+    // before run() is reached, so run() only ever PLANS and never spawns a dev
+    // server. A FLAGGED dev always lands here, and the strict parseArgs above has
+    // already had its say — an unknown flag (`dev --no-share`) never reaches this
+    // arm at all (exit 1 + usage), so a would-be-live dev that gets here is one
+    // whose flags parsed, and it just prints the plan. No app (no vite) is a hard
+    // error: exit 1 with 'nothing to run'.
+    const report = planDev(cwd);
     if (!report.ok) {
       return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
     }
@@ -249,7 +242,7 @@ export async function run(
     // missing creds fails hard (no main-DB fallback). `--dry-run` renders the
     // decision-derived plan without probing / spawning / touching cmux or neon; a
     // real run executes it and reports the outcome (streamed stdio, so no stdout).
-    const report = runUp(cwd, { dryRun: Boolean(dryRun), share: !noShare });
+    const report = runUp(cwd, { dryRun: Boolean(dryRun) });
     if (!report.ok) {
       return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
     }
@@ -262,9 +255,7 @@ export async function run(
     return {
       exitCode: report.exitCode,
       stderr: report.failure === null ? "" : `${report.failure}\n`,
-      // An advisory note (share degraded / already-live no-tunnel hint) renders on
-      // stdout; a hard failure renders on stderr.
-      stdout: report.note === null ? "" : `${report.note}\n`,
+      stdout: "",
     };
   }
 
@@ -343,7 +334,6 @@ function formatEnvText(snapshot: EnvSnapshot): string {
     `capabilities: ${capabilities}`,
     `config: ${snapshot.config}`,
     `devUrl: ${scalar(snapshot.devUrl)}`,
-    `shareUrl: ${scalar(snapshot.shareUrl)}`,
     `runPane: ${scalar(snapshot.runPane)}`,
     `browserPane: ${scalar(snapshot.browserPane)}`,
   ]
@@ -415,18 +405,12 @@ function formatDevPlan(plan: ResolvedDevPlan): string {
     for (const clear of plan.cacheClears) {
       lines.push(`  ${clear.tool} ${clear.args.join(" ")}`.trimEnd());
     }
-    // `--ngrok` (the share tunnel) sits between `run` and the wrapped command; absent
-    // when share is off or ngrok is missing (a `shareNote` then explains the degrade).
-    const ngrok = plan.main.ngrok ? "--ngrok " : "";
     lines.push(
-      `  ${plan.main.portless} run ${ngrok}${renderResolvedCommand(plan.main.command)}`
+      `  ${plan.main.portless} run ${renderResolvedCommand(plan.main.command)}`
     );
   }
   for (const secondary of plan.secondaries) {
     lines.push(`  ${renderResolvedCommand(secondary)}`);
-  }
-  if (plan.shareNote !== null) {
-    lines.push(`  ${plan.shareNote}`);
   }
   return ["Dev plan (dry-run):", ...lines].join("\n").concat("\n");
 }
@@ -437,19 +421,19 @@ function renderResolvedCommand(command: ResolvedDevCommand): string {
 }
 
 // The placeholder surface refs the `up` plan renders where a real run would capture
-// a runtime cmux surface ref — the split targets the browser surface by ref (never
-// by focus), so the plan spells the dependency out even though the ref is unknown
-// until the pane is created.
+// a runtime cmux surface ref — each pane is renamed (and the run pane is sent its
+// start line) through the ref cmux hands back, so the plan spells the dependency out
+// even though the ref is unknown until the pane is created.
 const BROWSER_SURFACE = "<browser-surface>";
 const RUN_SURFACE = "<run-surface>";
 
 // Render the FULL `up` plan for `--dry-run`: the SETUP PHASE first (install → copies
 // → extras, mirroring the folded former setup plan), THEN the cmux WORKSPACE rename
 // (when under cmux — independent of the app gate), THEN the run phase in execution
-// order (probe → neon branch → cmux panes XOR detached run → liveness wait), OR — when
-// the run phase is skipped — the skip reason line ('no app to run'). The cmux pane
-// block renders the exact positional layout (browser `--direction right`, run terminal
-// `new-split down` targeted by `--surface`).
+// order (probe → neon branch → cmux RUN pane XOR detached run → liveness wait → cmux
+// BROWSER pane), OR — when the run phase is skipped — the skip reason line ('no app to
+// run'). The pane lines sit where they really happen: the run terminal at start time,
+// the browser pane AFTER the wait (a browser opened mid-boot renders a 404).
 function formatUpPlan(plan: UpPlan): string {
   const lines: string[] = [];
   for (const action of plan.setup) {
@@ -468,11 +452,6 @@ function formatUpPlan(plan: UpPlan): string {
   if (plan.runSkipped !== null) {
     lines.push(`  ${plan.runSkipped}`);
   }
-  // The share degrade note (share on by default, ngrok missing) — the started dev
-  // will run local-only this session; surfaced in the plan just like dev's.
-  if (plan.shareNote !== null) {
-    lines.push(`  ${plan.shareNote}`);
-  }
   return ["Up plan (dry-run):", ...lines].join("\n").concat("\n");
 }
 
@@ -488,14 +467,17 @@ function describeUpAction(action: UpAction): string[] {
         `bunx neonctl branches create --name ${action.branch} --project-id ${action.projectId} --output json`,
         "rewrite DATABASE_URL, DATABASE_URL_UNPOOLED in .env.local (from the branch connection strings)",
       ];
-    case "cmux-panes": {
+    case "cmux-run-pane":
+      return [
+        `cmux new-pane --workspace ${action.workspace} --direction right`,
+        `cmux rename-tab --surface ${RUN_SURFACE} "${action.runName}"`,
+        `cmux send --surface ${RUN_SURFACE} "${action.sendLine}"`,
+      ];
+    case "cmux-browser-pane": {
       const url = action.devUrl === null ? "" : ` --url ${action.devUrl}`;
       return [
         `cmux new-pane --workspace ${action.workspace} --type browser${url} --direction right`,
         `cmux rename-tab --surface ${BROWSER_SURFACE} "${action.browserName}"`,
-        `cmux new-split down --surface ${BROWSER_SURFACE}`,
-        `cmux rename-tab --surface ${RUN_SURFACE} "${action.runName}"`,
-        `cmux send --surface ${RUN_SURFACE} "${action.sendLine}"`,
       ];
     }
     case "detached":

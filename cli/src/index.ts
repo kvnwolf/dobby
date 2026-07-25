@@ -1,26 +1,29 @@
 #!/usr/bin/env bun
 import { runDev } from "./lifecycle.ts";
 import { run } from "./run.ts";
+import { isLiveDev } from "./tasks.ts";
 
 // The bin adapter. Two concessions to the otherwise logic-free adapter:
 //
-// (1) The STREAMING SPLIT: a live `dobby dev` (no --dry-run) manages a concurrent
-//     process group — the portless-wrapped app main plus its secondaries — with
-//     signal forwarding, spawning with INHERITED stdio and living until the group
-//     exits or a signal arrives. That cannot flow through run()'s synchronous
-//     capture seam, so the bin owns it directly (via lifecycle's runDev).
-//     Everything else — every finite command AND `dev --dry-run` — routes through
-//     run() (the capture path) unchanged, so vitest can exercise it in-process.
+// (1) The STREAMING SPLIT: a live `dobby dev` manages a concurrent process group —
+//     the portless-wrapped app main plus its secondaries — with signal forwarding,
+//     spawning with INHERITED stdio and living until the group exits or a signal
+//     arrives. That cannot flow through run()'s synchronous capture seam, so the
+//     bin owns it directly (via lifecycle's runDev). The split fires ONLY on a
+//     CLEAN live-dev argv — the `dev` positional with NO flags — decided by the
+//     PURE `isLiveDev` (tasks.ts, where it is unit-testable). Everything else —
+//     every finite command, `dev --dry-run`, AND any flagged dev — routes through
+//     run() (the capture path), so vitest can exercise it in-process AND run()'s
+//     strict parseArgs stays the single flag validator: an unknown flag such as
+//     `--no-share` exits 1 with the usage instead of being silently swallowed by
+//     the stream.
 //
 // (2) `check --hook` needs the PostToolUse payload on stdin; when --hook is present
 //     we drain process stdin and pass it as run()'s third argument.
 const argv = process.argv.slice(2);
 
 if (isLiveDev(argv)) {
-  // Share (the ngrok tunnel) is ON BY DEFAULT; `--no-share` opts out.
-  process.exit(
-    await runDev(process.cwd(), { share: !argv.includes("--no-share") })
-  );
+  process.exit(await runDev(process.cwd()));
 }
 
 const stdin = argv.includes("--hook") ? await readStdin() : undefined;
@@ -33,14 +36,6 @@ if (stderr) {
   process.stderr.write(stderr);
 }
 process.exit(exitCode);
-
-// A live `dobby dev` is the `dev` command WITHOUT --dry-run. `dev --dry-run` stays
-// on the capture path (run() prints the plan); every non-dev command is finite.
-// The command is the first positional (ignoring any leading flags).
-function isLiveDev(args: string[]): boolean {
-  const command = args.find((arg) => !arg.startsWith("-"));
-  return command === "dev" && !args.includes("--dry-run");
-}
 
 // Read all of process stdin as a UTF-8 string. Event-based (not async-iteration)
 // so a closed/empty stdin resolves to "" rather than hanging.
