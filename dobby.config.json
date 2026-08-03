@@ -43,6 +43,10 @@
       ]
     }
   ],
+  "release": {
+    "type": "npm",
+    "dir": "cli"
+  },
   "checks": [
     {
       "name": "manifests-parse",
