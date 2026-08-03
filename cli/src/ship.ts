@@ -12,15 +12,17 @@ import { type CheckGroup, type CheckNote, check } from "./check.ts";
 import type { CommandContext, CommandResult } from "./command.ts";
 import { type RunResult, requireWorkroot, runCapture } from "./runner.ts";
 
-// `dobby ship` — the commit ceremony, mechanized: stage-if-nothing-staged →
-// the in-process gate (`check(fix: true)`; a nonzero gate prints the FULL findings
-// and commits NOTHING) → re-stage → `git commit -F <message-file>` → push (`-u
-// origin HEAD` when there is no upstream) → `gh pr create --body-file` off main
-// only, and only when no PR exists yet. Writes the gate cache the pre-push
-// backstop reads (`.dobby/gate-cache.json`, keyed by the post-`git add -A` tree
-// hash + the dobby version + the config hash) and answers with the JSON payload
-// `{committed, sha, pushed, prUrl, gateExitCode, cacheWritten}` plus the two notes
-// (`cacheNote` / `prNote`) that say why a step did NOT happen.
+// `dobby ship` — the commit ceremony, mechanized: refuse a detached HEAD →
+// stage-if-nothing-staged → the in-process gate (`check(fix: true)`; a nonzero gate
+// prints the FULL findings and commits NOTHING) → re-stage → `git commit -F
+// <message-file>` → push, always to ORIGIN by name (`-u origin HEAD` when there is
+// no upstream) → `gh pr create --body-file` off main only, and only when no PR
+// exists yet. Writes the gate cache the pre-push backstop reads
+// (`.dobby/gate-cache.json`, keyed by the post-`git add -A` tree hash + the dobby
+// version + the config hash) and answers with the JSON payload
+// `{committed, sha, pushed, prUrl, gateExitCode, cacheWritten}` plus the three
+// notes (`cacheNote` / `prNote` / `pushNote`) that say why a step did NOT happen,
+// or did not happen the way the caller's git config would have had it.
 //
 // THE EXIT CODE DECIDES. ship never interprets findings: it composes `check()`
 // IN-PROCESS (the same data path `dobby check --fix` takes — never a `dobby`
@@ -44,6 +46,10 @@ import { type RunResult, requireWorkroot, runCapture } from "./runner.ts";
 //     that failed (absent, expired auth, an API error) would be byte-identical to
 //     "no PR was asked for": both `prUrl: null`. A caller must be able to tell
 //     "skipped by policy" from "could not be opened".
+//   - `pushNote` — why the push did NOT go where the branch's own git config points,
+//     or null. The one case is a branch tracking a remote OTHER than `origin`: ship
+//     pushes to origin regardless (the kit's contract), and a caller that reads
+//     `pushed: true` must not be left believing its upstream was updated.
 //   - `sha` — the commit ship created, or null when it created none.
 interface ShipPayload {
   cacheNote: string | null;
@@ -53,6 +59,7 @@ interface ShipPayload {
   prNote: string | null;
   prUrl: string | null;
   pushed: boolean;
+  pushNote: string | null;
   sha: string | null;
 }
 
@@ -74,6 +81,16 @@ interface GateCache {
 // The branches a pull request has nowhere to go FROM: shipping on the trunk
 // commits and pushes, and opens nothing.
 const TRUNK_BRANCHES: readonly string[] = ["main", "master"];
+
+// The ONE remote the kit works against — worktrees are created from it, pull
+// requests are opened on it, and `finish`'s preflight reads it. ship names it on
+// every push rather than following whatever the branch happens to track.
+const ORIGIN = "origin";
+
+// The refusal a detached HEAD earns. Stated BEFORE any mutation: with no branch
+// there is nothing to push and nothing to open a pull request from, so a ceremony
+// that ran to the end would strand its commit outside every branch.
+const DETACHED_HEAD_ERROR = "ship requires a named branch — HEAD is detached";
 
 // `git write-tree`'s exit status for an unmerged index — the one state with no
 // single tree to hash (a conflicted merge in progress).
@@ -155,6 +172,32 @@ function performShip(
   root: string,
   message: CommitMessage
 ): CommandResult {
+  // 0. The BRANCH, resolved before anything is touched — the second guard that
+  // must fire while the tree is still exactly as ship found it. A DETACHED HEAD
+  // has no branch to push and none to open a pull request from, and its name
+  // ("HEAD", or an empty string, depending on which git question is asked) sails
+  // straight through the trunk check below: without this refusal the gate would
+  // run, the commit would be made, and only THEN would the push fail — leaving the
+  // work stranded on no branch at all.
+  const branch = currentBranch(root);
+  if (branch === null) {
+    return render(
+      context,
+      {
+        cacheNote: null,
+        cacheWritten: false,
+        committed: false,
+        gateExitCode: 0,
+        prNote: null,
+        prUrl: null,
+        pushed: false,
+        pushNote: null,
+        sha: null,
+      },
+      { error: DETACHED_HEAD_ERROR }
+    );
+  }
+
   // 1. Stage when nothing is staged. A caller-staged subset is respected HERE —
   // but only until the gate has spoken: step 3 re-stages the whole tree, because
   // the gate judges the WORKING TREE, and committing a subset of it would record
@@ -181,6 +224,7 @@ function performShip(
         prNote: null,
         prUrl: null,
         pushed: false,
+        pushNote: null,
         sha: null,
       },
       // The exit code decides; the findings are the human's to read — WHOLE, never
@@ -211,6 +255,7 @@ function performShip(
         prNote: null,
         prUrl: null,
         pushed: false,
+        pushNote: null,
         sha: null,
       },
       { error: gitFailure("commit", commit.stderr, commit.stdout) }
@@ -219,7 +264,7 @@ function performShip(
   const sha = gitFact(root, ["rev-parse", "HEAD"]);
 
   // 6 + 7. Push, then the pull request.
-  const published = publish(context, root, message);
+  const published = publish(context, root, message, branch);
   return render(
     context,
     {
@@ -229,71 +274,130 @@ function performShip(
       prNote: published.prNote,
       prUrl: published.prUrl,
       pushed: published.pushed,
+      pushNote: published.pushNote,
       sha,
     },
     // A PR that could not be opened is a NOTE, not a failure: the commit is made
     // and pushed, and re-running ship would only re-do work that already landed.
-    { error: published.error, note: published.prNote }
+    // So is a push that went to origin instead of the branch's own upstream.
+    {
+      error: published.error,
+      note: joinNotes(published.pushNote, published.prNote),
+    }
   );
 }
 
 // What the publish half of the ceremony produced. `prNote` explains a REQUESTED
-// pull request that has no URL; it stays null when none was asked for.
+// pull request that has no URL; it stays null when none was asked for. `pushNote`
+// explains a push that did not follow the branch's own upstream.
 interface Published {
   error?: string;
   prNote: string | null;
   prUrl: string | null;
   pushed: boolean;
+  pushNote: string | null;
 }
 
 // Steps 6 + 7: push the commit, then open (or find) the pull request. A failed
 // push short-circuits the PR — there is no branch on the remote to open one from.
+// The branch is passed IN (resolved once, before any mutation) rather than looked
+// up again here: a second lookup could only disagree with the guard that already
+// let this run proceed.
 function publish(
   context: CommandContext,
   root: string,
-  message: CommitMessage
+  message: CommitMessage,
+  branch: string
 ): Published {
-  // `git push` needs an upstream; a branch that tracks nothing gets one created.
-  // The upstream is READ first (a side-effect-free `rev-parse`) rather than
-  // discovered by letting a bare push fail.
-  const tracked =
-    runCapture(
-      "git",
-      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-      { root }
-    ).status === 0;
-  const push = runCapture(
-    "git",
-    tracked ? ["push"] : ["push", "-u", "origin", "HEAD"],
-    { root }
-  );
-  if (push.status !== 0) {
+  const push = pushToOrigin(root, branch);
+  if (push.result.status !== 0) {
     return {
-      error: gitFailure("push", push.stderr, push.stdout),
+      error: gitFailure("push", push.result.stderr, push.result.stdout),
       prNote: null,
       prUrl: null,
       pushed: false,
+      // Where the push was AIMED still matters when it failed — more so, since a
+      // caller whose branch tracks elsewhere would otherwise read the failure
+      // against the wrong remote.
+      pushNote: push.note,
     };
   }
 
   const bodyFile = context.options["pr-body-file"];
-  const branch = gitFact(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
   // A PR is opened only when there is somewhere to open it FROM (off the trunk)
   // and something to open it WITH (a body file the caller authored).
   if (typeof bodyFile !== "string" || TRUNK_BRANCHES.includes(branch)) {
-    return { prNote: null, prUrl: null, pushed: true };
+    return { prNote: null, prUrl: null, pushed: true, pushNote: push.note };
   }
   const existing = existingPullRequest(root, branch);
   if (existing !== null) {
     // The push above already updated it — noting the URL is the whole answer.
-    return { prNote: null, prUrl: existing, pushed: true };
+    return {
+      prNote: null,
+      prUrl: existing,
+      pushed: true,
+      pushNote: push.note,
+    };
   }
   const created = createPullRequest(
     root,
     resolve(context.cwd, bodyFile),
     message.subject
   );
-  return { prNote: created.note, prUrl: created.url, pushed: true };
+  return {
+    prNote: created.note,
+    prUrl: created.url,
+    pushed: true,
+    pushNote: push.note,
+  };
+}
+
+// Push the commit — ALWAYS to `origin`, NAMED. A bare `git push` follows whatever
+// the branch's upstream happens to be, so a branch tracking a fork, a mirror or a
+// read-only remote would send the work to the wrong repository (or fail there)
+// AFTER the commit was already made — the worst possible moment to find out. The
+// kit's contract is origin everywhere: worktrees are created from it, the pull
+// request is opened on it, `finish`'s preflight reads it.
+//
+// The upstream is READ first (a side-effect-free `rev-parse`, then a `git config`
+// lookup for the remote's NAME — the ref alone cannot be split reliably, a remote
+// may carry a slash) rather than discovered by letting a push fail:
+//   - no upstream at all → `-u origin HEAD`, which also creates the tracking link;
+//   - an upstream on origin → `origin HEAD`, the same destination said out loud;
+//   - an upstream on ANOTHER remote → origin anyway, with a NOTE. The branch's own
+//     configuration is left untouched (no `-u`): ship decides where the commit
+//     goes, it does not rewrite the caller's git config behind their back.
+function pushToOrigin(
+  root: string,
+  branch: string
+): { note: string | null; result: RunResult } {
+  const upstream = upstreamRef(root);
+  if (upstream === null) {
+    return {
+      note: null,
+      result: runCapture("git", ["push", "-u", ORIGIN, "HEAD"], { root }),
+    };
+  }
+  const remote = gitFact(root, ["config", "--get", `branch.${branch}.remote`]);
+  const elsewhere = remote !== "" && remote !== ORIGIN;
+  return {
+    note: elsewhere
+      ? `pushed to ${ORIGIN}, NOT to this branch's upstream ${upstream}: dobby pushes to ${ORIGIN} everywhere (the tracking config was left as it is)`
+      : null,
+    result: runCapture("git", ["push", ORIGIN, "HEAD"], { root }),
+  };
+}
+
+// The branch's configured upstream as `<remote>/<branch>`, or null when it tracks
+// nothing (`@{u}` exits nonzero there, and says so on stderr only).
+function upstreamRef(root: string): string | null {
+  const result = runCapture(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    { root }
+  );
+  const ref = result.stdout.trim();
+  return result.status === 0 && ref !== "" ? ref : null;
 }
 
 // The branch's pull request URL via `gh pr view <branch> --json url`, or null when
@@ -463,6 +567,28 @@ function configHash(root: string): string | null {
 
 // --- git plumbing -----------------------------------------------------------
 
+// The branch HEAD is on, or null when HEAD is DETACHED — pointing straight at a
+// commit, with no branch to move.
+//
+// `git symbolic-ref --quiet HEAD` asks exactly that question: it exits nonzero
+// precisely when HEAD is not a symbolic ref. The two ways of asking that ship must
+// NOT use both answer a detached HEAD with something branch-shaped —
+// `rev-parse --abbrev-ref HEAD` with the literal string "HEAD" (a name that passes
+// a trunk check and would be pushed as a ref), `branch --show-current` with an
+// empty line (a name of "") — so both of those shapes are refused here too, in
+// case the question is ever changed.
+function currentBranch(root: string): string | null {
+  const result = runCapture(
+    "git",
+    ["symbolic-ref", "--quiet", "--short", "HEAD"],
+    {
+      root,
+    }
+  );
+  const name = result.stdout.trim();
+  return result.status === 0 && name !== "" && name !== "HEAD" ? name : null;
+}
+
 // Whether the index holds nothing staged: `git diff --staged --quiet` exits 0 when
 // the index matches HEAD. A git call that fails outright reads as "something is
 // staged" — step 3's unconditional re-stage converges either way.
@@ -520,6 +646,17 @@ function render(
   return result;
 }
 
+// The notes a run collected, as ONE stderr block — or null when it collected none.
+// A single run can carry more than one (a push aimed past the branch's upstream AND
+// a pull request gh could not open), and each is a thing the human must be told
+// about a ceremony that otherwise succeeded.
+function joinNotes(...parts: (string | null)[]): string | null {
+  const spoken = parts.filter(
+    (part): part is string => part !== null && part !== ""
+  );
+  return spoken.length === 0 ? null : spoken.join("\n\n");
+}
+
 // The process exit code: the GATE's own code whenever the gate failed (ship never
 // reinterprets it), 1 for any other failure that carried an error, else 0.
 function shipExitCode(payload: ShipPayload, error: string | undefined): number {
@@ -538,6 +675,9 @@ function formatShip(payload: ShipPayload): string {
     `pushed: ${payload.pushed ? "yes" : "no"}`,
     `pull request: ${payload.prUrl ?? "none"}`,
   ];
+  if (payload.pushNote !== null) {
+    lines.push(payload.pushNote);
+  }
   if (payload.prNote !== null) {
     lines.push(payload.prNote);
   }

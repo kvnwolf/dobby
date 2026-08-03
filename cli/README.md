@@ -294,7 +294,7 @@ Everything above is stack machinery, inferred per repo. The commands below are t
 
 ### `dobby ship`
 
-The commit ceremony in one call: stage → run the gate **in-process** (`check --fix`) → re-stage → `git commit -F <message-file>` → push (`-u origin HEAD` when there is no upstream) → `gh pr create --body-file`, which happens only from a non-trunk branch (never on `main`/`master`) and only when no PR exists for it yet.
+The commit ceremony in one call: stage → run the gate **in-process** (`check --fix`) → re-stage → `git commit -F <message-file>` → push — always pinned to **origin** (`-u origin HEAD` when there is no upstream; a branch tracking another remote is still pushed to origin, said out loud via `pushNote`, its tracking config untouched) → `gh pr create --body-file`, which happens only from a non-trunk branch (never on `main`/`master`) and only when no PR exists for it yet.
 
 ```sh
 dobby ship --message-file /tmp/msg.txt
@@ -307,7 +307,7 @@ dobby ship --message-file /tmp/msg.txt --pr-body-file /tmp/pr.md --json
 
 A green gate writes the **gate cache** at `.dobby/gate-cache.json` — the staged tree hash, the dobby version, the hash of `dobby.config.json`, and the verdict — which is what lets `check --pre-push` skip re-running a gate that already passed on exactly this tree, and only on this tree.
 
-`--json` answers `{cacheNote, cacheWritten, committed, gateExitCode, prNote, prUrl, pushed, sha}`. The two notes exist so a caller can tell "skipped by policy" from "could not be done": `cacheNote` says why no cache entry was written, `prNote` why a requested PR has no URL (gh absent, expired auth, an API error).
+`--json` answers `{cacheNote, cacheWritten, committed, gateExitCode, prNote, prUrl, pushNote, pushed, sha}`. The three notes exist so a caller can tell "skipped by policy" from "could not be done": `cacheNote` says why no cache entry was written, `prNote` why a requested PR has no URL (gh absent, expired auth, an API error), `pushNote` that the push went to origin instead of the branch's non-origin upstream. Ship refuses a detached HEAD before touching anything — the ceremony needs a named branch.
 
 ### `dobby release`
 

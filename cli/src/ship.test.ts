@@ -234,14 +234,19 @@ function porcelain(root: string): string {
   return gitIn(root, ["status", "--porcelain"]);
 }
 
-// What `origin` actually received for the branch — read out of the bare
-// repository, never off ship's own report. Null when the branch never arrived.
-function remoteSha(repo: ShipRepo): string | null {
+// The sha a BARE repository holds for a branch — read out of that repository
+// itself, never off ship's own report. Null when the branch never arrived there.
+function refIn(remote: string, branch: string): string | null {
   try {
-    return gitIn(repo.remote, ["rev-parse", `refs/heads/${repo.branch}`]);
+    return gitIn(remote, ["rev-parse", `refs/heads/${branch}`]);
   } catch {
     return null;
   }
+}
+
+// What `origin` actually received for the branch.
+function remoteSha(repo: ShipRepo): string | null {
+  return refIn(repo.remote, repo.branch);
 }
 
 // The branch's upstream, or null when it tracks nothing yet.
@@ -272,6 +277,7 @@ interface ShipPayload {
   gateExitCode: number;
   prUrl: string | null;
   pushed: boolean;
+  pushNote: string | null;
   sha: string;
 }
 
@@ -706,6 +712,132 @@ describe("ship — pushing a branch that already tracks origin", () => {
   });
 });
 
+// The name of a SECOND remote that is not origin — a fork, a mirror, a read-only
+// upstream: all things a branch's own git config may legitimately point at.
+const SECOND_REMOTE = "upstream";
+
+// Give `repo` a second bare remote and make it the branch's UPSTREAM (`push -u`
+// writes `branch.<name>.remote`), so a bare `git push` would follow it. It receives
+// the BASELINE commit, which is what makes "did ship push here too?" answerable:
+// the ref it holds afterwards either moved or did not.
+function addTrackedRemote(repo: ShipRepo, name: string): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-ship-other-")));
+  scratchDirs.push(dir);
+  gitIn(dir, ["init", "-q", "--bare"]);
+  gitIn(repo.root, ["remote", "add", name, dir]);
+  gitIn(repo.root, ["push", "-q", "-u", name, "HEAD"]);
+  return dir;
+}
+
+// ===========================================================================
+// Slice 5b — WHERE the push lands. `origin` is the one remote the kit works
+// against (worktrees are cut from it, pull requests are opened on it, `finish`
+// preflights against it), but a branch's UPSTREAM is the caller's to configure and
+// need not point there. A bare `git push` follows that upstream — so the commit
+// would reach the wrong repository, or fail against a read-only one AFTER the
+// commit was already made.
+//
+// Observed on TWO bare repositories: "it went to origin" and "it did not go to the
+// other one" are then both facts of a repository, not claims in a payload.
+// ===========================================================================
+
+describe("ship — a branch whose upstream is not origin", () => {
+  let repo: ShipRepo;
+  let other: string;
+  let baseline: string;
+  let trackedBefore: string | null;
+  let outcome: ShipOutcome;
+  let payload: ShipPayload;
+
+  beforeAll(async () => {
+    repo = makeShipRepo({
+      config: DOBBY_CONFIG,
+      pending: { "src/report.ts": "export const answer = 51;\n" },
+    });
+    other = addTrackedRemote(repo, SECOND_REMOTE);
+    baseline = headSha(repo.root);
+    trackedBefore = upstreamOf(repo.root);
+    outcome = await shipIn(repo, ghNoPrDir, shipArgs(messageFile));
+    payload = shipPayload(outcome);
+  });
+
+  it("starts from a branch that tracks the other remote", () => {
+    // The fixture's premise, asserted rather than assumed: without a non-origin
+    // upstream every assertion below would pass against a bare `git push` too.
+    expect(trackedBefore).toBe(`${SECOND_REMOTE}/${repo.branch}`);
+  });
+
+  it("succeeds", () => {
+    expect(outcome.exitCode, `stderr: ${outcome.stderr}`).toBe(0);
+  });
+
+  it("reports the commit as pushed", () => {
+    expect(payload.pushed).toBe(true);
+  });
+
+  it("leaves the commit on origin", () => {
+    expect(remoteSha(repo)).toBe(payload.sha);
+  });
+
+  it("pushes nothing to the remote the branch tracks", () => {
+    // Still exactly what `addTrackedRemote` seeded: the new commit never arrived.
+    expect(refIn(other, repo.branch)).toBe(baseline);
+  });
+
+  it("says the push did not follow the branch's upstream", () => {
+    expect(payload.pushNote ?? "").toContain(`${SECOND_REMOTE}/${repo.branch}`);
+  });
+
+  it("names origin as where it pushed instead", () => {
+    expect(payload.pushNote ?? "").toContain("origin");
+  });
+
+  it("tells the human too, not only the payload", () => {
+    expect(outcome.stderr).toContain(`${SECOND_REMOTE}/${repo.branch}`);
+  });
+
+  it("leaves the branch's tracking configuration as it was", () => {
+    // ship decides where the COMMIT goes; rewriting the caller's git config would
+    // be a side effect nobody asked for.
+    expect(upstreamOf(repo.root)).toBe(`${SECOND_REMOTE}/${repo.branch}`);
+  });
+});
+
+// The other side of the same note: naming origin explicitly must stay INVISIBLE to
+// every branch that was already headed there. A note that fires on an ordinary
+// worktree branch is noise the caller would have to learn to ignore — and the one
+// note that matters would go with it.
+describe("ship — a push that went exactly where the branch pointed", () => {
+  let tracking: ShipPayload;
+  let untracked: ShipPayload;
+
+  beforeAll(async () => {
+    const onOrigin = makeShipRepo({
+      config: DOBBY_CONFIG,
+      pending: { "src/report.ts": "export const answer = 52;\n" },
+      upstream: true,
+    });
+    tracking = shipPayload(
+      await shipIn(onOrigin, ghNoPrDir, shipArgs(messageFile))
+    );
+    const fresh = makeShipRepo({
+      config: DOBBY_CONFIG,
+      pending: { "src/report.ts": "export const answer = 53;\n" },
+    });
+    untracked = shipPayload(
+      await shipIn(fresh, ghNoPrDir, shipArgs(messageFile))
+    );
+  });
+
+  it("says nothing about the destination when the upstream IS origin", () => {
+    expect(tracking.pushNote).toBe(null);
+  });
+
+  it("says nothing about the destination when there is no upstream", () => {
+    expect(untracked.pushNote).toBe(null);
+  });
+});
+
 // ===========================================================================
 // Slice 6 — the PULL REQUEST, opened only when there is somewhere to open it:
 // off the trunk, with a body file, and only when the branch has no PR yet.
@@ -1016,6 +1148,74 @@ describe("ship — no message file at all", () => {
 
   it("creates no commit", () => {
     expect(headSha(repo.root)).toBe(baseline);
+  });
+});
+
+// A DETACHED HEAD has no branch at all — and the two ways of asking git for one
+// both answer with something branch-SHAPED there ("HEAD" from `rev-parse
+// --abbrev-ref`, an empty line from `branch --show-current`), which sails through a
+// trunk check. Left unguarded, the whole ceremony would run — gate, commit, cache —
+// and only the push would fail, leaving the work stranded on no branch. So this
+// refusal has to land where the message-file one does: before ANY mutation.
+//
+// The pending change is STAGED on purpose: a caller who staged work is exactly the
+// one whose index must come back untouched.
+describe("ship — a detached HEAD", () => {
+  let repo: ShipRepo;
+  let baseline: string;
+  let commitCount: string;
+  let statusBefore: string;
+  let outcome: ShipOutcome;
+
+  beforeAll(async () => {
+    repo = makeShipRepo({
+      config: DOBBY_CONFIG,
+      pending: { "src/report.ts": UNTOUCHED },
+      stage: ["src/report.ts"],
+    });
+    gitIn(repo.root, ["checkout", "-q", "--detach"]);
+    baseline = headSha(repo.root);
+    commitCount = gitIn(repo.root, ["rev-list", "--count", "HEAD"]);
+    statusBefore = porcelain(repo.root);
+    outcome = await shipIn(repo, ghNoPrDir, shipArgs(messageFile));
+  });
+
+  it("fails", () => {
+    expect(outcome.exitCode).toBe(1);
+  });
+
+  it("says the HEAD is detached", () => {
+    expect(outcome.stderr.toLowerCase()).toContain("detached");
+  });
+
+  it("answers with a payload that committed nothing", () => {
+    expect(shipPayload(outcome).committed).toBe(false);
+  });
+
+  it("creates no commit", () => {
+    expect(gitIn(repo.root, ["rev-list", "--count", "HEAD"])).toBe(commitCount);
+  });
+
+  it("leaves HEAD exactly where it was", () => {
+    expect(headSha(repo.root)).toBe(baseline);
+  });
+
+  it("leaves the caller's staged work exactly as it found it", () => {
+    expect(porcelain(repo.root)).toBe(statusBefore);
+  });
+
+  it("never reaches the gate, so nothing is reformatted", () => {
+    expect(readFileSync(join(repo.root, "src/report.ts"), "utf8")).toBe(
+      UNTOUCHED
+    );
+  });
+
+  it("writes no gate cache", () => {
+    expect(readGateCache(repo.root)).toBe(null);
+  });
+
+  it("pushes nothing to origin", () => {
+    expect(remoteSha(repo)).toBe(null);
   });
 });
 
