@@ -33,9 +33,11 @@
   },
   "files": [
     "src",
-    "!src/run.test.ts",
-    "!src/vendor-biome.test.ts",
+    "!src/*.test.ts",
+    "!src/test-helpers.ts",
     "biome",
+    "grit",
+    "wizard",
     "tsconfig.base.json",
     "tsconfig.vite.json",
     "vite.base.mjs",

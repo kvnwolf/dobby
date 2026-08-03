@@ -21,6 +21,11 @@ export interface CheckFlags {
 
 // One step of the check pipeline, discriminated by `kind`:
 //   - biome / tsc / knip — the always-available findings tools (bundled in dobby).
+//   - conventions        — the tier-(b) house-convention filesystem checks
+//     (`conventions.ts`), present ONLY for a react / tanstack-start consumer (see
+//     `conventionsEnabled`). Unlike build/test there is no skip variant: a
+//     non-stack repo is not "skipping" a check it was never subject to, so the
+//     step is simply absent from the plan.
 //   - build / test       — capability-gated. `skipNote` is null when the gating
 //     capability (vite / vitest) is present (the step will run via the CONSUMER's
 //     own bin); non-null when it is absent — the single line naming why the step
@@ -31,19 +36,49 @@ export type CheckStep =
   | { kind: "biome" }
   | { kind: "tsc" }
   | { kind: "knip" }
+  | { kind: "conventions" }
   | { kind: "build"; skipNote: string | null }
   | { kind: "test"; skipNote: string | null }
   | { kind: "extra"; name: string; run: string };
 
-// The full-gate order (no flags): biome, tsc, knip, then the capability-gated
-// build + test, then config `checks[]` extras. Selective flags pick a SUBSET of
-// the tool steps in this same order and drop the extras.
+// Whether the tier-(b) house-convention checks apply to this repo. They encode ONE
+// stack's layout (TanStack Start + Drizzle/Neon + Better Auth), so they ride the
+// same capability fork as the tier-(a) biome preset and the tier-(c) GritQL
+// plugins: `react` or `tanstack-start`. A plain library/CLI consumer (dobby itself
+// is one) is never judged by them.
+//
+// PURE and shared: `checkPipeline` uses it to compose the plan, and `check.ts`
+// uses it directly on the two paths that bypass the plan — the per-file fast path
+// and the edit-time hook — so the gate cannot disagree with itself about who is a
+// stack consumer.
+export function conventionsEnabled(capabilities: string[]): boolean {
+  return (
+    capabilities.includes("react") || capabilities.includes("tanstack-start")
+  );
+}
+
+// The full-gate order (no flags): biome, tsc, knip, the capability-gated build,
+// the stack-gated conventions checks, the capability-gated test, then config
+// `checks[]` extras. Selective flags pick a SUBSET of the tool steps in this same
+// order and drop the extras.
+//
+// conventions runs AFTER build ON PURPOSE: its B8 rule scans the built client
+// bundle (`.output/public`) for leaked server-only symbols, so placing it earlier
+// would judge the PREVIOUS run's output — a leak already fixed would keep the gate
+// red for one more run. Ordering build first makes the common full-gate path scan
+// the bundle this very run produced. (When build is skipped or fails there is
+// still only stale output to read; `conventions.checkBundleLeak` names that
+// residual ceiling.)
 //
 // Capability gating is decided HERE (pure): `build` needs the `vite` capability,
 // `test` needs `vitest`. When the capability is missing the step still appears in
 // the plan but carries a `skipNote` — so the gate reports "skipped" rather than
 // silently omitting it. The consumer-local bin resolution + actual run of a
 // present build/test lives in `check.ts`; this module only decides run-vs-skip.
+//
+// `conventions` is the exception on BOTH counts: it is absent (not skip-noted) for
+// a non-stack repo, and it has NO selective flag of its own — so it runs on the
+// FULL gate only, never as part of a focused `--lint`/`--types` subset.
 export function checkPipeline(
   capabilities: string[],
   config: DobbyConfig | null,
@@ -75,6 +110,11 @@ export function checkPipeline(
         ? null
         : "build: skipped (no vite capability)",
     });
+  }
+  // AFTER build (see the order rationale above): B8 reads the bundle the build
+  // step just wrote.
+  if (!anyFlag && conventionsEnabled(capabilities)) {
+    steps.push({ kind: "conventions" });
   }
   if (selected(flags.test)) {
     steps.push({
@@ -480,7 +520,14 @@ export const UPDATE_ARGS: readonly string[] = ["--interactive"];
 //     resolved task name (the short `db:push` / `db:studio` / … drizzle names) and
 //     the concrete shell command it runs — sourced from the SAME `dbTasks` map the
 //     executor resolves.
-// Order mirrors the pre-filter help: env, check, [dev, up, down], [db:*…], update.
+//   - the SESSION commands (ship, state, review, …) are METHODOLOGY, not stack:
+//     they apply to every repo, so they are never capability-filtered. `release`
+//     is the ONE exception in the other direction — it is CONFIG-gated (spec
+//     Decision 2: nothing in a repo infers a release target, so the command only
+//     exists when `dobby.config.json` declares a `release` key). This module stays
+//     PURE: the caller resolves that key and passes the verdict as a boolean.
+// Order mirrors the pre-filter help: env, check, [dev, up, down], [db:*…], update,
+// then the session block in workflow order.
 // ---------------------------------------------------------------------------
 
 // One entry in the `dobby` usage Commands list: the command token as the user
@@ -491,7 +538,114 @@ export interface UsageCommand {
   name: string;
 }
 
-export function usageCommands(capabilities: string[]): UsageCommand[] {
+// The SESSION commands — the mechanized kit surface, in workflow order (scope →
+// state → build-plan → ship → review/pr → finish), then the tracker/KB/ADR
+// helpers, then the diagnosis + migration commands, then the artifact linters.
+// Each description names the command's subcommands inline (`init|set|…`) so the
+// name column stays one token wide and the help keeps its narrow layout.
+const SESSION_COMMANDS: readonly UsageCommand[] = [
+  {
+    description: "Preflight a new goal worktree: preflight (--slug)",
+    name: "scope",
+  },
+  {
+    description: "Edit STATE.md sections: init|set|append-worklog|lint",
+    name: "state",
+  },
+  {
+    description: "Emit the build-workflow task plan (waves, preconditions)",
+    name: "build-plan",
+  },
+  {
+    description:
+      "Commit ceremony: gate, commit, push, PR (--message-file, --pr-body-file)",
+    name: "ship",
+  },
+  {
+    description: "PR review threads: fetch|apply",
+    name: "review",
+  },
+  {
+    description: "Pull-request checks: watch (--deadline, --await-review)",
+    name: "pr",
+  },
+  {
+    description:
+      "Wrap the session up: --preflight reports what is safe to remove",
+    name: "finish",
+  },
+  {
+    description: "Issue tracker: info|search|create|close",
+    name: "tracker",
+  },
+  {
+    description: "Claim a tracker issue for this session (--issue)",
+    name: "claim",
+  },
+  {
+    description: "Resolve a goal reference: parse",
+    name: "goal",
+  },
+  {
+    description: "Knowledge base entries: list|record (--kind, --concept)",
+    name: "kb",
+  },
+  {
+    description: 'Architecture decision records: new "<title>" [--status]',
+    name: "adr",
+  },
+  {
+    description:
+      "Reproduce a command deterministically: -- <cmd…> --expect red|green",
+    name: "repro",
+  },
+  {
+    description: "Config migration: preflight|verify",
+    name: "migrate",
+  },
+  {
+    description: "Spec artifact: lint",
+    name: "spec",
+  },
+  {
+    description: "Decision map: next|claim|lint",
+    name: "map",
+  },
+  {
+    description: "Skill artifact: lint",
+    name: "skill",
+  },
+  {
+    description: "Triage brief: lint",
+    name: "brief",
+  },
+  {
+    description: "Wizard artifact: verify",
+    name: "wizard",
+  },
+  {
+    description: "Architecture report: verify",
+    name: "arch-report",
+  },
+  {
+    description: "Handoff artifact: finalize",
+    name: "handoff",
+  },
+];
+
+// The CONFIG-gated entry (spec Decision 2), listed only when the loaded config
+// carries a `release` key — the first help entry that depends on the config
+// rather than on the detected capabilities.
+const RELEASE_COMMAND: UsageCommand = {
+  description:
+    "Cut a release with the configured adapter (--bump, --notes-file)",
+  name: "release",
+};
+
+export function usageCommands(
+  capabilities: string[],
+  releaseAvailable: boolean
+): UsageCommand[] {
   const commands: UsageCommand[] = [
     { description: "Print a snapshot of the working environment", name: "env" },
     {
@@ -536,6 +690,13 @@ export function usageCommands(capabilities: string[]): UsageCommand[] {
     description: "Update dependencies interactively (taze)",
     name: "update",
   });
+
+  // The session block — never capability-filtered (methodology applies to every
+  // repo); `release` joins it only when the config declares a release target.
+  commands.push(...SESSION_COMMANDS);
+  if (releaseAvailable) {
+    commands.push(RELEASE_COMMAND);
+  }
 
   return commands;
 }

@@ -355,11 +355,25 @@ export function runCapture(
   };
 }
 
+export interface InheritOptions extends RunOptions {
+  // Stream the child's STDOUT to the parent's STDERR (fd 2) instead of fd 1,
+  // keeping stdout free for a caller that OWNS it — `up --json`, whose single JSON
+  // object must be the only thing on stdout while the setup phase still streams
+  // live (a captured-then-replayed buffer would hide a long install's progress).
+  // The child's own stderr is inherited either way, so nothing is reordered.
+  stdoutToStderr?: boolean;
+}
+
+// The parent's STDERR descriptor — handed to a child as its STDOUT when the caller
+// reserved stdout for machine-readable output.
+const STDERR_FD = 2;
+
 /**
  * Run a child process INHERITING the parent's stdio (streaming straight to the
  * terminal), cwd pinned to opts.root. Returns the child's exit code (1 when it
  * could not be spawned). For long-running / interactive children (dev, db:studio)
- * where capturing output would defeat the purpose.
+ * where capturing output would defeat the purpose. With `stdoutToStderr` the
+ * child's stdout is redirected to the parent's fd 2 (see InheritOptions).
  *
  * @public — runner surface consumed by the streaming action commands
  * (dev/up).
@@ -367,12 +381,12 @@ export function runCapture(
 export function runInherit(
   cmd: string,
   args: string[],
-  opts: RunOptions
+  opts: InheritOptions
 ): number {
   const result = spawnSync(cmd, args, {
     cwd: opts.root,
     env: opts.env,
-    stdio: "inherit",
+    stdio: opts.stdoutToStderr ? ["inherit", STDERR_FD, "inherit"] : "inherit",
   });
   return result.status ?? 1;
 }

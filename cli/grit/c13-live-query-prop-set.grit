@@ -1,0 +1,18 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C13 — data-fetching: <LiveQuery> is the boundary, and it only works if it carries
+// its whole prop set. Two arms: an element with children (any of fallback/query/retry
+// missing), and a SELF-CLOSING element, which by construction has no children render.
+or {
+  `<LiveQuery $props>$children</LiveQuery>` as $element where {
+    or {
+      not $props <: contains `fallback={$fallback}`,
+      not $props <: contains `query={$query}`,
+      not $props <: contains `retry={$retry}`
+    }
+  },
+  `<LiveQuery $props />` as $element
+} where {
+  register_diagnostic(span=$element, message="<LiveQuery> needs fallback (SSR+loading), query, retry, and a children render — the boundary is what handles SSR/loading/empty/error.", severity="error")
+}

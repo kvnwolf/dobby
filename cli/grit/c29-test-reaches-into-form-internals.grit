@@ -1,0 +1,10 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C29 — data-processing: a form test drives the public interface (fill, submit,
+// assert on rendered errors, the submitted payload, toasts, the optimistic rollback)
+// and never reaches into TanStack Form's internal state. Scoped by the plugin's
+// `includes` to test/spec files only.
+`form.state` as $access where {
+  register_diagnostic(span=$access, message="Test the form through its public interface — fill, submit, assert on rendered errors, the submitted payload, toasts and the optimistic rollback; never form.state or TanStack Form internals.", severity="error")
+}

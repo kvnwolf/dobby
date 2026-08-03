@@ -1,0 +1,19 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C15 — data-fetching: the CALL-SITE twin of the tier-(a) import ban (A4). The
+// native rule catches the IMPORT; this catches the CALL, so a hook re-exported
+// through a local module, or reached through a namespace import, is still caught.
+// Scoped by the plugin's `includes` to everything OUTSIDE src/shared, which IS the
+// boundary module that legitimately wraps these hooks behind <LiveQuery>.
+//
+// NOTE: message text carries NO escaped double quote. GritQL's string literal
+// unescaper mangles the REST of a string after a `\"` (letters r/t/n downstream come
+// out as CR/TAB/LF) — lab-verified against bundled biome 2.5.4, so every message in
+// this directory quotes with apostrophes instead.
+or {
+  `useLiveQuery($...)`,
+  `useLiveSuspenseQuery($...)`
+} as $call where {
+  register_diagnostic(span=$call, message="Render a <LiveQuery> from '@/shared/live-query' instead — the raw hook bypasses SSR (ClientOnly), the Suspense fallback, empty and error/retry, producing stuck-skeleton and error-loop bugs.", severity="error")
+}

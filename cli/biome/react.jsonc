@@ -28,7 +28,56 @@
         "noReactSpecificProps": "off"
       },
       "style": {
-        "useReactFunctionComponents": "error"
+        "useReactFunctionComponents": "error",
+        // House convention (env is the single source): app code reads validated env from
+        // "@/shared/env", never process.env. core ships this rule off; the react preset —
+        // the stack path — turns it on, and the override below allowlists the env module
+        // itself plus the three files that load OUTSIDE Vite (no @/shared/env to read).
+        "noProcessEnv": "error",
+        // House conventions as import bans (stack path only). core enables
+        // noRestrictedImports with NO options — a no-op — and the react preset supplies
+        // them: raw TanStack Form hooks (use useAppForm), the raw live-query hooks (render
+        // <LiveQuery>), anything but `db` out of @/shared/db.server, and the lazy get*()
+        // accessors the .server boundary replaces. Messages are the convention skills'
+        // own wording, so a finding names the house alternative, not just the ban.
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "@/shared/db.server": {
+                "allowImportNames": [
+                  "db"
+                ],
+                "message": "Import the table from its owner module (\"@/<module>/schema.gen\") — importing it through @/shared/db.server drags the Pool into the caller."
+              },
+              "@tanstack/react-db": {
+                "importNames": [
+                  "useLiveQuery",
+                  "useLiveSuspenseQuery"
+                ],
+                "message": "Consume collection data through <LiveQuery> from \"@/shared/live-query\" — the raw useLiveQuery/useLiveSuspenseQuery hook bypasses SSR/loading/empty/retry handling."
+              },
+              "@tanstack/react-form": {
+                "importNames": [
+                  "useForm",
+                  "useField",
+                  "createFormHook",
+                  "createFormHookContexts"
+                ],
+                "message": "Use useAppForm from \"@/shared/use-app-form\" — raw @tanstack/react-form hooks are only wired inside src/shared/."
+              }
+            },
+            "patterns": [
+              {
+                "group": [
+                  "**"
+                ],
+                "importNamePattern": "(getDb|getAuth|getResend)",
+                "message": "Import the eager instance (e.g. `db` from \"@/shared/db.server\") — there is no getDb() accessor; the .server boundary replaces laziness."
+              }
+            ]
+          }
+        }
       },
       "performance": {
         // House style: noJsxPropsBind's 'fix' is hundreds of hand-written useCallback/useMemo
@@ -39,6 +88,68 @@
     }
   },
   "overrides": [
+    {
+      "includes": [
+        // The env module ITSELF first: it is the file that VALIDATES process.env (t3-env's
+        // `createEnv({ runtimeEnv: process.env })`) and hands the rest of the app the typed
+        // `env` — without this entry the rule is unsatisfiable for every house app, since
+        // the single blessed source of env would itself fail the gate. Both house locations
+        // are listed (`@/shared/env` per module-conventions, `src/lib/env.ts` per
+        // onboard/migrate-config). Then the three blessed out-of-Vite files: the router
+        // (pre-Vite bootstrap), the drizzle-kit config (drizzle-kit's own process), and the
+        // react-email templates (rendered by the email preview/CLI). Globs are
+        // `**/`-prefixed like every other override glob here — see the routes rationale below.
+        "**/src/shared/env.ts",
+        "**/src/lib/env.ts",
+        "**/src/router.tsx",
+        "**/drizzle.config.ts",
+        "**/src/emails/**/*.tsx"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noProcessEnv": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        // src/shared IS the boundary that wraps the raw hooks (useAppForm, <LiveQuery>),
+        // so those two bans lift there. Biome overrides REPLACE a rule's options rather
+        // than merging them (lab-verified, bundled biome 2.5.4), so this block RE-STATES
+        // the bans that still hold inside shared instead of layering onto the global set.
+        "**/src/shared/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@/shared/db.server": {
+                    "allowImportNames": [
+                      "db"
+                    ],
+                    "message": "Import the table from its owner module (\"@/<module>/schema.gen\") — importing it through @/shared/db.server drags the Pool into the caller."
+                  }
+                },
+                "patterns": [
+                  {
+                    "group": [
+                      "**"
+                    ],
+                    "importNamePattern": "(getDb|getAuth|getResend)",
+                    "message": "Import the eager instance (e.g. `db` from \"@/shared/db.server\") — there is no getDb() accessor; the .server boundary replaces laziness."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "assist": {
         "actions": {
@@ -52,15 +163,74 @@
       },
       "includes": [
         // TanStack Start stack coupling: under the route dir the router owns the file
-        // shapes, so two rules relax there (rationale beside each rule). Glob is `**/`-
-        // prefixed so it anchors under BOTH the consumer's extends chain AND dobby's
-        // config-less `--config-path` wrapper (biome anchors override globs to the
-        // config's own dir there, not the project cwd) — lab-verified, bundled biome.
+        // shapes, so two rules relax there — and the server graph is banned outright
+        // (rationale beside each rule). Glob is `**/`-prefixed so it anchors under BOTH
+        // the consumer's extends chain AND dobby's config-less `--config-path` wrapper
+        // (biome anchors override globs to the config's own dir there, not the project
+        // cwd) — lab-verified, bundled biome.
         "**/src/routes/**"
       ],
       "linter": {
         "rules": {
           "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  // Route files own page UI only: the whole server graph is banned under the route
+                  // dir — the db instance, ANY *.server module, and the server-only packages. The
+                  // project-wide bans are RE-STATED because an override REPLACES the rule's options
+                  // (see the src/shared note); without the repeat, a route file would be the one
+                  // place raw form/live-query hooks were legal.
+                  "@neondatabase/serverless": {
+                    "message": "Routes own page UI only — import the module's server fn from \"@/<module>/functions\", not the server instance."
+                  },
+                  "better-auth": {
+                    "message": "Routes own page UI only — import the module's server fn from \"@/<module>/functions\", not the server instance."
+                  },
+                  "drizzle-orm": {
+                    "message": "Routes own page UI only — import the module's server fn from \"@/<module>/functions\", not the server instance."
+                  },
+                  "pg": {
+                    "message": "Routes own page UI only — import the module's server fn from \"@/<module>/functions\", not the server instance."
+                  },
+                  "@/shared/db.server": {
+                    "message": "Routes own page UI only — import the module's server fn from \"@/<module>/functions\", not the server instance."
+                  },
+                  "@tanstack/react-form": {
+                    "importNames": [
+                      "useForm",
+                      "useField",
+                      "createFormHook",
+                      "createFormHookContexts"
+                    ],
+                    "message": "Use useAppForm from \"@/shared/use-app-form\" — raw @tanstack/react-form hooks are only wired inside src/shared/."
+                  },
+                  "@tanstack/react-db": {
+                    "importNames": [
+                      "useLiveQuery",
+                      "useLiveSuspenseQuery"
+                    ],
+                    "message": "Consume collection data through <LiveQuery> from \"@/shared/live-query\" — the raw useLiveQuery/useLiveSuspenseQuery hook bypasses SSR/loading/empty/retry handling."
+                  }
+                },
+                "patterns": [
+                  {
+                    "group": [
+                      "**/*.server"
+                    ],
+                    "message": "Routes own page UI only — import the module's server fn from \"@/<module>/functions\", not the server instance."
+                  },
+                  {
+                    "group": [
+                      "**"
+                    ],
+                    "importNamePattern": "(getDb|getAuth|getResend)",
+                    "message": "Import the eager instance (e.g. `db` from \"@/shared/db.server\") — there is no getDb() accessor; the .server boundary replaces laziness."
+                  }
+                ]
+              }
+            },
             // TanStack Router route filenames ($param, $ splat, _layout, -components, dotted
             // segments) ARE the route tree — renaming them to kebab-case breaks routing.
             "useFilenamingConvention": "off"

@@ -3,6 +3,14 @@ name: data-fetching
 description: Recipe for client-side data fetching with TanStack DB — server function → Drizzle-derived query collection → LiveQuery. Use when adding data fetching, a new collection, or a list/table view.
 ---
 
+## What the Gate now enforces
+
+Rules below tagged `(enforced: Gate <id>)` are checked mechanically by `dobby check` on the stack path. The id is the convention inventory's ROW number, not a claim about the mechanism: `A*` rows mostly ship as native Biome rules, `B*` rows as the `conventions` filesystem scanner, `C*` rows as GritQL structural plugins — but a few rows moved tier without being renumbered (**A2** ships as a GritQL plugin; the cross-file **C2 / C3 / C12** ship as scanner checks).
+
+- They surface **at edit time** (the PostToolUse hook reports findings on the file you just wrote) and again **at push** (the pre-push backstop refuses a red gate; `git push --no-verify` is the bypass).
+- Every one is `error` severity, and the convention rules dobby ADDS carry no rewrite — `dobby check --fix` never rewrites convention code on their account. The already-enabled native Biome rules they ride alongside do apply their safe fix (A8 `useImportType` is corrected in place, at edit time too — the hook runs with `--write`).
+- **Untagged rules are judgment.** Nothing checks them, so they hold only if you and review hold them. The conventions deliberately left unmechanized, each with its reason, are listed in `grit/CONTEXT.md` inside the `@kvnwolf/dobby` package — that list is the tier-(c) view, so it also names C2 / C3 / C12, which were re-landed as cross-file checks in the tier-(b) scanner (`src/conventions.ts` in the same package).
+
 ## Quick start
 
 Three files per module, named by role (the taxonomy is in `/dobby:module-conventions`):
@@ -11,7 +19,9 @@ Three files per module, named by role (the taxonomy is in `/dobby:module-convent
 2. `module/collection.browser.ts` — eager TanStack DB query collection
 3. The route — renders `<LiveQuery>` from `@/shared/live-query`
 
-Read-only by design: collections carry NO persistence handlers (`onInsert`/`onUpdate`/`onDelete`). Mutations are not part of this recipe yet — see What's NOT covered.
+The first two are a PAIR — a `collection.browser.ts` with no sibling `functions.ts` is half a recipe _(enforced: Gate B6)_.
+
+Read-only by design: collections carry NO persistence handlers (`onInsert`/`onUpdate`/`onDelete`) _(enforced: Gate C9)_. Mutations are not part of this recipe yet — see What's NOT covered.
 
 ## Step 1: Server function (`module/functions.ts`)
 
@@ -34,10 +44,10 @@ export const listBooks = createServerFn({ method: "GET" })
   );
 ```
 
-- `requireAuth` is MANDATORY: server functions are publicly invokable HTTP endpoints — route guards do NOT protect them.
-- `db` is the eager instance from `@/shared/db.server` (no `getDb()` accessor). It's safe to import here because `functions.ts` only touches it inside the `.handler()` callback, which is DCE'd from the client bundle.
+- `requireAuth` is MANDATORY: server functions are publicly invokable HTTP endpoints — route guards do NOT protect them _(enforced: Gate C3 — the tier-(b) scanner check: a `createServerFn` chain in `functions.ts` with no `.middleware(…)` at all; which middleware it is stays your call)_.
+- `db` is the eager instance from `@/shared/db.server` (no `getDb()` accessor) _(enforced: Gate A10; A6 — only `db` may be imported from that module)_. It's safe to import here because `functions.ts` only touches it inside the `.handler()` callback, which is DCE'd from the client bundle.
 - The table comes from the owner module's co-located `schema.ts` / `schema.gen.ts` by relative path (`./schema`) — intra-module imports stay relative.
-- Select ONLY the columns the UI needs; the collection schema must match this projection exactly.
+- Select ONLY the columns the UI needs; the collection schema must match this projection exactly _(enforced: Gate C12 — the tier-(b) cross-file check comparing the collection's `.pick({…})` keys with this `.select({…})`)_.
 
 ## Step 2: Collection (`module/collection.browser.ts`)
 
@@ -70,7 +80,7 @@ export const booksCollection = createCollection(
 );
 ```
 
-It lives in a `.browser.ts` file because SSR-rendered routes import it. A value import of the server fn (`listBooks`) is fine; a server-only *instance* would need `import type`. Callers import `booksCollection` by deep path — no barrel.
+The collection is an eager `export const` initializer — no factory, no accessor _(enforced: Gate C10)_. It lives in a `.browser.ts` file because SSR-rendered routes import it. A value import of the server fn (`listBooks`) is fine; a server-only *instance* would need `import type` _(enforced: Gate C32)_. Callers import `booksCollection` by deep path — no barrel _(enforced: Gate C31)_.
 
 ## Step 3: Consume with `<LiveQuery>`
 
@@ -92,19 +102,20 @@ import { booksCollection } from "@/books/collection.browser";
 </LiveQuery>
 ```
 
+- The four-part shape is mandatory: `fallback`, `query`, `retry`, and a children render _(enforced: Gate C13)_.
 - `fallback` serves BOTH SSR (ClientOnly) and loading (Suspense) — build the skeleton to mirror the final layout (row count, line heights, paddings) so data arrival causes no layout shift.
 - `children` receives `data` typed from the query and ALWAYS defined — no ready/loading checks.
-- Page UI lives in the route file; the module exports only the data slice (server fn + collection).
-- **`<LiveQuery>` is the boundary for EVERY read — even a single value in one cell.** ALWAYS consume collection data through the `<LiveQuery>` component, not just for full lists/tables. To render ONE derived value (e.g. looking up a related record's name for a cell or section), render a `<LiveQuery>` whose `children` returns that one value — empty/loading handled exactly the same way. Do NOT call the underlying `useLiveQuery` / `useLiveSuspenseQuery` hook directly in a component: the component boundary is what handles SSR (ClientOnly), loading (Suspense `fallback`), empty, and error/retry; the raw hook bypasses all of that and produces stuck-skeleton / error-loop / 404 render bugs.
+- Page UI lives in the route file; the module exports only the data slice (server fn + collection) _(enforced: Gate A5 — a route file may not import the server graph)_.
+- **`<LiveQuery>` is the boundary for EVERY read — even a single value in one cell.** ALWAYS consume collection data through the `<LiveQuery>` component, not just for full lists/tables. To render ONE derived value (e.g. looking up a related record's name for a cell or section), render a `<LiveQuery>` whose `children` returns that one value — empty/loading handled exactly the same way. Do NOT call the underlying `useLiveQuery` / `useLiveSuspenseQuery` hook directly in a component _(enforced: Gate A4+C15 — A4 bans the import, C15 the call, both outside `src/shared`)_: the component boundary is what handles SSR (ClientOnly), loading (Suspense `fallback`), empty, and error/retry; the raw hook bypasses all of that and produces stuck-skeleton / error-loop / 404 render bugs.
 
 ## The collection is a wide interface — state its whole contract
 
 A collection (plus its backing server fn) is the module's public data surface: every `<LiveQuery>` caller depends on it and NONE of them can see inside it. Treat it as a **wide interface** — a small surface (`xCollection`, imported by deep path) that hides a lot of behavior. Before shipping one, write down everything a caller must know so nobody has to read `functions.ts` to use it correctly:
 
-- **Row shape** — the exact projection. It is fixed by the server fn's `.select({...})` and MUST match the collection's `.pick(...)` schema exactly; the row type IS the contract. Adding/removing a column is an interface change (every caller's `children` may break) — treat it as one.
+- **Row shape** — the exact projection. It is fixed by the server fn's `.select({...})` and MUST match the collection's `.pick(...)` schema exactly _(enforced: Gate C12 — the tier-(b) cross-file key comparison)_; the row type IS the contract. Adding/removing a column is an interface change (every caller's `children` may break) — treat it as one.
 - **Ordering** — whether rows arrive sorted, and by what. The server fn's `.orderBy(...)` is the source order; the `<LiveQuery>` `.orderBy(...)` re-sorts at the consumer. State which order callers can rely on so nobody re-sorts redundantly or assumes an order that isn't guaranteed.
-- **Invariants** — read-only (no `onInsert`/`onUpdate`/`onDelete`); every row already passed `requireAuth` (never returns another tenant's/user's rows — the auth scope is part of the contract); timestamps are real `Date`s (already coerced from the wire), not ISO strings; keyed by `getKey` (unique, stable).
-- **Error modes** — the fetch can fail (network / server-fn throw / schema-validation mismatch). The error surfaces at the `<LiveQuery>` boundary, and recovery is `utils.clearError()` via `retry` — say so, because a caller who doesn't wire `retry` gets a stuck error loop.
+- **Invariants** — read-only (no `onInsert`/`onUpdate`/`onDelete`) _(enforced: Gate C9)_; every row already passed `requireAuth` (never returns another tenant's/user's rows — the auth scope is part of the contract); timestamps are real `Date`s (already coerced from the wire), not ISO strings; keyed by `getKey` (unique, stable).
+- **Error modes** — the fetch can fail (network / server-fn throw / schema-validation mismatch). The error surfaces at the `<LiveQuery>` boundary, and recovery is `utils.clearError()` via `retry` _(enforced: Gate C13 for the missing prop, C14 for an INLINE `retry` handler that never calls `.utils.clearError()`)_ — say so, because a caller who doesn't wire `retry` gets a stuck error loop.
 - **Loading / empty** — empty is `rows.length === 0`, never `null`/`undefined`. Callers handle empty in `children`; loading is the `fallback`.
 
 If naming this contract is nearly as much work as the implementation, the seam is too shallow.
@@ -114,7 +125,7 @@ If naming this contract is nearly as much work as the implementation, the seam i
 | Gotcha | Rule |
 |--------|------|
 | Dates over the wire | Server fns serialize `Date` → ISO string; override every timestamp column with `z.coerce.date()` or schema validation fails at runtime |
-| Retry | `retry` must clear the collection's error (`utils.clearError()`) BEFORE the boundary resets, or the stored error rethrows in a loop |
+| Retry | `retry` must clear the collection's error (`utils.clearError()`) BEFORE the boundary resets, or the stored error rethrows in a loop _(enforced: Gate C14 — inline handlers only; a hoisted `retry={retryBooks}` is not checked)_ |
 | Conditional queries | `useLiveSuspenseQuery` (inside LiveQuery) rejects disabled queries — gate with conditional RENDERING in the parent, never a query returning `undefined` |
 | Alias shadowing | The query source alias (`q.from({ book: … })`) lives in the callback scope — avoid names that shadow route-scope variables |
 
@@ -130,11 +141,11 @@ Mutations / optimistic writes — no pattern exists yet. Extend this skill when 
 
 ## Acceptance checklist
 
-- [ ] Server fn in `module/functions.ts` with `requireAuth` middleware, selecting only needed columns, using the eager `db` from `@/shared/db.server`
-- [ ] Collection in `module/collection.browser.ts`: drizzle-zod schema with `z.coerce.date()` on timestamps, `.pick()` matching the server fn projection
-- [ ] Eager collection (`export const xCollection = createCollection(...)`) — no lazy accessor; `startSync` default keeps SSR inert
-- [ ] No persistence handlers (read-only)
-- [ ] Collection imported by deep path (`@/<module>/collection.browser`); route consumes through `<LiveQuery>` from `@/shared/live-query`
-- [ ] `fallback` skeleton mirrors the final layout (no layout shift)
-- [ ] `retry={() => xCollection.utils.clearError()}`
+- [ ] Server fn in `module/functions.ts` _(enforced: Gate C1)_ with `requireAuth` middleware _(enforced: Gate C3, the tier-(b) check)_, selecting only needed columns, using the eager `db` from `@/shared/db.server` _(enforced: Gate A6+A10)_
+- [ ] Collection in `module/collection.browser.ts` beside its `functions.ts` _(enforced: Gate B6)_: drizzle-zod schema with `z.coerce.date()` on timestamps, `.pick()` matching the server fn projection _(enforced: Gate C12, the tier-(b) check)_
+- [ ] Eager collection (`export const xCollection = createCollection(...)`) — no lazy accessor; `startSync` default keeps SSR inert _(enforced: Gate C10)_
+- [ ] No persistence handlers (read-only) _(enforced: Gate C9)_
+- [ ] Collection imported by deep path (`@/<module>/collection.browser`) _(enforced: Gate C31)_; route consumes through `<LiveQuery>` from `@/shared/live-query` _(enforced: Gate A4+C15)_
+- [ ] `fallback` skeleton mirrors the final layout (no layout shift) — the prop's presence is checked _(enforced: Gate C13)_, the mirroring is not
+- [ ] `retry={() => xCollection.utils.clearError()}` _(enforced: Gate C13+C14)_
 - [ ] Empty state handled in `children`

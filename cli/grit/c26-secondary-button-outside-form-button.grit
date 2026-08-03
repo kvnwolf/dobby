@@ -1,0 +1,10 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C26 — data-processing: secondary in-form actions (cancel, resend) use form.Button,
+// which auto-disables while submitting and merges the caller's `disabled`.
+`<Button $props>$children</Button>` as $button where {
+  $props <: contains `type="button"`,
+  $button <: within `<form.Root $formProps>$formChildren</form.Root>` ,
+  register_diagnostic(span=$button, message="Secondary in-form actions use form.Button — it auto-disables while submitting and merges the caller's disabled.", severity="error")
+}

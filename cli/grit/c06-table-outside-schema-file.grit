@@ -1,0 +1,14 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C6 — module-conventions: table declarations live in the owner module's
+// `schema.ts` / `schema.gen.ts`, which is all drizzle-kit's glob ever finds. Path
+// scoping (everything EXCEPT those two basenames) rides the plugin's `includes`.
+or {
+  `pgTable($...)` as $declaration,
+  `pgView($...)` as $declaration,
+  `pgMaterializedView($...)` as $declaration,
+  `pgEnum($...)` as $declaration
+} where {
+  register_diagnostic(span=$declaration, message="Declare tables in {module}/schema.ts or schema.gen.ts — drizzle-kit's glob only finds schema*.", severity="error")
+}

@@ -58,7 +58,15 @@ This is a gate, not an escape hatch — reach it only after the litmus test and 
 
 **Offer the domain-term candidates (offer-then-approve).** When a term got resolved during the interview — a fuzzy word sharpened to a canonical, a new domain concept named, an overloaded word collapsed to one meaning — don't defer ALL glossary capture to `/dobby:wrap`. At the handoff, LIST those resolved terms as `CONTEXT.md` candidates (each: the canonical term · its one-line meaning · the alias it replaces, if any) and ask the user which to capture. This is offer-then-approve, not silent write: you still edit no file mid-interview (the "note, don't write" rule holds) — you surface the candidates now so the decision is made while the reasoning is fresh. Terms the user defers or rejects stay noted for `/dobby:wrap` to reconsider.
 
-Produce a tight **Decisions** summary the next step can consume verbatim: each entry = decision · rejected alternative · why · is it an ADR candidate? Include the new-term and ADR-candidate flags here — and mark the CONTEXT.md candidates the user approved above as capture-ready for the next stage to write. If a work-session doc exists (from `/dobby:scope`, the repo-root `STATE.md`), write this summary into its `## Findings (interview)` section so later stages and subagents pick it up.
+Produce a tight **Decisions** summary the next step can consume verbatim: each entry = decision · rejected alternative · why · is it an ADR candidate? Include the new-term and ADR-candidate flags here — and mark the CONTEXT.md candidates the user approved above as capture-ready for the next stage to write.
+
+**Persist it through the state engine, never by hand-editing the document.** If a work-session doc exists (from `/dobby:scope`, the repo-root `STATE.md`), write the summary to a scratch file outside the repo (the OS temp dir — e.g. `${TMPDIR:-/tmp}/dobby-findings-<timestamp>.md`, never a file inside the worktree) and hand that file to the engine:
+
+```bash
+bunx dobby state set 'Findings (interview)' --file <scratch-file>
+```
+
+(`--stdin` pipes a short body instead of a file.) The engine replaces that ONE section body and leaves every other byte — sections it has never heard of included — untouched, so later stages and subagents read a document nobody has to re-format. Because `set` REPLACES, a second interview pass writes the COMPLETE summary (the decisions already recorded plus the new ones), never just the delta. A refusal goes to stderr with a nonzero exit: no `STATE.md` means there is no work session to write into (creating it is `/dobby:scope`'s job), so the summary simply stays in the conversation.
 
 ## Anti-patterns
 
@@ -91,6 +99,7 @@ Interview in the user's language. Write the Decisions summary (and anything pers
 - [ ] Every decision resting on a shared-primitive behavior verified against code before close (proactively, not user-forced)
 - [ ] Resolved domain terms offered as `CONTEXT.md` candidates at handoff (offer-then-approve); approved ones flagged in the Decisions summary
 - [ ] Decisions summary produced, with new-term / ADR-candidate flags
-- [ ] No files modified
+- [ ] Summary persisted to `## Findings (interview)` via `bunx dobby state set` (complete summary, never a hand edit) when a work-session doc exists
+- [ ] No files modified mid-interview — the `state set` handoff above is the only write
 - [ ] Closing gate offered all three options, including the completeness self-audit that activates the litmus test + infra-assumption gate on demand and resumes interviewing on any gap it surfaces
 - [ ] Next step handed off via an AskUserQuestion gate (recommended command marked; chosen skill invoked via the Skill tool)

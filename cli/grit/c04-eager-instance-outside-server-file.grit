@@ -1,0 +1,16 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C4 — module-conventions: heavy eager instances belong in `{descriptor}.server.ts`.
+// Path-scoped by the plugin's `includes` to every source file that is NOT a
+// `.server` file, so any construction site the pattern finds is by definition
+// outside the compile boundary.
+or {
+  `betterAuth($...)` as $instance,
+  `drizzle($...)` as $instance,
+  `new Pool($...)` as $instance,
+  `new Resend($...)` as $instance,
+  `neonConfig.$prop = $value` as $instance
+} where {
+  register_diagnostic(span=$instance, message="Eager server instances belong in {descriptor}.server.ts — that filename is the compile boundary that keeps the Pool/secret out of the client bundle.", severity="error")
+}

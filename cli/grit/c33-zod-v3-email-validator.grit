@@ -1,0 +1,8 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C33 — data-processing: the house schemas use zod v4's top-level validator
+// (`z.email("Invalid email")`), not the chained v3 form.
+`z.string().email($...)` as $validator where {
+  register_diagnostic(span=$validator, message="Use z.email('Invalid email') — the v4 top-level validator.", severity="error")
+}

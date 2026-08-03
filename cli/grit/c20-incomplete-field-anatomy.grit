@@ -1,0 +1,15 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C20 — data-processing: every field carries the full anatomy. field.Root is what
+// wires aria-invalid / aria-describedby, so a field missing any of Label, Control or
+// ErrorMessage is broken for assistive tech and silently swallows validation errors.
+// The span is the field.Root element itself — the construct the rule is about.
+`<field.Root $props>$children</field.Root>` as $root where {
+  or {
+    not $children <: contains `<field.Label $labelProps>$labelChildren</field.Label>`,
+    not $children <: contains `<field.Control $controlProps />`,
+    not $children <: contains `<field.ErrorMessage $errorProps />`
+  },
+  register_diagnostic(span=$root, message="Every field needs field.Root, field.Label, field.Control and field.ErrorMessage — Root is what wires aria-invalid/aria-describedby.", severity="error")
+}

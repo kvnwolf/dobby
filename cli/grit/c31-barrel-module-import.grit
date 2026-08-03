@@ -1,0 +1,69 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C31 — module-conventions: cross-module imports are DEEP paths (@/module/file). A
+// single-segment `@/module` specifier is a bare-folder import — a barrel by another
+// name — and drags the whole module graph in.
+//
+// PARTIAL (recorded deliberately): only the barrel half ships. The other half of the
+// inventory row — an `@/<self-module>/…` specifier INSIDE `src/<self-module>/**`,
+// which must be relative — needs the importing file's OWN module path, and a GritQL
+// pattern sees only the file's syntax, never its location. The plugin's `includes`
+// globs can scope a rule to a directory but cannot bind that directory into the
+// pattern, so the self-reference can't be compared. Parked for a tier-(b) CLI check.
+//
+// The question the convention asks is about the SPECIFIER PATH, not about what the
+// import binds: a barrel is a barrel whether the names are values or types. So the
+// pattern matches the whole `JsImport`, tests its module source, and asks only that
+// the statement bind SOMETHING.
+//
+// Lab facts behind that shape (bundled biome 2.5.4):
+//  - The earlier `import $clause from $source` snippet was broad ACROSS clause kinds
+//    (it matched the default, named and `import type` forms alike) but narrow WITHIN
+//    a named clause — only a SINGLE specifier. So `import { helperA, helperB } from
+//    '@/shared'`, the combined `import def, { helperC } from '@/other'`, the mixed
+//    `import { type A, b } from '@/mixed'` and even `import type * as ns from '@/x'`
+//    all went unreported. That was this rule's KNOWN GAP; enumerating the SPECIFIER
+//    nodes — the move c32 made for its own reasons — closes it, and the separate
+//    `import * as $ns from $source` arm folds into the same enumeration.
+//  - Unlike c32, this rule has no per-specifier question to ask (no type-vs-value
+//    test), so the existential binds no metavariable and c32's `bubble` would have
+//    nothing to scope: probed both ways over the fixtures below, the two forms report
+//    the IDENTICAL set. The plain `contains or { … }` ships.
+//  - One diagnostic per STATEMENT, not per specifier: `contains` is existential, so a
+//    two-name import reports once (lab-counted).
+//  - The source test is unchanged and stays ANCHORED — `@/module` fires, `@/module/file`
+//    and anything deeper does not. It reads the source node's TEXT, quotes included, so
+//    it is written for the DOUBLE quotes the shipped formatter emits; the table below
+//    spells its fixture lines with apostrophes only for readability, as c32's does.
+//
+// Verdicts pinned in the lab, each a literal fixture line:
+//    fires  import { a } from '@/shared'            quiet  import { a } from '@/module/file'
+//    fires  import { a, b } from '@/shared'         quiet  import { a, b } from '@/module/file'
+//    fires  import def, { a } from '@/other'        quiet  import { a } from '@/a/b/c'
+//    fires  import def from '@/other'               quiet  import { a } from './local'
+//    fires  import * as ns from '@/nsmod'           quiet  import { a, b } from './local'
+//    fires  import { a as x } from '@/aliased'      quiet  import { a } from 'some-package'
+//    fires  import { a as x, b as y } from '@/mod'  quiet  import { a } from '@scope/pkg'
+//    fires  import type { A } from '@/types'        quiet  export { a } from '@/reexport'
+//    fires  import type { A, B } from '@/types'     quiet  export * from '@/reexport'
+//    fires  import { type A, b } from '@/mixed'     quiet  import '@/sideeffect'
+//    fires  import type def from '@/typedefault'
+//    fires  import type * as ns from '@/typens'
+//
+// Two things the pattern deliberately does NOT reach, both by the same logic as c32's
+// own non-reaches: a BARE side-effect import (`import '@/shared'` binds no specifier,
+// so the existential finds nothing — it was outside the earlier snippet too), and a
+// RE-EXPORT (`export { a } from '@/shared'` is a `JsExport`, never a `JsImport`; this
+// rule is about imports, and that form was unreachable before as well).
+JsImport() as $import where {
+  $import <: contains JsModuleSource() as $source,
+  $source <: r"\"@/[^/]+\"",
+  $import <: contains or {
+    JsDefaultImportSpecifier(),
+    JsNamespaceImportSpecifier(),
+    JsShorthandNamedImportSpecifier(),
+    JsNamedImportSpecifier()
+  },
+  register_diagnostic(span=$import, message="Cross-module imports are deep paths (@/module/file); intra-module imports stay relative (./file). A bare @/module import is a barrel by another name.", severity="error")
+}

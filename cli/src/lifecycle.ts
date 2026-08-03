@@ -16,6 +16,11 @@ import { loadConfig } from "./config.ts";
 import { detectCapabilities, scanCapabilities } from "./detect.ts";
 import { discoverPanes, resolveDevUrl } from "./envinfo.ts";
 import {
+  installPrePushHook,
+  type PrePushHookAction,
+  planPrePushHook,
+} from "./hook-install.ts";
+import {
   configArgs,
   requireWorkroot,
   resolveBin,
@@ -65,12 +70,17 @@ const PS_ETIME_RE = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/;
 //
 // The ordered sequence `up` runs BEFORE its run phase:
 //   (1) `bun install` at the workroot — ALWAYS, the inferred default.
-//   (2) worktree env re-materialization — in a LINKED git worktree only: read the
+//   (2) the PRE-PUSH BACKSTOP install (`hook-install.ts`) — idempotent, in every
+//       consumer (spec Decision 7): the setup phase runs even for a no-app
+//       project, which is what makes this the one step that reaches them all.
+//       Ordered after install so a fresh clone has its local dobby on disk before
+//       a hook that execs it can fire.
+//   (3) worktree env re-materialization — in a LINKED git worktree only: read the
 //       MAIN checkout's `.worktreeinclude`, and for each pattern copy any matched
 //       file that is MISSING at the worktree over from main (idempotent — NEVER
 //       overwriting a file already present). The belt-and-suspenders complement to
 //       the native EnterWorktree copy (documented as ambiguous).
-//   (3) config `setup[]` extras — run sequentially, FAIL-FAST on the first nonzero.
+//   (4) config `setup[]` extras — run sequentially, FAIL-FAST on the first nonzero.
 //
 // `up --dry-run` builds the SAME ordered plan but executes nothing; a real `up`
 // executes it fail-fast and only starts the run phase once every step succeeds.
@@ -80,6 +90,7 @@ const PS_ETIME_RE = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/;
 // executor below runs it.
 export type SetupAction =
   | { kind: "install" }
+  | PrePushHookAction
   | { kind: "copy"; rel: string; from: string; to: string }
   | { kind: "extra"; run: string };
 
@@ -90,13 +101,20 @@ export type SetupAction =
 const SKIP_INSTALL_ENV = "DOBBY_SKIP_INSTALL";
 
 // Build the ordered setup-phase plan for the workroot: (1) install (always),
-// (2) worktree copies (linked-worktree only, missing-only), (3) config `setup[]`
-// extras — in that fixed order. Extras APPEND after the defaults. Pure — no spawn.
+// (2) the pre-push backstop hook, (3) worktree copies (linked-worktree only,
+// missing-only), (4) config `setup[]` extras — in that fixed order. Extras APPEND
+// after the defaults. No side effects: the git queries it makes (the worktree
+// probe, the hooks path, the marker read) only OBSERVE — nothing is written until
+// `executeSetup` walks the plan, which is what makes `--dry-run` honest.
 function buildSetupPlan(
   root: string,
   config: { setup?: string[] } | null
 ): SetupAction[] {
   const plan: SetupAction[] = [{ kind: "install" }];
+  const hook = planPrePushHook(root);
+  if (hook !== null) {
+    plan.push(hook);
+  }
   for (const copy of planWorktreeCopies(root)) {
     plan.push(copy);
   }
@@ -107,40 +125,81 @@ function buildSetupPlan(
 }
 
 // Run the setup plan in order, fail-fast. Returns the first failing step's exit
-// code (0 on success) alongside a `failure` note naming what failed (else null).
+// code (0 on success) alongside a `failure` note naming what failed (else null) and
+// the machine-readable `reason` for it (the `up --json` enum; null on success).
+// `childOutputToStderr` streams each child's stdout to fd 2 — set when the caller
+// reserved stdout for the JSON report (see runUp's `machineReport`).
 function executeSetup(
   plan: SetupAction[],
-  root: string
-): { exitCode: number; failure: string | null } {
+  root: string,
+  childOutputToStderr: boolean
+): UpOutcome {
   const skipInstall = Boolean(process.env[SKIP_INSTALL_ENV]);
+  const stdio = { root, stdoutToStderr: childOutputToStderr };
 
   for (const action of plan) {
     if (action.kind === "install") {
       if (skipInstall) {
         continue;
       }
-      const code = runInherit("bun", ["install"], { root });
+      const code = runInherit("bun", ["install"], stdio);
       if (code !== 0) {
-        return { exitCode: code, failure: "`bun install` failed" };
+        return {
+          exitCode: code,
+          failure: "`bun install` failed",
+          reason: "install-failed",
+        };
       }
+    } else if (action.kind === "hook") {
+      // The pre-push backstop. Never fails the phase: a hook that could not be
+      // written (an unwritable hooks dir) or one this dobby did not write (the
+      // refuse-and-report policy — the plan already named the file) leaves the
+      // workspace perfectly runnable, and `up`'s job is to bring it up.
+      installPrePushHook(action);
     } else if (action.kind === "copy") {
-      // Idempotent: only fill a MISSING file — never clobber a locally-edited one.
-      mkdirSync(dirname(action.to), { recursive: true });
-      copyFileSync(action.from, action.to);
+      const copyFailure = copyIncluded(action);
+      if (copyFailure !== null) {
+        return copyFailure;
+      }
     } else {
       // Extras run through the workroot-pinned runner (sh -c), streaming so a long
       // setup step's progress is visible. Fail-fast: a nonzero exit stops the run.
-      const code = runInherit("sh", ["-c", action.run], { root });
+      const code = runInherit("sh", ["-c", action.run], stdio);
       if (code !== 0) {
         return {
           exitCode: code,
           failure: `setup extra failed (exit ${code}): ${action.run}`,
+          reason: "setup-extra-failed",
         };
       }
     }
   }
 
-  return { exitCode: 0, failure: null };
+  return { exitCode: 0, failure: null, reason: null };
+}
+
+// Perform ONE worktree re-materialization copy. Idempotent by planning (the plan
+// only lists MISSING targets, so a locally-edited file is never clobbered). Returns
+// null on success, or the setup failure when the copy throws (an unreadable source,
+// a read-only target): a half-materialized worktree must never reach the run phase,
+// and `--json` needs a mappable reason instead of an escaping exception.
+function copyIncluded(action: {
+  from: string;
+  rel: string;
+  to: string;
+}): UpOutcome | null {
+  try {
+    mkdirSync(dirname(action.to), { recursive: true });
+    copyFileSync(action.from, action.to);
+    return null;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      exitCode: 1,
+      failure: `could not re-materialize ${action.rel} from the main checkout: ${detail}`,
+      reason: "worktree-copy-failed",
+    };
+  }
 }
 
 // The worktree re-materialization plan: copy actions for every `.worktreeinclude`
@@ -185,12 +244,18 @@ function planWorktreeCopies(
   return copies;
 }
 
-// The MAIN checkout root when `root` is a LINKED git worktree, else null. A linked
-// worktree is detected by `--git-dir` differing from `--git-common-dir`; the main
-// checkout root is the PARENT of the common `.git` directory. Both queried as
-// absolute paths so the comparison and dirname are reliable. Never throws — a
-// non-git / non-worktree root yields null (re-materialization simply skips).
-function linkedWorktreeMain(root: string): string | null {
+/**
+ * The MAIN checkout root when `root` is a LINKED git worktree, else null. A linked
+ * worktree is detected by `--git-dir` differing from `--git-common-dir`; the main
+ * checkout root is the PARENT of the common `.git` directory. Both queried as
+ * absolute paths so the comparison and dirname are reliable. Never throws — a
+ * non-git / non-worktree root yields null (re-materialization simply skips).
+ *
+ * @public — the shared "am I in a worktree, and where is main?" resolver: the
+ * setup phase's re-materialization uses it, and the session preflights
+ * (`preflight.ts`) resolve `mainRoot` + nesting through it.
+ */
+export function linkedWorktreeMain(root: string): string | null {
   const result = runCapture(
     "git",
     ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
@@ -885,6 +950,68 @@ export interface UpPlan {
   workroot: string;
 }
 
+// WHY `up` failed, as a CLOSED enum — the machine-readable half of every failure
+// (the human prose keeps going to stderr, unchanged). One member per failure path
+// runUp can take, in the order the path is reached:
+//   not-a-git-repo      — the workroot precondition (requireWorkroot threw).
+//   config-unreadable   — dobby.config.json exists but does not parse.
+//   install-failed      — the setup phase's `bun install` step exited nonzero.
+//   worktree-copy-failed— a `.worktreeinclude` re-materialization copy threw.
+//   setup-extra-failed  — a config `setup[]` extra exited nonzero.
+//   neon-creds-missing  — a neon project without NEON_API_KEY / NEON_PROJECT_ID.
+//   dev-start-failed    — the run phase could not start the app (a failed detached
+//                         spawn, or a neon branch that could not be provisioned —
+//                         both leave the run phase with nothing running; the stderr
+//                         prose names which).
+//   liveness-timeout    — the app never answered the devUrl within the retry wait.
+// A consumer branches on these; it must NEVER have to parse prose.
+type UpReason =
+  | "not-a-git-repo"
+  | "config-unreadable"
+  | "install-failed"
+  | "worktree-copy-failed"
+  | "setup-extra-failed"
+  | "neon-creds-missing"
+  | "dev-start-failed"
+  | "liveness-timeout";
+
+// WHERE `up` was when it stopped: the setup phase, the run phase, or the no-app
+// gate (nothing to run — a success, not a failure).
+type UpPhase = "noop" | "run" | "setup";
+
+// The machine-readable `up` report: flat, EnvSnapshot style (explicit nulls, never
+// omitted keys — a consumer branches on `browserPane === null`, which an absent key
+// would make indistinguishable from "not reported"). Decided HERE (data); `run.ts`
+// renders it as the sole stdout of `up --json`.
+interface UpFacts {
+  // The kit browser-pane surface ref, or null when none is open. Resolved ONLY for
+  // a machine report (see runUp's `machineReport`) — the sole consumer — so a plain
+  // `up` never pays for cmux IPC nobody reads.
+  browserPane: string | null;
+  // The CMUX_WORKSPACE_ID value, or null outside cmux.
+  cmux: string | null;
+  // The remedy to offer the user, or null when none applies. INSTALL-phase only:
+  // re-running with the documented skip seam is what gets past a broken install,
+  // and nothing else.
+  degradedCommand: string | null;
+  // The portless dev URL the app was brought up on, or null (no app / not resolved
+  // because the run never reached the run phase).
+  devUrl: string | null;
+  // Whether `up` succeeded. FALSE always pairs with a nonzero exit code.
+  ok: boolean;
+  phase: UpPhase;
+  // Null on success; the enum member on failure — never prose.
+  reason: UpReason | null;
+  // The goal slug (workroot basename), or null when no workroot resolved.
+  slug: string | null;
+  // How to verify the work: against the live URL when there is one, else
+  // programmatically (tests / CLI) — derived from devUrl, never reported apart.
+  verifyMode: "programmatic" | "url";
+  // The absolute workroot; the directory `up` ran in when none resolved
+  // (not-a-git-repo) — the field is a string so a consumer can always print it.
+  workroot: string;
+}
+
 // The outcome of `dobby up`:
 //   - `{ ok: false, error }` — a HARD failure (outside a git repo; the neon
 //     capability present but its creds missing — no silent main-DB fallback).
@@ -895,16 +1022,61 @@ export interface UpPlan {
 //   - `{ ok: true, kind: "plan", plan }` — `--dry-run`: the ordered plan to render.
 //   - `{ ok: true, kind: "ran", exitCode, failure }` — a real run executed; `failure`
 //     names what went wrong (else null), rendered on stderr.
+// EVERY arm also carries `facts` — the same outcome as the flat machine report
+// (`up --json`). `ok`/`kind` say what run.ts must RENDER; `facts.ok` says whether
+// the workspace is up (a failed real run is `{ok: true, kind: "ran"}` with
+// `facts.ok === false`).
 export type UpReport =
-  | { ok: false; error: string }
-  | { ok: true; kind: "noop"; message: string }
-  | { ok: true; kind: "plan"; plan: UpPlan }
+  | { ok: false; error: string; facts: UpFacts }
+  | { ok: true; kind: "noop"; message: string; facts: UpFacts }
+  | { ok: true; kind: "plan"; plan: UpPlan; facts: UpFacts }
   | {
       ok: true;
       kind: "ran";
       exitCode: number;
       failure: string | null;
+      facts: UpFacts;
     };
+
+// The exit outcome of a real phase (setup or run): a clean success, or a failure
+// carrying BOTH the human note and its machine-readable reason. Modelled as a union
+// so the two can never drift apart — a failure without a reason does not typecheck.
+type UpOutcome =
+  | { exitCode: 0; failure: null; reason: null }
+  | { exitCode: number; failure: string; reason: UpReason };
+
+// The ONE remedy `up` offers, and only for an install-phase failure: re-run with the
+// documented skip seam so a broken/offline install does not block the workspace.
+const DEGRADED_UP_COMMAND = "DOBBY_SKIP_INSTALL=1 bunx dobby up";
+
+// Assemble the machine report from what the caller resolved. `verifyMode` and
+// `degradedCommand` are DERIVED here so every path agrees on them: a devUrl means
+// the verifier can hit a URL (else it verifies programmatically), and the degraded
+// command is attached to install-phase failures alone.
+function upFacts(parts: {
+  browserPane?: string | null;
+  cmux: string | null;
+  devUrl?: string | null;
+  phase: UpPhase;
+  reason: UpReason | null;
+  slug: string | null;
+  workroot: string;
+}): UpFacts {
+  const devUrl = parts.devUrl ?? null;
+  return {
+    browserPane: parts.browserPane ?? null,
+    cmux: parts.cmux,
+    degradedCommand:
+      parts.reason === "install-failed" ? DEGRADED_UP_COMMAND : null,
+    devUrl,
+    ok: parts.reason === null,
+    phase: parts.phase,
+    reason: parts.reason,
+    slug: parts.slug,
+    verifyMode: devUrl === null ? "programmatic" : "url",
+    workroot: parts.workroot,
+  };
+}
 
 // The decisions `up` resolves ONCE (git precondition, capabilities, devUrl, cmux,
 // neon creds) — the single source both the plan and the imperative execution derive
@@ -929,32 +1101,75 @@ interface UpContext {
 //       creds fails hard (guaranteed branch isolation, no main-DB fallback).
 // `--dry-run` prints the FULL ordered plan (setup phase + run phase, or the skip
 // reason) without executing anything.
-export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
+//
+// `machineReport` (set by `up --json`) changes NO decision — only two mechanics the
+// machine report needs: setup children stream their stdout to fd 2 (stdout belongs
+// to the JSON object), and the browser-pane ref is discovered for the report.
+export function runUp(
+  cwd: string,
+  opts: { dryRun: boolean; machineReport?: boolean }
+): UpReport {
+  const machineReport = opts.machineReport === true;
+  // The cmux workspace id — resolved ONCE (independent of the app gate) so it feeds
+  // the workspace rename, the plan, and every report arm alike.
+  const cmux = process.env.CMUX_WORKSPACE_ID || null;
+
   let workroot: string;
   try {
     workroot = requireWorkroot(cwd);
   } catch (error) {
     return {
       error: error instanceof Error ? error.message : String(error),
+      // No worktree resolved: the directory `up` ran in is the only root there is,
+      // and there is no slug without a workroot to take a basename of.
+      facts: upFacts({
+        cmux,
+        phase: "setup",
+        reason: "not-a-git-repo",
+        slug: null,
+        workroot: cwd,
+      }),
       ok: false,
     };
   }
+
+  const slug = basename(workroot);
+  // Every arm reports the SAME identity (workroot / slug / cmux) and differs only in
+  // phase, reason and devUrl. The browser pane is discovered at REPORT time (after
+  // any pane this run opened exists) and only for a machine report — a plain `up`
+  // must not pay for cmux IPC nobody reads.
+  const reportFacts = (parts: {
+    devUrl?: string | null;
+    phase: UpPhase;
+    reason: UpReason | null;
+  }): UpFacts =>
+    upFacts({
+      ...parts,
+      browserPane: machineReport
+        ? discoverPanes(workroot, cmux).browserPane
+        : null,
+      cmux,
+      slug,
+      workroot,
+    });
 
   // The setup phase reads config `setup[]` extras. A broken config is a hard failure
   // (an action command must not proceed on an unreadable contract); absent = none.
   const loaded = loadConfig(workroot);
   if (loaded && !loaded.ok) {
-    return { error: loaded.error, ok: false };
+    return {
+      error: loaded.error,
+      facts: reportFacts({ phase: "setup", reason: "config-unreadable" }),
+      ok: false,
+    };
   }
   const config = loaded?.config ?? null;
 
   const setupPlan = buildSetupPlan(workroot, config);
   const capabilities = detectCapabilities(cwd);
   const hasApp = capabilities.includes("vite");
-  const slug = basename(workroot);
-  // The cmux workspace rename — present ONLY under cmux, resolved ONCE (independent
-  // of the app gate) so it appears in the plan and runs whether or not there is an app.
-  const cmux = process.env.CMUX_WORKSPACE_ID || null;
+  // The cmux workspace rename — present ONLY under cmux, so it appears in the plan
+  // and runs whether or not there is an app.
   const renameWorkspace =
     cmux === null ? null : { title: slug, workspace: cmux };
 
@@ -964,6 +1179,7 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
     // (spec's --dry-run contract).
     if (!hasApp) {
       return {
+        facts: reportFacts({ phase: "noop", reason: null }),
         kind: "plan",
         ok: true,
         plan: {
@@ -978,9 +1194,20 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
     }
     const resolved = resolveUpContext(cwd, workroot, slug, capabilities);
     if (!resolved.ok) {
-      return { error: resolved.error, ok: false };
+      return {
+        error: resolved.error,
+        facts: reportFacts({ phase: "run", reason: "neon-creds-missing" }),
+        ok: false,
+      };
     }
     return {
+      // A dry run EXECUTES nothing, so the report describes the run it planned: the
+      // phase it would end in, no reason, and the devUrl it resolved.
+      facts: reportFacts({
+        devUrl: resolved.context.devUrl,
+        phase: "run",
+        reason: null,
+      }),
       kind: "plan",
       ok: true,
       plan: {
@@ -996,10 +1223,11 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
 
   // A real run: (1) the setup phase, fail-fast — any failure stops here (exit
   // nonzero, the run phase never starts).
-  const setupOutcome = executeSetup(setupPlan, workroot);
-  if (setupOutcome.exitCode !== 0) {
+  const setupOutcome = executeSetup(setupPlan, workroot, machineReport);
+  if (setupOutcome.reason !== null) {
     return {
       exitCode: setupOutcome.exitCode,
+      facts: reportFacts({ phase: "setup", reason: setupOutcome.reason }),
       failure: setupOutcome.failure,
       kind: "ran",
       ok: true,
@@ -1015,17 +1243,31 @@ export function runUp(cwd: string, opts: { dryRun: boolean }): UpReport {
 
   // (2) The no-app gate — the graceful no-op, reached only after the setup phase.
   if (!hasApp) {
-    return { kind: "noop", message: "no app to run", ok: true };
+    return {
+      facts: reportFacts({ phase: "noop", reason: null }),
+      kind: "noop",
+      message: "no app to run",
+      ok: true,
+    };
   }
 
   // (3) The run phase (a neon project with missing creds fails hard).
   const resolved = resolveUpContext(cwd, workroot, slug, capabilities);
   if (!resolved.ok) {
-    return { error: resolved.error, ok: false };
+    return {
+      error: resolved.error,
+      facts: reportFacts({ phase: "run", reason: "neon-creds-missing" }),
+      ok: false,
+    };
   }
   const outcome = executeUp(resolved.context);
   return {
     exitCode: outcome.exitCode,
+    facts: reportFacts({
+      devUrl: resolved.context.devUrl,
+      phase: "run",
+      reason: outcome.reason,
+    }),
     failure: outcome.failure,
     kind: "ran",
     ok: true,
@@ -1128,10 +1370,7 @@ function buildUpActions(context: UpContext): UpAction[] {
 // Execute a real `up` (liveness-first, idempotent). Its cmux/neon MECHANICS need a
 // live server / cmux / neonctl (not CI-tested), but the pane-vs-liveness ORDERING
 // below IS — a real run against stub `cmux`/`curl` bins recording into one log.
-function executeUp(context: UpContext): {
-  exitCode: number;
-  failure: string | null;
-} {
+function executeUp(context: UpContext): UpOutcome {
   // (1) Already up? A single probe short-circuits — under cmux the BROWSER pane is
   // reconciled (the app IS live here, so it opens immediately: it renders the running
   // app, never a 404) and the RUN pane is deliberately LEFT ALONE.
@@ -1150,14 +1389,17 @@ function executeUp(context: UpContext): {
     if (context.cmux !== null) {
       ensureBrowserPane(context, context.cmux);
     }
-    return { exitCode: 0, failure: null };
+    return { exitCode: 0, failure: null, reason: null };
   }
 
-  // (2) Neon branch — create idempotently and rewrite the worktree's .env.local.
+  // (2) Neon branch — create idempotently and rewrite the worktree's .env.local. A
+  // branch that cannot be provisioned aborts the run phase with NOTHING started, so
+  // it reports as `dev-start-failed` (the stderr prose names neonctl); the creds-
+  // missing case is its own reason and was already caught while resolving.
   if (context.neon !== null) {
     const failure = provisionNeonBranch(context);
     if (failure !== null) {
-      return { exitCode: 1, failure };
+      return { exitCode: 1, failure, reason: "dev-start-failed" };
     }
   }
 
@@ -1171,6 +1413,7 @@ function executeUp(context: UpContext): {
     return {
       exitCode: 1,
       failure: "could not start `bunx dobby dev` — see .dobby/dev.log",
+      reason: "dev-start-failed",
     };
   }
 
@@ -1184,6 +1427,7 @@ function executeUp(context: UpContext): {
       exitCode: 1,
       failure:
         "the app never became reachable — check that the portless daemon is running and the local CA is trusted (`portless trust`)",
+      reason: "liveness-timeout",
     };
   }
 
@@ -1193,7 +1437,7 @@ function executeUp(context: UpContext): {
   if (context.cmux !== null) {
     ensureBrowserPane(context, context.cmux);
   }
-  return { exitCode: 0, failure: null };
+  return { exitCode: 0, failure: null, reason: null };
 }
 
 // A single liveness probe: `curl -sf --max-time 5 <url>` (HTTP 200 → alive).

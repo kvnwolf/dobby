@@ -1,6 +1,6 @@
 # dobby
 
-Kevin Wolf's agentic engineering kit for Claude Code, shipped as two surfaces from one repo: the **plugin** (skills + agents + hooks) and the **`@kvnwolf/dobby` CLI**. dobby doesn't make Claude Code smarter — it makes it **disciplined**: the main thread stays an architect that frames, asks, decides, and reviews but never writes code, while four worker agents do the hands-on work. Every change is implemented, code-reviewed, and verified by **separate** agents before it counts as done.
+Kevin Wolf's agentic engineering kit for Claude Code, shipped as two surfaces from one repo: the **plugin** (skills + agents + hooks) and the **`@kvnwolf/dobby` CLI**. dobby doesn't make Claude Code smarter — it makes it **disciplined**: the main thread stays an architect that frames, asks, decides, and reviews but never writes code, while five worker agents do the hands-on work. Every change is implemented, code-reviewed, and verified by **separate** agents before it counts as done.
 
 > **Standing on Matt Pocock's shoulders**: many of dobby's skills and agents are adapted from [mattpocock/skills](https://github.com/mattpocock/skills) — each adapted file credits its exact source in a footer. If you want to get better at working with AI, go visit [aihero.dev](https://aihero.dev/).
 
@@ -23,7 +23,7 @@ Then start your first session from any project:
 
 ### The CLI
 
-The repo also ships **`@kvnwolf/dobby`**, the kit's **mechanical execution layer** — a Bun CLI installed as each project's single devDependency (added by `/dobby:onboard`). It detects a project's capabilities from its dependencies and infers every task zero-config (à la Vercel): the quality gate (`dobby check`, which also runs as the edit hook, and `dobby check --fix` as the pre-commit gate) and the run lifecycle (`dobby up` / `dobby down` / `dobby dev`), where `dobby up` also brings a fresh worktree up (installs deps + materializes the env files) before starting the app. It bundles the toolchain (Biome, TypeScript, knip, taze, portless) and ships every tool's config as a default: for biome, vite, vitest, and drizzle-kit, dobby passes its shipped, capability-picked preset through the tool's native config flag when the repo has no file of its own (**override by presence**), so a delta-less project carries only `package.json`, `tsconfig.json`, and `dobby.config.json` — you write a tool config file only to carry a real delta, and deleting it restores the default (a biome delta extends dobby's two FLAT presets, `biome/core` + `biome/react`, directly — biome's `extends` is one-level, so a react consumer lists both; without deltas, no `biome.jsonc` ships at all). External builders go through dobby too: a Vercel project sets its Build Command to `bunx dobby build`. Skills invoke it via `bunx dobby` (the local pinned bin). Full command reference: **[`cli/README.md`](./cli/README.md)** (the npm package front page). Releases are cut with the repo's `/release` skill.
+The repo also ships **`@kvnwolf/dobby`**, the kit's **mechanical execution layer** — a Bun CLI installed as each project's single devDependency (added by `/dobby:onboard`). It detects a project's capabilities from its dependencies and infers every task zero-config (à la Vercel): the quality gate (`dobby check` — also the edit hook, `dobby check --fix` the pre-commit gate, and `dobby check --pre-push` the git-hook backstop that refuses a red push) and the run lifecycle (`dobby up` / `dobby down` / `dobby dev`), where `dobby up` also brings a fresh worktree up (installs deps, materializes the env files, installs the pre-push hook) before starting the app. It mechanizes the kit's ceremonies too, so the skills keep the judgment and hand the mechanics over: `dobby ship` (stage → gate in-process → commit → push → PR), `dobby release` (the whole publish spine behind a per-target adapter), `dobby state` (the `STATE.md` engine), `dobby build-plan`, `dobby review` / `dobby pr watch`, the scope/finish/migrate preflights, the tracker + KB + ADR writers, and the artifact linters. It bundles the toolchain (Biome, TypeScript, knip, taze, portless) and ships every tool's config as a default: for biome, vite, vitest, and drizzle-kit, dobby passes its shipped, capability-picked preset through the tool's native config flag when the repo has no file of its own (**override by presence**), so a delta-less project carries only `package.json`, `tsconfig.json`, and `dobby.config.json` — you write a tool config file only to carry a real delta, and deleting it restores the default (a biome delta extends dobby's two FLAT presets, `biome/core` + `biome/react`, directly — biome's `extends` is one-level, so a react consumer lists both; without deltas, no `biome.jsonc` ships at all). External builders go through dobby too: a Vercel project sets its Build Command to `bunx dobby build`. Skills invoke it via `bunx dobby` (the local pinned bin). Full command reference: **[`cli/README.md`](./cli/README.md)** (the npm package front page). Releases are cut with `/dobby:release`, which runs `dobby release` and answers the two judgments it stops for (the version question and the notes).
 
 ## The mental model
 
@@ -64,7 +64,7 @@ The coordinator and verifier reach the running app the same way everywhere: `bun
 
 ## The lifecycle
 
-A work session moves through six stages. Each stage ends by telling you which command to type next — **nothing advances until you type it**. Handoffs are typed on purpose: typed entry is what applies each stage's own model and effort (an auto-invoked skill would ride the previous stage's override):
+A work session moves through six stages. Each stage ends by asking which command comes next — the recommended one, the alternatives, and "Stop here" — and **nothing advances until you pick**. That handoff question is the only gate besides plan approval; within a stage the kit runs to completion:
 
 ```
 /dobby:scope        ground the goal in the codebase, create STATE.md
@@ -79,12 +79,17 @@ A work session moves through six stages. Each stage ends by telling you which co
       │
 /dobby:wrap         human smoke test, docs/ADRs, STATE.md disposed
       │
-/dobby:commit       branch, commit, push, PR
+/dobby:commit       docs synced, message + PR body authored, then `dobby ship`
+      │             (gate → commit → push → PR) and the watch to a verdict
       │
 /dobby:finish       (after the PR merges) tear down the worktree
 ```
 
-`/dobby:finish` is the post-merge closing step: once your PR is merged, `bunx dobby down` runs the config's teardown, closes the cmux panes it opened (or kills the background run), and deletes the per-worktree Neon branch; then it removes the per-goal worktree + branch and pulls the main checkout. It's typed like every other stage; nothing runs until you type it.
+`/dobby:finish` is the post-merge closing step: once your PR is merged, `bunx dobby down` runs the config's teardown, closes the cmux panes it opened (or kills the background run), and deletes the per-worktree Neon branch; then it removes the per-goal worktree + branch and pulls the main checkout. It's gated like every other stage: `/dobby:commit`'s handoff question offers it once the PR is merged, and nothing runs until you pick it.
+
+**The push is guarded twice.** `/dobby:commit` never runs the gate by hand — `dobby ship` composes it in-process, and a red gate commits nothing — and the **pre-push backstop** (the git hook `dobby up` installs) re-runs it on `git push`, so a red tree can't reach the remote even when the commit happened outside the kit. The mechanized half of the convention rules rides the same path: they fire on every Edit/Write through the edit hook and again at push, so conformance no longer depends on a skill having been read.
+
+**Shipping a version** is its own typed step, run from the **main checkout** after the PR merged: `/dobby:release` cuts one release through `dobby release` — preflights, version arithmetic, the manifest bump, the gate, publish, tag, GitHub release, smoke — stopping only for the two judgments a machine must not make alone (which version, and the release notes). Which channel it publishes to (npm or a Homebrew cask) is the `release` key in `dobby.config.json`; without that key the command doesn't exist.
 
 Side paths, available at any point:
 
@@ -110,7 +115,7 @@ One concrete feature, carried through every stage: **adding CSV export to an adm
 
 The architect creates `STATE.md` at your repo root (the session's shared doc) and dispatches a `dobby:researcher` to ground the goal: where the users table lives, which conventions the project uses, what the domain glossary and ADRs say. You don't wait on grepping — a worker does it.
 
-**You'll see:** a short grounded summary ("the table is `src/admin/users/`, it uses the shared DataTable, exports don't exist anywhere yet"), then the suggestion to type `/dobby:interview` next (or jump straight to research or spec).
+**You'll see:** a short grounded summary ("the table is `src/admin/users/`, it uses the shared DataTable, exports don't exist anywhere yet"), then the handoff question: `/dobby:interview` recommended, with research or spec as the alternatives.
 
 **Artifact:** `STATE.md` with a filled `## Exploration` section.
 
@@ -168,7 +173,7 @@ The implementor never reviews itself; the reviewer never implements; the verifie
 
 The closing pass: a short **human smoke test** (the few cross-task behaviors machines can't prove — you answer Pass/Fail/Skip, failures get dispatched to an implementor and re-presented), project docs reconciled (`CONTEXT.md` glossary terms the work introduced, ADRs the decisions earned), and `STATE.md` disposed — it's ephemeral by design.
 
-Then you type `/dobby:commit`: pre-commit checks, branch, conventional commit, push, PR.
+Then comes `/dobby:commit`: it syncs the docs and authors the conventional-commit message + PR body, hands the ceremony to `dobby ship` (stage → gate → commit → push → PR, in one call), and stays on watch until the PR is merge-ready.
 
 ### 7. Finish
 
@@ -205,6 +210,7 @@ The whole session ran inside a per-goal worktree that `/dobby:scope` created —
 | A repo still on vite-plus or the legacy `.claude/commit.config.yml` | `/dobby:migrate-config` — one-time move onto `@kvnwolf/dobby` + `dobby.config.json` |
 | Work is done, ship it | `/dobby:commit` |
 | The PR merged and the worktree needs retiring | `/dobby:finish` |
+| A merged version ready to publish | `/dobby:release` — from the main checkout; npm or a Homebrew cask, per `dobby.config.json`'s `release` key |
 | A review bot or reviewer left comments on your PR | `/dobby:address-review` |
 | Structuring or refactoring a module's files | `/dobby:module-conventions` (auto-activates) |
 | Building a form or wiring a data mutation | `/dobby:data-processing` (auto-activates) |
@@ -220,12 +226,16 @@ Three skills are **not** work-session stages — they're stack-convention guides
 - `/dobby:data-processing` — the write side: form conventions (`useAppForm` from `@/shared/use-app-form`, Zod validation, field + dialog anatomy) plus mutation UX (submit-validated by default, optimistic only for in-place row toggles, type-to-confirm, toasts).
 - `/dobby:data-fetching` — the read side: the TanStack DB recipe — session-guarded server fn → eager query collection → the `LiveQuery` component.
 
+The half of those conventions a machine can decide is no longer only prose: it ships as **convention rules** in `dobby check` — native Biome rules, the `conventions` gate step (the filesystem facts a linter can't see: barrels, generic filenames, bucket directories, a table away from its module) and GritQL plugins for the structural shapes — all capability-gated to the stack, and firing at edit time through the hook and at push through the backstop. Each skill annotates which of its rules are enforced that way; the rest are judgment calls the skill still has to teach.
+
 ## The artifacts: STATE.md
 
 Every session writes one shared doc at the target repo's root. It's how stages hand off to each other and how a session survives interruptions:
 
 ```
 STATE.md
+├── ## Goal                   ← scope: the goal as you stated it
+├── ## Source                 ← scope: where it came from (an issue, free text)
 ├── ## Exploration            ← scope: what the codebase says
 ├── ## Findings (interview)   ← interview: every decision + why
 ├── ## Research               ← research: the brief the plan consumes
@@ -233,11 +243,14 @@ STATE.md
 └── ## Work log               ← execute: what each implementor actually did
 ```
 
+Nobody hand-edits it: every write goes through `bunx dobby state` (`init` writes the skeleton and the `.gitignore` entry, `set <Section>` replaces exactly one body, `append-worklog --task <id>` appends one entry, `lint` checks the structure), so a stage can never clobber a sibling section.
+
 It is **never committed** — `/dobby:wrap` disposes it after reconciling the durable docs (`CONTEXT.md`, `CLAUDE.md`, ADRs).
 
 ## Also ships
 
 - **Edit hook** — after every Edit/Write, runs `dobby check --hook` on the edited file in dobby projects (those with a `dobby.config.json` and a local `dobby` bin): biome's safe fixes are applied in place, and only unfixable findings are surfaced back to the model (no-op everywhere else).
+- **Pre-push backstop** — a git `pre-push` hook, installed idempotently by `dobby up`'s setup phase (so it reaches every consumer, and one install covers every worktree). It runs `dobby check --pre-push` over what is being pushed and refuses the push on a red gate, printing every finding; a tree `dobby ship` already gated is skipped through the gate cache. Same double guard as the edit hook (dobby project + local bin, else silent no-op), it never modifies your files, and `git push --no-verify` bypasses it. A pre-push hook dobby did not write is never touched — `dobby up` reports it instead.
 
 ## Improving the kit from real sessions
 
@@ -257,6 +270,7 @@ These couple to Claude Code's session storage (`~/.claude/projects`) on purpose 
 | Researchers cite stale/odd docs | `ctx7` CLI missing or unauthenticated | Install `ctx7`; set `CONTEXT7_API_KEY` for higher limits |
 | Skill edits not picked up (local dev) | Only `SKILL.md` hot-reloads | `/reload-plugins` for agents/hooks changes |
 | Post-edit check hook never fires | By design outside dobby projects | Needs `dobby.config.json` at the project root **and** a local `@kvnwolf/dobby` bin (run `/dobby:onboard`) |
+| A hook blocked my `git push` | The pre-push backstop found a red gate on the tree being pushed | Read the findings it printed (they're the whole list, not a sample) and fix them — or, when you're pushing a WIP branch on purpose, `git push --no-verify` as a conscious bypass |
 | Execute re-authored the workflow and lost the loop logic | The build-loop script must be used verbatim | Re-run `/dobby:execute`; the skill's `references/build-workflow.md` is the canonical script |
 | `portless` prompts for sudo / fails to bind `:443` on first run | First-time CA install + privileged port | Run `portless trust` once (surfaced by `/dobby:onboard`); it's a one-time setup, later runs don't need it |
 | An old session died and left a worktree in `.claude/worktrees/` | The session couldn't run `/dobby:finish` before exiting | Run `/dobby:finish` anyway — it detects the orphan, verifies the branch merged, confirms with you, and cleans up via raw git |

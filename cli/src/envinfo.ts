@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { detectCapabilities } from "./detect.ts";
 import { resolveBin, resolveWorkroot, runCapture } from "./runner.ts";
+import { dbTasks } from "./tasks.ts";
 
 // Top-level regexes (biome useTopLevelRegex — a literal inside a function recompiles
 // on every call).
@@ -33,6 +34,11 @@ export interface EnvSnapshot {
   cmux: string | null;
   // Whether a parseable dobby.config.json exists at the root.
   config: boolean;
+  // The INFERRED `db:<task>` command names for this project (`db:push`, `db:migrate`,
+  // …), empty without a db capability. Reported so a consumer that needs to run one
+  // (the migrate verify recipe) reads the names dobby will actually resolve instead
+  // of hard-coding a guess that drifts with the inference.
+  dbTasks: string[];
   // The portless-resolved dev URL, or null (no vite capability / portless absent / errors).
   devUrl: string | null;
   // The kit run-pane surface ref (surface titled dobby-run-<slug>), or null.
@@ -57,6 +63,9 @@ export function collectEnv(root: string): EnvSnapshot {
     capabilities,
     cmux,
     config: loadConfig(root)?.ok === true,
+    // The same pure map the `db:*` executor resolves through — one source, so the
+    // reported names and the runnable commands can never disagree.
+    dbTasks: [...dbTasks(capabilities).tasks.keys()],
     devUrl,
     runPane: panes.runPane,
     worktree: workroot,

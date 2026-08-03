@@ -1,0 +1,9 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C19 — data-processing: field.Control binds a UI component through its `render`
+// prop; anything else is manual value/onChange wiring.
+`<field.Control $props />` as $control where {
+  not $props <: contains `render={$render}`,
+  register_diagnostic(span=$control, message="Bind UI components with field.Control's render prop, not manual value/onChange wiring.", severity="error")
+}

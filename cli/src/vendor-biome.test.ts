@@ -21,4 +21,14 @@ describe("vendored biome presets", () => {
     const { react } = generateVendoredBiome();
     expect(readFileSync(VENDORED_BIOME_PATHS.react, "utf8")).toBe(react);
   });
+
+  // The config-less wrapper is generator-owned too, because it carries the tier-(c)
+  // `plugins` array: a GritQL rule hand-edited in (or silently dropped out) would
+  // otherwise escape every gate in the repo.
+  it("configless.react.jsonc matches the generator (no hand-edit of the plugin wiring)", () => {
+    const { configlessReact } = generateVendoredBiome();
+    expect(readFileSync(VENDORED_BIOME_PATHS.configlessReact, "utf8")).toBe(
+      configlessReact
+    );
+  });
 });

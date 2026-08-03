@@ -1,0 +1,11 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C23 — data-processing: TanStack Form's Standard Schema validation does NOT
+// propagate transforms into the submitted value, so a submit handler that hands the
+// raw `value` straight to a call ships untrimmed input. Scoped by `within` to the
+// form's own onSubmit handler, so an unrelated `await f(value)` elsewhere is quiet.
+`await $fn(value)` as $call where {
+  $call <: within `onSubmit: async ($params) => $body` ,
+  register_diagnostic(span=$call, message="Build an explicit data object trimming each string field and submit data — Standard Schema transforms do NOT propagate into the submitted value.", severity="error")
+}

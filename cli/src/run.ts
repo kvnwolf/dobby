@@ -1,8 +1,19 @@
 import { parseArgs } from "node:util";
 import pkg from "../package.json";
+import { runAdr } from "./adr.ts";
+import { runArtifactLint } from "./artifact-lint.ts";
+import { runBuildPlan } from "./buildplan.ts";
 import { type CheckGroup, type CheckNote, check, checkHook } from "./check.ts";
+import type {
+  CommandContext,
+  CommandOptions,
+  CommandResult,
+} from "./command.ts";
+import { loadConfig } from "./config.ts";
 import { detectCapabilities } from "./detect.ts";
 import { collectEnv, type EnvSnapshot } from "./envinfo.ts";
+import { prePushCheck } from "./hook-install.ts";
+import { runKb } from "./kb.ts";
 import {
   type DownAction,
   type DownPlan,
@@ -17,8 +28,21 @@ import {
   type SetupAction,
   type UpAction,
   type UpPlan,
+  type UpReport,
 } from "./lifecycle.ts";
+import {
+  runFinishPreflight,
+  runMigrate,
+  runScopePreflight,
+} from "./preflight.ts";
+import { runRelease } from "./release.ts";
+import { runRepro } from "./repro.ts";
+import { runPr, runReview } from "./review.ts";
+import { resolveWorkroot } from "./runner.ts";
+import { runShip } from "./ship.ts";
+import { runState } from "./state.ts";
 import { type CheckFlags, type DbCommand, usageCommands } from "./tasks.ts";
+import { runClaim, runGoal, runTracker } from "./tracker.ts";
 
 // The CLI's public interface: a pure process-independent seam. It parses argv,
 // dispatches on the first positional, and returns the process outcome as data
@@ -32,6 +56,15 @@ import { type CheckFlags, type DbCommand, usageCommands } from "./tasks.ts";
 // Bun.* globals, no bun: modules — so vitest (Node/Vite runtime) can import it.
 // All formatting lives HERE; the modules return data.
 
+// The process outcome as data — what `run()` and its helpers return, and exactly
+// the shape the bin adapter writes out. Named so the registry helpers below can
+// declare it; `run()`'s own signature keeps the structural literal it always had.
+interface CliOutcome {
+  exitCode: number;
+  stderr: string;
+  stdout: string;
+}
+
 // The exact upgrade-hint line appended as the second line of an unknown-command
 // error: a version-skew signal telling the caller their dobby is behind the kit.
 const upgradeHint =
@@ -41,7 +74,7 @@ const upgradeHint =
 // not vary per repo). The Commands block above it IS capability-filtered, so the
 // help never advertises a command that does not apply to the current repo.
 const OPTION_LINES = [
-  "  --json          Print machine-readable JSON (env)",
+  "  --json          Print machine-readable JSON (env, up, session commands)",
   "  --lint          check: run only biome",
   "  --types         check: run only tsc",
   "  --unused        check: run only knip",
@@ -49,6 +82,7 @@ const OPTION_LINES = [
   "  --test          check: run only the test step",
   "  --fix           check: apply biome's safe fixes first, then report what remains",
   "  --hook          check: edit-time PostToolUse mode (payload on stdin)",
+  "  --pre-push      check: git pre-push backstop mode (ref lines on stdin)",
   "  --dry-run       dev / build / db:* / up / down: print the resolved action plan without executing it",
   "  -v, --version   Print the dobby version and exit",
 ];
@@ -57,10 +91,12 @@ const OPTION_LINES = [
 // line begins "Usage: dobby" (asserted by the contract); the Commands block lists
 // ONLY the applicable commands (`usageCommands`, filtered) — the fix for the field
 // report where the static help advertised dev/up/down/db:* in repos with neither a
-// vite nor a db capability. All rendering (column alignment, headers) lives HERE;
-// `tasks.ts` returns the filtered command data.
-function buildUsage(capabilities: string[]): string {
-  const commands = usageCommands(capabilities);
+// vite nor a db capability. `releaseAvailable` is the ONE config-derived input (the
+// loaded `dobby.config.json` carries a `release` key): `usageCommands` stays PURE,
+// so the config read happens in run() and only the verdict is passed. All rendering
+// (column alignment, headers) lives HERE; `tasks.ts` returns the filtered data.
+function buildUsage(capabilities: string[], releaseAvailable: boolean): string {
+  const commands = usageCommands(capabilities, releaseAvailable);
   const width = Math.max(...commands.map((c) => c.name.length));
   const commandLines = commands.map(
     (c) => `  ${c.name.padEnd(width)}  ${c.description}`
@@ -77,6 +113,308 @@ function buildUsage(capabilities: string[]): string {
   ].join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// The COMMAND REGISTRY — one table declaring, for EVERY command (the pre-existing
+// ones included), which flags it accepts, which subcommand tokens are valid (and
+// what each of those ADDS to the flag set), and — for the session commands — which
+// DOMAIN function owns it.
+//
+// Why a table at all (spec Decisions 9 + 19):
+//  - The strict `parseArgs` above validates flags GLOBALLY: it only knows the flag
+//    EXISTS somewhere in the CLI. That let `dobby up --json` parse and be SILENTLY
+//    ignored — a whole class of no-op footguns which grows with every flag this
+//    session adds. The allowlist turns an out-of-place flag into a hard error
+//    naming the flag AND the command (interview I9).
+//  - Registering every command HERE (as a stub delegating to its own domain module)
+//    means the tasks that implement them touch only their module — nobody has to
+//    co-edit this dispatcher.
+//
+// Pre-existing commands declare `flags` but NO handler: they keep their bespoke arm
+// in the flat if-chain inside run() (behavior unchanged — the registry only
+// validates them). `db:*` is not a fixed key; it resolves through DB_ENTRY.
+// ---------------------------------------------------------------------------
+
+interface CommandEntry {
+  // The flags accepted regardless of subcommand, by LONG name (as declared in
+  // parseArgs). `--version` is exempt everywhere: it short-circuits before dispatch.
+  flags: readonly string[];
+  // The DOMAIN function for a session command. Absent = an existing command whose
+  // arm lives in run()'s if-chain.
+  handler?: (context: CommandContext) => CommandResult;
+  // Subcommand token → the flags THAT token adds. Present at all = the command
+  // REQUIRES one of these tokens as its first positional.
+  subcommands?: Readonly<Record<string, readonly string[]>>;
+}
+
+// The universal machine-output flag: every session command answers with a JSON
+// payload, so each accepts `--json` (their `text` form is the human fallback).
+const JSON_FLAG: readonly string[] = ["json"];
+
+const COMMANDS: Readonly<Record<string, CommandEntry>> = {
+  adr: {
+    flags: JSON_FLAG,
+    handler: runAdr,
+    // PINNED to the implemented surface (`dobby adr new "<title>" [--status …]`),
+    // replacing task 1's pre-spec guess: the title is a POSITIONAL, the slug is
+    // DERIVED from it, and the body is deliberately not the CLI's to write (the
+    // command emits a skeleton; authorship stays with the architect) — so
+    // `--title`/`--slug`/`--body-file` would each have been a silently-ignored
+    // flag, the exact footgun class this allowlist exists to close.
+    subcommands: { new: ["status"] },
+  },
+  "arch-report": {
+    flags: JSON_FLAG,
+    handler: runArtifactLint,
+    subcommands: { verify: ["file", "focus"] },
+  },
+  brief: {
+    flags: JSON_FLAG,
+    handler: runArtifactLint,
+    subcommands: { lint: ["file", "issue"] },
+  },
+  build: { flags: ["dry-run"] },
+  "build-plan": {
+    flags: ["json", "file", "task"],
+    handler: runBuildPlan,
+  },
+  check: {
+    flags: [
+      "fix",
+      "hook",
+      "lint",
+      "types",
+      "unused",
+      "build",
+      "test",
+      // The git pre-push backstop mode: git's ref lines arrive on stdin (the bin
+      // drains it for `--pre-push` exactly as it does for `--hook`).
+      "pre-push",
+    ],
+  },
+  claim: { flags: ["json", "issue"], handler: runClaim },
+  dev: { flags: ["dry-run"] },
+  down: { flags: ["dry-run"] },
+  env: { flags: JSON_FLAG },
+  finish: {
+    flags: ["json", "preflight", "slug"],
+    handler: runFinishPreflight,
+  },
+  goal: {
+    flags: JSON_FLAG,
+    handler: runGoal,
+    subcommands: { parse: ["source", "issue"] },
+  },
+  handoff: {
+    flags: JSON_FLAG,
+    handler: runArtifactLint,
+    // `--focus`: the subject `/dobby:handoff` was invoked with. The linter reads
+    // it (the one-line `## Focus` section must be ABOUT it), so it has to survive
+    // the allowlist — without the token here the flag is rejected as unknown
+    // before the handler ever runs.
+    subcommands: { finalize: ["file", "focus"] },
+  },
+  kb: {
+    flags: ["json", "kind"],
+    handler: runKb,
+    // PINNED to the implemented surface (`kb record --kind --concept --title
+    // --reason-file --entry`), replacing task 1's pre-spec guess — which STATE.md
+    // (task 1, finding 4) flagged as the weakest one and left for this task to
+    // settle. `--reason-file` supersedes the generic `--file`, and a KB record is
+    // ALWAYS a rejection, so `--rejected` carried no information.
+    subcommands: {
+      list: [],
+      record: ["concept", "entry", "title", "reason-file"],
+    },
+  },
+  map: {
+    flags: ["json", "file"],
+    handler: runArtifactLint,
+    subcommands: { claim: ["task"], lint: [], next: ["focus"] },
+  },
+  migrate: {
+    flags: ["json", "dry-run"],
+    handler: runMigrate,
+    subcommands: { preflight: [], verify: [] },
+  },
+  pr: {
+    flags: ["json", "pr"],
+    handler: runPr,
+    subcommands: { watch: ["deadline", "await-review"] },
+  },
+  release: {
+    flags: ["json", "dry-run", "bump", "notes-file"],
+    handler: runRelease,
+  },
+  repro: {
+    flags: ["json", "expect", "repeat", "bench"],
+    handler: runRepro,
+  },
+  review: {
+    flags: ["json", "pr"],
+    handler: runReview,
+    subcommands: { apply: ["plan", "stdin", "dry-run"], fetch: [] },
+  },
+  scope: {
+    flags: JSON_FLAG,
+    handler: runScopePreflight,
+    subcommands: { preflight: ["slug", "goal", "source"] },
+  },
+  ship: {
+    flags: ["json", "message-file", "pr-body-file"],
+    handler: runShip,
+  },
+  skill: {
+    flags: JSON_FLAG,
+    handler: runArtifactLint,
+    subcommands: { lint: ["file"] },
+  },
+  spec: {
+    flags: JSON_FLAG,
+    handler: runArtifactLint,
+    subcommands: { lint: ["file"] },
+  },
+  state: {
+    flags: JSON_FLAG,
+    handler: runState,
+    subcommands: {
+      "append-worklog": ["file", "stdin", "task"],
+      // `--goal` / `--source` fill the Goal and Source bodies of the skeleton
+      // `init` writes (the surface `/dobby:scope` calls); both options already
+      // exist globally (allowlisted for `scope preflight`).
+      init: ["goal", "source"],
+      // No `--file` (unlike the artifact-lint commands): `state lint` judges the
+      // ONE document the engine owns, `<workroot>/STATE.md`, so a target flag
+      // could only be silently ignored.
+      lint: [],
+      set: ["file", "stdin"],
+    },
+  },
+  tracker: {
+    flags: JSON_FLAG,
+    handler: runTracker,
+    subcommands: {
+      close: ["issue", "reason-file", "rejected"],
+      create: ["title", "body-file", "label", "kind"],
+      info: ["issue"],
+      search: ["label", "status", "focus"],
+    },
+  },
+  // `--json` renders the machine report (`UpFacts`) instead of the human forms —
+  // the flag used to parse and be SILENTLY dropped, which is the footgun the
+  // allowlist closes for every other flag too.
+  up: { flags: ["dry-run", "json"] },
+  update: { flags: [] },
+  wizard: {
+    flags: JSON_FLAG,
+    handler: runArtifactLint,
+    subcommands: { verify: ["file"] },
+  },
+};
+
+// Every inferred `db:<task>` shares one entry — the name is resolved by `dbTasks`,
+// not by this table.
+const DB_ENTRY: CommandEntry = { flags: ["dry-run"] };
+
+// The registry entry for a command token, or undefined when the CLI has no such
+// command (the caller then falls through to the unknown-command error). `release`
+// is CONFIG-GATED (spec Decision 2): without a `release` key in the config loaded
+// from the WORKROOT the command does not exist at all — same as it is absent from
+// the help. (A config that exists but failed to load never reaches here: run()
+// surfaces its error, so a broken config can never read as an absent command.)
+// `Object.hasOwn` keeps inherited Object properties (`toString`, `constructor`)
+// from resolving to a bogus entry.
+function lookupCommand(
+  command: string,
+  releaseAvailable: boolean
+): CommandEntry | undefined {
+  if (command.startsWith("db:")) {
+    return DB_ENTRY;
+  }
+  if (command === "release" && !releaseAvailable) {
+    return;
+  }
+  return Object.hasOwn(COMMANDS, command) ? COMMANDS[command] : undefined;
+}
+
+// An error carrying the SAME shape as the parse error: the message first, a blank
+// line, then the capability-filtered usage (the order is part of the contract).
+function usageError(message: string, usage: string): CliOutcome {
+  return { exitCode: 1, stderr: `${message}\n\n${usage}`, stdout: "" };
+}
+
+// Validate ONE invocation against its registry entry, BEFORE dispatch:
+//  1. the subcommand token (for a subcommand-style command) — missing or unknown
+//     is a hard error listing what IS valid, mirroring the `db:*` precedent, and
+//     it precedes the flag check so `state frobnicate --file x` complains about
+//     the token, not the flag;
+//  2. the flags — every PRESENT flag must sit in the command's set ∪ the chosen
+//     subcommand's additions; the first outsider is a hard error naming the flag,
+//     the command (subcommand included) and what the command does accept.
+// Returns null when the invocation is well-formed.
+function validateInvocation(
+  command: string,
+  entry: CommandEntry,
+  args: string[],
+  options: CommandOptions,
+  usage: string
+): CliOutcome | null {
+  let added: readonly string[] = [];
+  let label = command;
+
+  const { subcommands } = entry;
+  if (subcommands !== undefined) {
+    const valid = Object.keys(subcommands);
+    const [token] = args;
+    if (token === undefined) {
+      return usageError(
+        `${command} requires a subcommand — expected one of: ${valid.join(", ")}`,
+        usage
+      );
+    }
+    if (!Object.hasOwn(subcommands, token)) {
+      return usageError(
+        `unknown subcommand: ${command} ${token} — expected one of: ${valid.join(", ")}`,
+        usage
+      );
+    }
+    added = subcommands[token] ?? [];
+    label = `${command} ${token}`;
+  }
+
+  const allowed = [...entry.flags, ...added];
+  for (const flag of Object.keys(options)) {
+    if (!allowed.includes(flag)) {
+      const accepted =
+        allowed.length === 0
+          ? "it takes no flags"
+          : `accepted flags: ${allowed.map((name) => `--${name}`).join(", ")}`;
+      return usageError(
+        `unknown flag --${flag} for \`dobby ${label}\` — ${accepted}`,
+        usage
+      );
+    }
+  }
+
+  return null;
+}
+
+// The GENERIC renderer for every session command (the ONLY rendering they need):
+// a result carrying a `json` payload prints it as one JSON line — the sole stdout
+// — otherwise `text` prints verbatim; `error` goes to stderr with a trailing
+// newline. Generic ON PURPOSE: a later task fills a stub's internals and gets its
+// output rendered without touching this file.
+function renderCommandResult(result: CommandResult): CliOutcome {
+  const stdout =
+    result.json === undefined
+      ? (result.text ?? "")
+      : `${JSON.stringify(result.json)}\n`;
+  return {
+    exitCode: result.exitCode,
+    stderr: result.error === undefined ? "" : `${result.error}\n`,
+    stdout,
+  };
+}
+
 // run() is the command DISPATCHER (a flat switch over every `dobby` subcommand) and is
 // async BY CONTRACT: it is the capture seam the streaming split pairs with the async
 // `runDev` — index.ts awaits BOTH uniformly — and its return type is Promise. Its
@@ -90,11 +428,27 @@ export async function run(
   cwd: string,
   stdin?: string
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  // `release` is the CLI's one CONFIG-gated command (spec Decision 2): the loaded
+  // `dobby.config.json` must carry a `release` key for it to exist or be
+  // advertised. Read here (config.ts stays the sole reader) and passed on as a
+  // plain verdict so the help inference stays pure.
+  //
+  // The config is read from the RESOLVED WORKROOT — the same root every other
+  // config consumer uses (check.ts, envinfo.ts) — never the bare cwd: `cd cli &&
+  // dobby release` in a configured repo would otherwise find no config and make a
+  // real command vanish. Outside a git repo the cwd is the only root there is.
+  // An unparseable/unreadable config yields false, so the HELP never fails on it;
+  // the command path below surfaces its error instead of hiding the command.
+  const configLoad = loadConfig(resolveWorkroot(cwd) ?? cwd);
+  const configError = configLoad?.ok === false ? configLoad.error : null;
+  const releaseAvailable =
+    configLoad?.ok === true && configLoad.config.release !== undefined;
+
   // The usage/help text is capability-filtered per repo (the SAME detection env's
   // `capabilities:` line uses — over the PASSED cwd, never a workroot resolve), so
   // every path that prints usage (bare, parse error, unknown command) advertises
   // only the commands that apply here.
-  const usage = buildUsage(detectCapabilities(cwd));
+  const usage = buildUsage(detectCapabilities(cwd), releaseAvailable);
 
   let positionals: string[];
   let version: boolean | undefined;
@@ -104,19 +458,52 @@ export async function run(
   let dryRun: boolean | undefined;
   // The selective `check` flags: any present => run ONLY the flagged steps.
   let checkFlags: CheckFlags = {};
+  // Every flag PRESENT in argv, for the per-command allowlist (and for the domain
+  // modules, which read their own options off it).
+  const options: Record<string, boolean | string> = {};
 
   try {
     const parsed = parseArgs({
       allowPositionals: true,
       args: argv,
       options: {
+        "await-review": { type: "boolean" },
+        bench: { type: "boolean" },
+        "body-file": { type: "string" },
         build: { type: "boolean" },
+        bump: { type: "string" },
+        concept: { type: "string" },
+        deadline: { type: "string" },
         "dry-run": { type: "boolean" },
+        entry: { type: "string" },
+        expect: { type: "string" },
+        file: { type: "string" },
         fix: { type: "boolean" },
+        focus: { type: "string" },
+        goal: { type: "string" },
         hook: { type: "boolean" },
+        issue: { type: "string" },
         json: { type: "boolean" },
+        kind: { type: "string" },
+        label: { type: "string" },
         lint: { type: "boolean" },
+        "message-file": { type: "string" },
+        "notes-file": { type: "string" },
+        plan: { type: "string" },
+        pr: { type: "string" },
+        "pr-body-file": { type: "string" },
+        "pre-push": { type: "boolean" },
+        preflight: { type: "boolean" },
+        "reason-file": { type: "string" },
+        rejected: { type: "boolean" },
+        repeat: { type: "string" },
+        slug: { type: "string" },
+        source: { type: "string" },
+        status: { type: "string" },
+        stdin: { type: "boolean" },
+        task: { type: "string" },
         test: { type: "boolean" },
+        title: { type: "string" },
         types: { type: "boolean" },
         unused: { type: "boolean" },
         version: { short: "v", type: "boolean" },
@@ -132,6 +519,13 @@ export async function run(
       types: parsed.values.types,
       unused: parsed.values.unused,
     };
+    // parseArgs sets a key ONLY for a flag that appeared, so the surviving entries
+    // ARE the present flags (an absent one is undefined and dropped here).
+    for (const [name, value] of Object.entries(parsed.values)) {
+      if (typeof value === "string" || typeof value === "boolean") {
+        options[name] = value;
+      }
+    }
   } catch (error) {
     // parseArgs (strict) throws a TypeError on unknown/malformed flags. Emit the
     // parse error message BEFORE the usage — the order is part of the contract.
@@ -147,6 +541,34 @@ export async function run(
 
   if (command === undefined) {
     return { exitCode: 0, stderr: "", stdout: usage };
+  }
+
+  // A config that FAILED to load cannot answer whether `release` exists. Falling
+  // through to `unknown command: release` (plus the "update dobby" hint) would
+  // point a typo in `release.type` at the wrong problem entirely, so the config
+  // error is reported instead — the command exists, the config is broken.
+  if (command === "release" && configError !== null) {
+    return { exitCode: 1, stderr: `${configError}\n`, stdout: "" };
+  }
+
+  // The REGISTRY gate, ahead of every dispatch arm: a KNOWN command validates its
+  // subcommand token + its flag allowlist here (so no arm below has to), and a
+  // SESSION command is then dispatched to its domain module and rendered
+  // generically. An unknown token resolves to no entry and falls through to the
+  // unknown-command error at the bottom — naming a flag for a command that does
+  // not exist would only bury the real problem.
+  const entry = lookupCommand(command, releaseAvailable);
+  if (entry !== undefined) {
+    const args = positionals.slice(1);
+    const rejection = validateInvocation(command, entry, args, options, usage);
+    if (rejection !== null) {
+      return rejection;
+    }
+    if (entry.handler !== undefined) {
+      return renderCommandResult(
+        entry.handler({ command, cwd, options, positionals: args, stdin })
+      );
+    }
   }
 
   if (command === "env") {
@@ -173,6 +595,15 @@ export async function run(
         stderr: formatCheck(outcome.groups, []),
         stdout: "",
       };
+    }
+    if (options["pre-push"] === true) {
+      // The PRE-PUSH BACKSTOP: git's `<local-ref> <local-sha> <remote-ref>
+      // <remote-sha>` lines arrive on stdin, and a nonzero exit aborts the push.
+      // Everything it decides (the stdin contract, the gate cache, the uncapped
+      // report) lives in hook-install.ts, so the installed shim stays a dumb
+      // guarded exec — and every branch stays reachable through run(argv, cwd,
+      // stdin) instead of only through a real `git push`.
+      return prePushCheck(cwd, stdin);
     }
     // Positionals after "check" are file args (per-file fast path); none = the
     // project-wide gate (subset by the selective flags). `--fix` applies biome's
@@ -242,7 +673,14 @@ export async function run(
     // missing creds fails hard (no main-DB fallback). `--dry-run` renders the
     // decision-derived plan without probing / spawning / touching cmux or neon; a
     // real run executes it and reports the outcome (streamed stdio, so no stdout).
-    const report = runUp(cwd, { dryRun: Boolean(dryRun) });
+    // `--json` renders the machine report INSTEAD of every human form below.
+    const report = runUp(cwd, {
+      dryRun: Boolean(dryRun),
+      machineReport: Boolean(json),
+    });
+    if (json) {
+      return renderUpJson(report);
+    }
     if (!report.ok) {
       return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
     }
@@ -320,25 +758,28 @@ export async function run(
 }
 
 // Render the env snapshot as `key: value` lines (the default form). Scalars
-// print their value or the literal "null"; capabilities print as a
-// comma-separated list or the literal "none"; config prints "true"/"false".
+// print their value or the literal "null"; capabilities and the inferred db tasks
+// print as a comma-separated list or the literal "none"; config prints
+// "true"/"false".
 function formatEnvText(snapshot: EnvSnapshot): string {
-  const capabilities =
-    snapshot.capabilities.length === 0
-      ? "none"
-      : snapshot.capabilities.join(", ");
   return [
     `cmux: ${scalar(snapshot.cmux)}`,
     `worktree: ${scalar(snapshot.worktree)}`,
     `branch: ${scalar(snapshot.branch)}`,
-    `capabilities: ${capabilities}`,
+    `capabilities: ${list(snapshot.capabilities)}`,
     `config: ${snapshot.config}`,
+    `dbTasks: ${list(snapshot.dbTasks)}`,
     `devUrl: ${scalar(snapshot.devUrl)}`,
     `runPane: ${scalar(snapshot.runPane)}`,
     `browserPane: ${scalar(snapshot.browserPane)}`,
   ]
     .join("\n")
     .concat("\n");
+}
+
+// A list field for text output: its comma-separated members, or the literal "none".
+function list(values: string[]): string {
+  return values.length === 0 ? "none" : values.join(", ");
 }
 
 // A scalar field for text output: its string value, or the literal "null".
@@ -360,6 +801,13 @@ function describeSetupAction(action: SetupAction): string {
   switch (action.kind) {
     case "install":
       return "bun install";
+    case "hook":
+      // A FOREIGN pre-push hook is refused, not overwritten — and the refusal is
+      // only useful if it names the file blocking the install (the human decides
+      // whether to fold dobby's gate into their own hook or delete it).
+      return action.foreign
+        ? `pre-push backstop NOT installed: ${action.path} exists and was not written by dobby`
+        : `install the pre-push backstop: ${action.path}`;
     case "copy":
       return `copy ${action.rel} (from main checkout)`;
     case "extra":
@@ -418,6 +866,29 @@ function formatDevPlan(plan: ResolvedDevPlan): string {
 // One shell-style line for a resolved dev command: `<resolved-bin> <args…>`.
 function renderResolvedCommand(command: ResolvedDevCommand): string {
   return `${command.bin} ${command.args.join(" ")}`.trimEnd();
+}
+
+// Render `dobby up --json`: the flat machine report (`UpFacts`, decided in
+// lifecycle.ts) as ONE JSON object that is the SOLE stdout — a skill parses stdout
+// whole, so a single stray prose line would break it. The human message keeps its
+// place on STDERR (setup children stream there too, via runUp's `machineReport`),
+// and the exit code follows the action-command convention: 0 when the workspace is
+// up, nonzero whenever `ok` is false — the failing step's own code where there is
+// one, else 1, so `ok:false` and a zero exit can never be reported together.
+function renderUpJson(report: UpReport): CliOutcome {
+  let message: string | null = null;
+  let failureExit = 1;
+  if (report.ok === false) {
+    message = report.error;
+  } else if (report.kind === "ran") {
+    message = report.failure;
+    failureExit = report.exitCode;
+  }
+  return {
+    exitCode: report.facts.ok ? 0 : Math.max(failureExit, 1),
+    stderr: message === null ? "" : `${message}\n`,
+    stdout: `${JSON.stringify(report.facts)}\n`,
+  };
 }
 
 // The placeholder surface refs the `up` plan renders where a real run would capture

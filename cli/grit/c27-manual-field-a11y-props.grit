@@ -1,0 +1,22 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C27 — data-processing: Base UI Field wires aria-invalid, aria-describedby and
+// for/id automatically. A hand-passed a11y prop on a field.* component either
+// duplicates or fights that wiring.
+//
+// The attribute names are matched by a regex over the attribute LIST rather than by
+// an attribute snippet: a snippet with a metavariable VALUE (`htmlFor=$v`) does not
+// match a string-literal attribute in bundled biome 2.5.4 (only `{…}` values and
+// exact literals do), so it would silently miss `htmlFor="x"` — the commonest form.
+// The group is non-capturing on purpose: a capturing group makes the engine expect a
+// bound metavariable and the plugin errors at match time. Both lab-verified.
+or {
+  `<field.Root $props>$children</field.Root>` as $element,
+  `<field.Label $props>$children</field.Label>` as $element,
+  `<field.Control $props />` as $element,
+  `<field.ErrorMessage $props />` as $element
+} where {
+  $props <: r"[\s\S]*(?:aria-invalid|aria-describedby|htmlFor)[\s\S]*",
+  register_diagnostic(span=$element, message="Base UI Field wires aria-invalid, aria-describedby and for/id — remove the manual prop.", severity="error")
+}

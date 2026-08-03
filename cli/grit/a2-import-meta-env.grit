@@ -1,0 +1,15 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// A2 (DEMOTED from tier (a) to tier (c)) — module-conventions: `env` is the single
+// source. App code reads the validated `env` from "@/shared/env", never
+// `import.meta.env` ad hoc. Biome 2.5.4 ships no rule that can see a meta-property:
+// there is no noRestrictedSyntax-class rule, and noRestrictedGlobals.deniedGlobals
+// matches bare global identifiers only — a denied global "import.meta.env" reports
+// nothing (lab-verified during the tier-(a) task). A GritQL member pattern can.
+//
+// The blessed out-of-Vite exceptions ride the plugin's `includes` negations, mirroring
+// the tier-(a) noProcessEnv allowlist override in the react preset.
+`import.meta.env` as $access where {
+  register_diagnostic(span=$access, message="Read the validated env from '@/shared/env' — ad-hoc import.meta.env access bypasses the single validated source.", severity="error")
+}

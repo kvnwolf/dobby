@@ -1,0 +1,9 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C1 — module-conventions: server functions (and their middlewares) live in the
+// module's `functions.ts`. Path-scoped by the plugin's `includes` to every source
+// file EXCEPT `functions.ts`, so the pattern itself only has to spot the call.
+`createServerFn($...)` as $call where {
+  register_diagnostic(span=$call, message="createServerFn belongs in <module>/functions.ts — it is isomorphic (no suffix), and its .handler() body is what gets DCE'd from the client bundle.", severity="error")
+}
