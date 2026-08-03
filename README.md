@@ -207,7 +207,7 @@ The whole session ran inside a per-goal worktree that `/dobby:scope` created —
 | Context is getting long, or you want to branch a fresh session off a clean summary | `/dobby:handoff` — an ephemeral fork document |
 | A merge/rebase left conflict markers you need to reconcile without losing either side | `/dobby:resolve-conflicts` |
 | A brand-new empty repo | `/dobby:onboard` — scaffolds it and picks the issue tracker (GitHub Issues by default, or Linear / local `BACKLOG.md`) |
-| A repo still on vite-plus or the legacy `.claude/commit.config.yml` | `/dobby:migrate-config` — one-time move onto `@kvnwolf/dobby` + `dobby.config.json` |
+| A repo on an older dobby — or still on vite-plus / the legacy `.claude/commit.config.yml` | `/dobby:upgrade` — bumps to the latest and walks the per-version upgrade notes; a legacy repo is routed through `/dobby:migrate-config` (the one-time move onto `@kvnwolf/dobby` + `dobby.config.json`) |
 | Work is done, ship it | `/dobby:commit` |
 | The PR merged and the worktree needs retiring | `/dobby:finish` |
 | A merged version ready to publish | `/dobby:release` — from the main checkout; npm or a Homebrew cask, per `dobby.config.json`'s `release` key |
