@@ -1,0 +1,16 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C21 — data-processing: a form inside a dialog renders the dialog AS the form
+// (`render={<form.Root form={form} />}`), so fields and footer inherit the dialog's
+// grid. A form.Root nested in the CHILDREN is the skill's own wrong-way example.
+//
+// The children metavariable is what makes the correct shape pass: with the render
+// prop, form.Root lives in the ATTRIBUTE list, which this pattern never inspects.
+or {
+  `<DialogContent $props>$children</DialogContent>` as $content,
+  `<AlertDialogContent $props>$children</AlertDialogContent>` as $content
+} where {
+  $children <: contains `<form.Root $formProps>$formChildren</form.Root>`,
+  register_diagnostic(span=$content, message="DialogContent must render as the form (render={<form.Root form={form} />}) so fields and footer inherit the dialog's grid (gap-6).", severity="error")
+}

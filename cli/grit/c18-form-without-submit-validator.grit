@@ -1,0 +1,23 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C18 — data-processing, "Rules every form MUST follow": validate with Zod. The
+// house form carries its schema in `validators.onSubmit` — that single entry is
+// what makes `form.Submit` auto-disable while invalid and what feeds
+// `field.ErrorMessage`. Two arms: no `validators` bag at all, and a bag that has
+// one but not the `onSubmit` entry.
+//
+// Only a WHOLLY INLINE options object is checked: a `useAppForm(options)` built from
+// a hoisted variable — or an object that SPREADS one in — would need the declaration
+// resolved, and a single-file pattern that guessed would flag conformant code.
+`useAppForm($opts)` as $call where {
+  $opts <: JsObjectExpression(),
+  not $opts <: contains JsSpread(),
+  or {
+    not $opts <: contains `validators: $validators`,
+    $opts <: contains `validators: $validators` where {
+      not $validators <: contains `onSubmit: $schema`
+    }
+  },
+  register_diagnostic(span=$call, message="Every form validates with Zod through validators.onSubmit — pick/extend the entity's schema instead of re-stating field rules.", severity="error")
+}

@@ -7,6 +7,8 @@
 
 The directory is created lazily on the first rejection — don't commit an empty `docs/out-of-scope/`.
 
+`bunx dobby kb list --kind out-of-scope --json` reads the KB and `bunx dobby kb record --kind out-of-scope …` writes it, so the file layout, the lazy directory and the one-file-per-concept append are mechanical. **What this file governs is judgment**: whether an outcome is eligible at all, which concept a request belongs to, and whether the reason is durable enough to be worth keeping.
+
 ## Directory structure
 
 ```
@@ -20,7 +22,7 @@ One file per **concept**, not per issue. Every issue requesting the same thing g
 
 ## File format
 
-Write it in a relaxed, readable style — closer to a short design note than a database row. Use paragraphs, code samples, and examples so the reasoning is clear to someone meeting it for the first time.
+Write it in a relaxed, readable style — closer to a short design note than a database row. Use paragraphs, code samples, and examples so the reasoning is clear to someone meeting it for the first time. This is the shape `kb record` writes, and the shape `kb list` reads back (tolerantly — a hand-written record still parses).
 
 ```markdown
 # Dark Mode
@@ -49,6 +51,8 @@ A short, descriptive **kebab-case** concept name: `dark-mode.md`, `plugin-system
 
 ### Writing the reason
 
+The rationale is handed to `kb record` as `--reason-file <file>`, split at its first line: **line 1 becomes the one-line statement** under the H1 ("This project does not support dark mode or user-facing theming."), a blank line follows, and **everything after it becomes the "Why this is out of scope" body**. A file carrying only a statement is refused — a record with an empty rationale is the failure that guard exists to prevent.
+
 The reason must be substantive — not "we don't want this" but *why*. Good reasons reference:
 
 - **Project scope / philosophy** — "This project focuses on X; theming is a downstream concern."
@@ -59,9 +63,9 @@ The reason must be **durable**. Avoid temporary circumstances ("we're too busy r
 
 ## Dedup by concept, not keyword
 
-When triage reads these records (Step 1), it matches an incoming request against them by **concept similarity, not keyword overlap** — "night theme" matches `dark-mode.md`. The maintainer confirms the match:
+Triage reads these records with `bunx dobby kb list --kind out-of-scope --json` (Step 1), which answers one entry per record — `{concept, title, statement, priorEntries, path}` — and stops there: **matching an incoming request against them is judgment, by concept similarity, not keyword overlap** — "night theme" matches `dark-mode.md`. The maintainer confirms the match:
 
-- **Confirm** — append the new issue to that file's "Prior requests" list, then close.
+- **Confirm** — record the new issue under that same concept (the write flow below appends it to "Prior requests"), then close.
 - **Reconsider** — delete or update the record; the issue proceeds through normal triage.
 - **Distinct** — related but genuinely different concept; proceed with normal triage (possibly a new concept file later).
 
@@ -82,17 +86,24 @@ When triage reads these records (Step 1), it matches an incoming request against
 ## The write flow (rejected enhancement)
 
 1. The maintainer decides the enhancement is out of scope.
-2. Check whether a matching concept file already exists (by concept, not keyword).
-3. **Match** → append the new issue to its "Prior requests" list.
-4. **No match** → create a new kebab-case concept file with the concept heading, the "Why this is out of scope" reason, and the first prior request.
-5. Post a comment on the issue (AI disclaimer first) explaining the decision and linking the record.
-6. Close the issue.
+2. **Pick the concept** — reuse the slug an existing record already uses when the request belongs to it, or mint a new kebab-case one. This choice IS the dedup decision, and the one step of this flow no command can take for you.
+3. Write the rationale to a file (statement, blank line, reason — see above), then record it:
+
+   ```bash
+   bunx dobby kb record --kind out-of-scope --concept dark-mode \
+     --title "Dark Mode" --reason-file <file> --entry "#42 — \"Add dark mode support\""
+   ```
+
+   An existing concept gets the `--entry` appended to its "Prior requests" and keeps every byte written before it — the rationale authored the first time stands, so a second rejection never rewrites the first one's reasoning. A new concept is created with the skeleton, its directory made lazily.
+
+4. Post a comment on the issue (AI disclaimer first) explaining the decision and linking the record.
+5. Close the issue as rejected (`bunx dobby tracker close <id> --rejected`).
 
 ## Reconsidering later
 
 If the maintainer changes their mind about a rejected concept:
 
-- Delete the concept file.
+- Delete the concept file (by hand — there is no un-record).
 - No need to reopen old issues — they're historical records.
 - The new issue that triggered the reconsideration proceeds through normal triage.
 

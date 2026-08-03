@@ -1,0 +1,11 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C25 — data-processing: form.Submit owns the submit button. It auto-disables when
+// pristine/invalid/submitting and renders the spinner; a hand-rolled submit Button
+// inside the form subtree re-implements all three, badly.
+`<Button $props>$children</Button>` as $button where {
+  $props <: contains `type="submit"`,
+  $button <: within `<form.Root $formProps>$formChildren</form.Root>` ,
+  register_diagnostic(span=$button, message="Use form.Submit — it auto-disables when pristine/invalid/submitting and shows the spinner; never hand-roll one.", severity="error")
+}

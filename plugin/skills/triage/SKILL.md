@@ -3,16 +3,18 @@ name: triage
 description: Triage an incoming issue or external PR — verify the claim, then write a behavioral agent brief or record the rejection in the out-of-scope KB.
 argument-hint: "[issue/PR number or what to triage]"
 disable-model-invocation: true
-allowed-tools: Bash(gh *), Bash(git *)
+allowed-tools: Bash(bunx dobby *), Bash(gh *), Bash(git *), Write
 ---
 
-You are the coordinator/architect. You run the tracker/PR mechanics (`gh`/`git`) yourself, read for synthesis, and **delegate the doing** — verification goes to a `dobby:researcher`, and any resulting build work is a downstream `/dobby:scope` goal, never inline edits by you. Take an incoming issue or external PR from "reported" to a decision the maintainer signs off on, backed by a durable brief or an out-of-scope record.
+You are the coordinator/architect. You run the mechanics yourself — tracker and knowledge-base operations through `bunx dobby`, PR/comment plumbing through `gh` — read for synthesis, and **delegate the doing**: verification goes to a `dobby:researcher`, and any resulting build work is a downstream `/dobby:scope` goal, never inline edits by you. Take an incoming issue or external PR from "reported" to a decision the maintainer signs off on, backed by a durable brief or an out-of-scope record.
 
-**Scope of this skill (portable half):** verify-the-claim, the behavioral agent brief, and the out-of-scope KB. The tracker is always the `gh`-authenticated repo, but building out a full role/state-machine — canonical role names, discovery queries, elaborate label transitions — is **out of scope here**. Triage what the maintainer points you at; don't invent a labeling machine.
+**Scope of this skill (portable half):** verify-the-claim, the behavioral agent brief, and the out-of-scope KB. Building out a full role/state-machine — canonical role names, discovery queries, elaborate label transitions — is **out of scope here**. Triage what the maintainer points you at; don't invent a labeling machine.
 
 **Triage vs. address-review.** This skill triages **incoming requests** — an issue or an *external* PR proposing a change. Review-bot / reviewer comments on **your own open PR** (Greptile, CodeRabbit, humans) belong to `/dobby:address-review` — if the user hands you review threads on their active PR, point them there.
 
-**gh mechanics.** For every GitHub read/write (fetch an issue/PR, read comments, post a comment, checkout a PR branch) reuse the recipes in `../address-review/references/github-api.md` — derive `OWNER`/`REPO` from `gh repo view --json owner,name`, nothing hardcoded. Don't re-author `gh` commands.
+**Tracker mechanics — the backend-agnostic half.** Three operations go through `bunx dobby`, which reads the project's backend itself, so you name the operation and never the backend: `tracker search` (Step 1), `claim` (Step 3), `tracker close --rejected` (Step 4). On a **`linear`** project each of the three answers with a **delegation descriptor** — `{delegate:"mcp", op:"search" | "claim" | "setState", …}` — *instead of* performing the action: execute it through whichever Linear MCP tool **ToolSearch** resolves, per the delegation table in `../backlog/references/trackers.md` (named by what the tool does, never hardcoded). A descriptor you printed but did not execute is not a search, a claim, or a closed issue — never report it as one.
+
+**gh mechanics — the github-only half.** Everything else here is GitHub: fetching the issue/PR, its comments and the diff, `gh pr checkout`, and **every comment you post** (the brief, the rejection note, the already-implemented pointer). Reuse the recipes in `../address-review/references/github-api.md` (derive `OWNER`/`REPO` from `gh repo view --json owner,name`, nothing hardcoded); don't re-author `gh` commands. `bunx dobby brief lint --issue <n>` reads that comment through `gh` too, so it is github-only — `brief lint --file` is the form every backend can run. On a **`linear`** project, post those comments through the Linear MCP (the tool that comments on an issue, resolved by ToolSearch — tools named by what they do, never hardcoded, the same rule `../backlog/references/trackers.md` sets) and lint from the file; the judgment in every step below is unchanged.
 
 **AI disclaimer.** Every comment you post to the tracker during triage MUST start with this line:
 
@@ -22,12 +24,10 @@ You are the coordinator/architect. You run the tracker/PR mechanics (`gh`/`git`)
 
 ## Step 1: Gather context
 
-Read the full issue or PR — body, comments, author, dates; for a PR, the diff too (`gh pr diff N`, per `../address-review/references/github-api.md`). Then run two checks against the codebase, reading for synthesis (explore with the project's domain glossary in `CONTEXT.md`, respect ADRs in the area):
+Read the full issue or PR — body, comments, author, dates; for a PR, the diff too (`gh pr diff N`, per `../address-review/references/github-api.md`). Then run two checks, reading the codebase for synthesis (explore with the project's domain glossary in `CONTEXT.md`, respect ADRs in the area):
 
-- **Redundancy** — search for an existing implementation of the requested behavior *by domain concept, not the request's wording*, and report where you looked. If it already exists, it's an already-implemented outcome (Step 4) — point to where it lives; do **not** write to the out-of-scope KB.
-- **Prior rejection** — read `docs/out-of-scope/*.md` and surface any concept that resembles this request (match by concept, not keyword — "night theme" matches `dark-mode.md`). If one matches, tell the maintainer: "This resembles `docs/out-of-scope/dark-mode.md` — rejected before because [reason]. Still holds?"
-
-Both checks may also scan the tracker's open issues (is this concept already filed or previously rejected there?); that scan reads the configured `tracker` — read the `tracker` key from `dobby.config.json` narratively (absent → github) and follow the **dedup / search** recipe in `../backlog/references/trackers.md`.
+- **Redundancy** — is the requested behavior already built or already filed? Read the codebase for an existing implementation *by domain concept, not the request's wording*, and scan the tracker with `bunx dobby tracker search "<concept>" --json` (on a `linear` project that returns the `op:"search"` descriptor — run the search through the MCP before concluding anything). Report where you looked. If it already exists, it's an already-implemented outcome (Step 4) — point to where it lives; do **not** write to the out-of-scope KB.
+- **Prior rejection** — `bunx dobby kb list --kind out-of-scope --json` returns every rejected concept with its one-line statement and its prior requests. Match by **concept, not keyword** — "night theme" matches the `dark-mode` record — and that match is your judgment, not the command's. On a hit, tell the maintainer: "This resembles `docs/out-of-scope/dark-mode.md` — rejected before because [reason]. Still holds?"
 
 Present a short recommendation (bug vs enhancement, and your leaning) plus the codebase summary, including whether it's already implemented. Wait for the maintainer's direction before verifying or briefing.
 
@@ -54,16 +54,37 @@ If the maintainer wants this actioned by an agent or a human, write a **behavior
 
 The one hard rule: **describe interfaces and behavioral contracts — never file paths or line numbers.** The brief may sit unactioned for weeks while the codebase moves; paths and line numbers go stale, interface descriptions don't. Sections: Category · Summary · Current behavior · Desired behavior · Key interfaces · Acceptance criteria (checkboxes, each independently verifiable) · Out of scope.
 
-- **Actionable by an agent** — post the brief as a comment (prefixed with the AI disclaimer). This brief can be handed straight to `/dobby:scope` as a goal to start a work session.
+**Draft it to a file, then lint it before it is posted.** Write the draft with the `Write` tool to an absolute path **OUTSIDE the repo** — the OS temp dir, e.g. `/tmp/dobby-brief-<timestamp>.md` (`Write` takes a literal path and does not expand `$TMPDIR`). Triage runs in the user's own checkout and `bunx dobby ship` stages the whole tree, so a draft left in the worktree gets swept into somebody's next commit. Then:
+
+```bash
+bunx dobby brief lint --file <file>
+```
+
+**Exit 0 is required to post**, and you paste the output into your report either way. The findings are structural — a missing section, a category outside `bug`/`enhancement`, a summary running past one line, fewer than two acceptance criteria or a vacuous one, an empty `Out of scope`, a file path, a line number, a procedural heading. Every one of them is a defect in the brief: fix the brief and re-run until it's clean; never soften the rule to satisfy the linter. (If you revise a brief already posted, `bunx dobby brief lint --issue <n>` re-judges the newest comment — github-only, since it reads the comment through `gh`.) `rm -f <file>` once the brief is posted.
+
+Then post it (comments are the github-only half — on a linear project post through the MCP, per the header):
+
+- **Actionable by an agent** — post the brief as a comment (AI disclaimer first). This brief can be handed straight to `/dobby:scope` as a goal to start a work session.
 - **Needs a human** — same structure, plus a line on *why* it can't be delegated (judgment calls, external access, design decisions, manual testing).
+
+If the maintainer is taking the work up now, claim the issue: `bunx dobby claim <id>` — github: assignee `@me` + `status:in-progress`, done when the payload says `claimed: true`; **linear: the `op:"claim"` descriptor (assignee me, state In Progress) that you must execute through the MCP** before the issue is actually claimed; local: no-op. Claiming twice is harmless — `/dobby:scope` claims the goal again when it picks it up — so claim here whenever the issue is being taken, and skip it when the brief is only being parked for later.
 
 ## Step 4: Out-of-scope outcomes
 
+Closing is the same command on every backend — `bunx dobby tracker close <id> --rejected` — and on a `linear` project it answers the `op:"setState"` → **Canceled** descriptor: the issue is closed only once you have executed that through the MCP.
+
 When the maintainer decides not to action a request:
 
-- **Already implemented** — the behavior already exists. Post a comment pointing to where it lives. Do **NOT** write to `docs/out-of-scope/` — that KB is for *rejected* requests only; recording a built feature there poisons the dedup checks with a false rejection.
-- **Rejected bug** — a polite explanation comment, then close it as rejected via the **close-as-rejected** recipe in `../backlog/references/trackers.md` (github: `gh issue close --reason "not planned"`; linear: the MCP tool that sets the issue state to Canceled; local: n/a). No KB entry (the KB is enhancements only).
-- **Rejected enhancement** — this is the only case that writes to the KB. Record it in `docs/out-of-scope/` following `references/out-of-scope-kb.md`: one file per **concept** (kebab-case), deduped by concept not keyword — append to an existing concept file's "Prior requests" rather than creating a near-duplicate. Then post a comment linking the record (AI disclaimer first) and close it as rejected via the **close-as-rejected** recipe in `../backlog/references/trackers.md` (same recipe as the rejected-bug outcome — github not-planned / linear Canceled / local n/a).
+- **Already implemented** — the behavior already exists. Post a comment pointing to where it lives. Do **NOT** write to the KB — it is for *rejected* requests only; recording a built feature there poisons the dedup checks with a false rejection.
+- **Rejected bug** — a polite explanation comment, then `bunx dobby tracker close <id> --rejected`. No KB entry (the KB is enhancements only).
+- **Rejected enhancement** — the only case that writes to the KB. Whether this outcome is even eligible, and what makes the reason durable, is judgment: `references/out-of-scope-kb.md` holds both. Write the rationale with the `Write` tool to an absolute path **OUTSIDE the repo** (the OS temp dir, e.g. `/tmp/dobby-oos-<concept>.md` — the KB record is the artifact that gets committed, never this hand-off file) — **first line = the one-line statement**, blank line, then the substantive reason — and record it:
+
+  ```bash
+  bunx dobby kb record --kind out-of-scope --concept <kebab-concept> \
+    --title "<Concept>" --reason-file <file> --entry "#42 — \"<issue title>\""
+  ```
+
+  One file per **concept**: an existing concept is appended to (the reason written the first time stands), a new one is created with the skeleton. **Choosing the concept slug IS the dedup decision** — reuse the one `kb list` showed you in Step 1 rather than minting a near-duplicate. `rm -f <file>` once it is recorded. Then post a comment linking the record (AI disclaimer first) and close it: `bunx dobby tracker close <id> --rejected`.
 
 ## Next step
 
@@ -79,12 +100,14 @@ Interact with the user in their language. The brief, out-of-scope records, and a
 
 ## Acceptance checklist
 
-- [ ] Issue/PR read in full (diff too, for a PR); redundancy + prior-rejection checks run and reported
+- [ ] Issue/PR read in full (diff too, for a PR); redundancy (codebase read + `bunx dobby tracker search`) and prior-rejection (`bunx dobby kb list --kind out-of-scope`) checks run, matched by **concept**, and reported
 - [ ] Claim verified by a dispatched `dobby:researcher` → verdict is confirmed / failed / insufficient, reported to the maintainer
-- [ ] Actionable outcome → behavioral brief written per `references/agent-brief.md` (interfaces & contracts, NEVER paths/line numbers)
-- [ ] Wontfix-rejected **enhancement** → recorded in `docs/out-of-scope/` per `references/out-of-scope-kb.md`, deduped by concept; already-implemented and rejected-bug outcomes write NO KB entry
-- [ ] Rejected outcomes (bug or enhancement) closed via the **close-as-rejected** recipe in `../backlog/references/trackers.md` (github not-planned / linear Canceled / local n/a)
+- [ ] Actionable outcome → behavioral brief per `references/agent-brief.md` (interfaces & contracts, NEVER paths/line numbers), drafted to a temp file **outside the repo** and `bunx dobby brief lint --file <file>` exiting **0** — output pasted — before it is posted; hand-off files removed afterwards
+- [ ] Issue being taken up now → claimed with `bunx dobby claim <id>`
+- [ ] Wontfix-rejected **enhancement** → recorded with `bunx dobby kb record --kind out-of-scope …` under the concept `kb list` already knows (or a new kebab one), per `references/out-of-scope-kb.md`; already-implemented and rejected-bug outcomes write NO KB entry
+- [ ] Rejected outcomes (bug or enhancement) closed with `bunx dobby tracker close <id> --rejected`
 - [ ] Every posted comment starts with the AI disclaimer
+- [ ] On a `linear` project every `{delegate:"mcp"}` descriptor `bunx dobby` returned (`search` / `claim` / `setState`) was EXECUTED through the Linear MCP — nothing reported as searched, claimed or closed off an unexecuted descriptor — and the comments went through the MCP too (`brief lint --issue` is github-only; the brief was linted from the file)
 - [ ] gh/git mechanics reused from `../address-review/references/github-api.md`; architect delegated verification and did no inline code edits
 - [ ] Next step handed off via an AskUserQuestion gate (brief → `/dobby:scope`, or Stop here)
 

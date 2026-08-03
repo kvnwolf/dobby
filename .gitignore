@@ -4,3 +4,4 @@ STATE.md
 node_modules/
 cli/dist/
 cli/*.tgz
+.dobby/

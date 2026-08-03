@@ -1,108 +1,80 @@
-# Tracker operations — the shared per-backend recipe
+# Tracker operations — the CLI's surface, and the two things it can't do for you
 
-The single place every tracker-touching skill delegates to. The kit's issue tracker is **per-project configurable**: `github`, `linear`, or `local`. This file maps the six tracker operations onto each backend so a skill carries the tracker-agnostic intent and reaches here for the mechanical recipe.
+The single place every tracker-touching skill delegates to. The kit's issue tracker is **per-project configurable** — `github`, `linear`, or `local` — and the `dobby` CLI reads that selection itself (`dobby.config.json#tracker`, key absent → `github`, the repo `gh` is authenticated against). A skill therefore names the **operation**, never the backend, and never hand-writes `gh`.
+
+Two things stay outside the CLI, and they are what this file exists for:
+
+1. **Linear is never spawned.** On a `linear` project every tracker command answers with a **delegation descriptor** — `{delegate:"mcp", op, …}` — that YOU execute through the Linear MCP.
+2. **Degradation is reported, never performed.** When the configured backend can't be reached, the CLI says so and stops; falling back to the local `BACKLOG.md` is the session's move, in the format below.
 
 ## Detecting the backend
 
-Read `dobby.config.json` at the repo root **narratively, with the Read tool** — never `jq`/`cat` inside a skill. Look at the optional top-level `tracker` key:
+```bash
+bunx dobby tracker info --json
+# {type, team, available, degradedTo, reason}
+```
 
-- `tracker.type` is one of `{ github, linear, local }`.
-- **Key ABSENT → `github`** — the zero-config default: the repo `gh` is authenticated against (`gh repo view`).
-- For `linear`, `tracker.team` is the human team **key** (e.g. `VON`), not a UUID — see the notes below.
+- **`type`** — `github` | `linear` | `local`.
+- **`team`** — Linear's human team **KEY** (e.g. `VON`), never a UUID; null on the other backends.
+- **`available`** — github: `gh`'s own verdict. local: always true. linear: **null** — reachability is MCP-side and the CLI never talks to the MCP, so you discover it by calling the tool.
+- **`degradedTo` / `reason`** — **D8, now mechanical**: `degradedTo: "local"` means `gh` is absent, off PATH, or unauthenticated. Use the local recipe below and **say which you used**; a free-text flow always continues on the fallback. Don't retry the github command hoping for a different answer — `search` / `create` / `close` / `claim` fail loudly rather than silently rerouting your write into a `BACKLOG.md` nobody asked for.
 
-**Graceful degradation (D8).** If the configured backend's tool is unavailable — `gh` not installed/authenticated (`gh auth status` fails), or the Linear MCP not configured / failing — fall back to the `local` recipe (a `BACKLOG.md` at the repo root) and say which you used. A **free-text flow always continues** on the fallback. The ONLY hard stop is when a skill must **READ a specific tracker issue it cannot reach** — e.g. `/dobby:scope` was handed a Linear id `VON-123` but the Linear MCP is down: there is no free-text equivalent, so stop and report rather than guessing.
+**The one hard stop** is a skill that must READ a specific issue it cannot reach — `/dobby:scope` handed `VON-123` with the Linear MCP down, or a github issue goal while `gh` is unauthenticated (`dobby goal parse` reports that one as `hardStop`). There is no free-text equivalent: stop and report.
 
 ## The six operations
 
-| Operation | github (gh CLI) | linear (Linear MCP) | local (BACKLOG.md) |
+| Operation | Command | linear answers | degraded → local |
 |---|---|---|---|
-| dedup / search | `gh issue list --state open --search "$CONCEPT"` (concept bound single-quoted) | the MCP tool that searches/lists issues, filtered to the configured `team` | grep the concept against `BACKLOG.md` |
-| create + role-label | body → temp file (Write tool), then `gh issue create --title "$TITLE" --label <role> --body-file <file>` | the MCP tool that creates an issue: resolved `teamId`, title, description, `<role>` label | append `- [ ] <title> — <body> (<role>)` to `BACKLOG.md` (create lazily) |
-| view goal | `gh issue view <n>` (accepts `#123` or a GitHub issue URL) | the MCP tool that fetches an issue by identifier (`VON-123`) or a linear.app issue URL | read the matching `BACKLOG.md` line (free-text; no id) |
-| claim (→ In Progress) | `gh issue edit <n> --add-assignee @me --add-label status:in-progress` (create the label first) | the MCP tool that updates the issue: assignee = me, state = the team's In Progress workflow state | no state machine — no-op |
-| close-as-rejected | `gh issue close <n> --reason "not planned"` | the MCP tool that updates the issue state to Canceled | mark the line done or remove it |
-| lifecycle-link (PR body) | `Closes #<n>` in the PR body | `Fixes VON-123` in the PR body (Linear's native GitHub integration drives the transitions) | nothing — no PR linkage |
+| dedup / search | `bunx dobby tracker search "<concept>" --json` | `op:"search"` descriptor | grep `BACKLOG.md` |
+| create + role-label | `bunx dobby tracker create --title "<t>" --body-file <f> --label <role> --json` | `op:"create"` descriptor | append a checklist line |
+| view goal | *the one operation the CLI does not own* — see below | the MCP tool that fetches an issue | read the matching line |
+| claim (→ In Progress) | `bunx dobby claim <id> --json` | `op:"claim"` descriptor | no state machine — no-op |
+| close-as-rejected | `bunx dobby tracker close <id> --rejected --json` | `op:"setState"` descriptor | mark the line `- [x]` |
+| lifecycle-link (PR body) | `bunx dobby goal parse "<goal>" --json` → `lifecycleLink` | `Fixes VON-123` | none — no PR linkage |
 
-### dedup / search
+`<id>` is the bare id whichever backend answers: `42` (github, no `#`), `VON-123` (linear), or the item's **title** (local).
 
-Find whether the concept is already tracked before creating anything.
+The four **role labels are the same on every backend** — `bug` / `feature` / `chore` / `docs` — and a missing one is created lazily before the issue references it.
 
-- **github** — the concept is user-derived text, so treat it as **DATA**: bind it to a **single-quoted** shell variable (escape any embedded single quote as `'\''`) and pass it out-of-band. Never interpolate raw concept text into the command, or an embedded quote / `$(...)` / backtick gets evaluated or word-split by the shell.
+**The CLI owns the github path end to end**: label-then-create and label-then-edit ordering, the body handed over as a file, `--reason "not planned"` on a close, `@me` + `status:in-progress` on a claim. `tracker close` REQUIRES `--rejected` because that is the only close the kit performs — a *completed* goal is closed by its merged PR's lifecycle link.
 
-  ```bash
-  CONCEPT='<the concept, single-quoted; escape embedded quotes as '\''>'
-  gh issue list --state open --search "$CONCEPT"
-  ```
+### view goal — the exception
 
-- **linear** — use the MCP tool that searches or lists issues, filtered to the configured `team`. MCP arguments are structured (not shell-parsed), so pass the concept text straight through as the query argument.
-- **local** — grep the concept against `BACKLOG.md` at the repo root (absent file → nothing tracked yet).
+Fetching an issue's body and comments is a read the CLI has no verb for; `bunx dobby goal parse "<goal>" --json` only resolves the reference (`{source, id, url, slug, slugCollision, lifecycleLink, hardStop}`). Fetch the content yourself:
 
-### create + role-label
+- **github** — `gh issue view <n>` (accepts `#123` or a GitHub issue URL).
+- **linear** — the MCP tool that fetches an issue by identifier (`VON-123`) or a linear.app issue URL.
+- **local** — read the matching `BACKLOG.md` line; local goals are free text, so match by concept.
 
-The four **role labels are the same across all backends**: `bug` / `feature` / `chore` / `docs`. Create the label lazily if the backend doesn't have it yet.
+## Linear — the delegation descriptors
 
-- **github** — the title/body are arbitrary text; treat them as **DATA**, never as shell code. The body must never pass through shell parsing at all: **write it verbatim to a temp file with the Write tool** (e.g. a `mktemp` path or one under `$TMPDIR`), then hand that file to `gh` via `--body-file`. Do NOT build the body in a shell command (no heredoc, no `echo`/`printf`): a heredoc delimiter — fixed *or* "unique" — can be terminated early by a body line that happens to match it (e.g. a literal `EOF`), spilling the rest of the body back into the shell as code. The title is a single line, so bind it to a **single-quoted** shell variable (escape embedded quotes as `'\''`) — that is already safe; never interpolate raw captured text into a double-quoted `--title`.
+A `linear` project gets a descriptor back instead of an action. Execute the named **operation** through whichever Linear MCP tool you resolve via **ToolSearch**: this file names tools by what they DO, never by a hardcoded name, so the recipes work with any Linear MCP (the official `mcp.linear.app` server or a community one) and survive a rename. Pass `team` as the **key** and let the MCP resolve key → id.
 
-  ```bash
-  # 1. Write the body VERBATIM to <body-file> with the Write tool (e.g. mktemp, or $TMPDIR/backlog-body.md)
-  TITLE='<the captured title, single-quoted; escape embedded quotes as '\''>'
-  gh issue create --title "$TITLE" --label <role> --body-file <body-file>
-  rm -f <body-file>
-  ```
+| Command | Descriptor | Execute as |
+|---|---|---|
+| `tracker search` | `{delegate:"mcp", op:"search", args:{query, team}}` | search/list issues, filtered to `team` |
+| `tracker create` | `{delegate:"mcp", op:"create", args:{title, body, label, team}}` | create an issue: `teamId` resolved from the key, title, description = `body`, the `<role>` label (create it via the MCP first if missing) |
+| `tracker close --rejected` | `{delegate:"mcp", op:"setState", id, state:"Canceled", team}` | set the issue's state to **Canceled** |
+| `claim` | `{delegate:"mcp", op:"claim", id, assignee:"me", state:"In Progress", team}` | assignee = me, state = the team's **In Progress** workflow state |
 
-  If `gh` rejects the label as unknown, create it idempotently and retry the `gh issue create`:
+The claim is the kit's **only** Linear state write besides Canceled. In Review (on PR-open) and Done (on merge) come from Linear's **native GitHub integration**, driven by the `Fixes VON-123` magic word in the PR body — which is why `goal parse` emits that word and why the kit pushes no further transitions through the MCP.
 
-  ```bash
-  gh label create <role> 2>/dev/null || true   # succeeds even if it already exists
-  ```
+MCP arguments are structured, not shell-parsed: pass the title, body and query straight through.
 
-- **linear** — use the MCP tool that creates an issue, passing the resolved `teamId`, a title, a description (the body), and the `<role>` label. If the label is missing, create it via the MCP first, then create the issue. No shell-hardening is needed: MCP arguments are structured, not shell-parsed — pass the title and body straight through.
-- **local** — append a checklist line to `BACKLOG.md` at the repo root (create the file lazily):
+## Local — the `BACKLOG.md` format
 
-  ```
-  - [ ] <title> — <body> (<role>)
-  ```
+One checklist line per item, in a `BACKLOG.md` at the repo root that is created lazily:
 
-### view goal
+```
+- [ ] <title> — <first line of the body> (<role>)
+```
 
-Fetch a goal a skill was handed (e.g. `/dobby:scope`).
+`- [x]` is closed; a search reads only the open lines. The CLI writes and reads this itself on a `local` project. You write it **by hand only** when `tracker info` reported `degradedTo: "local"` — and then you say so.
 
-- **github** — `gh issue view <n>`; recognizes a bare `#123` or a full GitHub issue URL.
-- **linear** — use the MCP tool that fetches an issue by its identifier (`VON-123`) or a linear.app issue URL.
-- **local** — read the matching `BACKLOG.md` line. Local goals are free-text; there is no id to fetch, so match by concept.
+## Superseded: the shell-hardening recipe
 
-### claim (→ In Progress)
+This file used to carry a block on binding user-derived text to single-quoted shell variables (escaping embedded quotes as `'\''`), never building an issue body with a heredoc (a body line reading `EOF` terminates the delimiter early and spills the rest back as code), and passing the body out of band.
 
-Mark the goal as being worked on.
+**That hazard class is dead.** Every tracker command spawns `gh` as an **argv array**: a concept, a title, an id lands as ONE argument whatever bytes it holds — quotes, `$(…)`, backticks, `&&`, newlines — because no shell ever parses it. The body never reaches argv at all; `--body-file` hands `gh` a path. Write the title and body verbatim; there is nothing left to escape, and nothing to re-derive here.
 
-- **github** — create the status label first (idempotent), then assign + label:
-
-  ```bash
-  gh label create status:in-progress 2>/dev/null || true
-  gh issue edit <n> --add-assignee @me --add-label status:in-progress
-  ```
-
-- **linear** — use the MCP tool that updates the issue: assignee = me, state = the team's **In Progress** workflow state.
-- **local** — no state machine; this is a no-op.
-
-### close-as-rejected
-
-Reject a goal without building it.
-
-- **github** — `gh issue close <n> --reason "not planned"`.
-- **linear** — use the MCP tool that updates the issue state to **Canceled**.
-- **local** — n/a; mark the checklist line done or remove it.
-
-### lifecycle-link (PR body)
-
-Wire the merge to the goal so it closes on merge.
-
-- **github** — put `Closes #<n>` in the PR body.
-- **linear** — put the `Fixes VON-123` magic word in the PR body. Linear's **native GitHub integration** then moves the issue to **In Review** on PR-open and to **Done** on merge — the kit does NOT push those transitions via the MCP.
-- **local** — nothing; there is no PR linkage.
-
-## Notes
-
-- **Team key → id (linear).** The `team` config value is the human team **KEY** (e.g. `VON`), not a UUID. Pass the key and let the MCP resolve key → id (and team → `teamId`) — don't ask the user for a UUID.
-- **Tool-name-agnostic (linear).** Every Linear operation above is described by **what it does** ("the MCP tool that creates an issue…"), never by a hardcoded tool name. The executing agent resolves the actual tool via **ToolSearch**, so these recipes work with any Linear MCP — the official `mcp.linear.app` server or a community one — and never break when a tool is renamed.
-- **Security asymmetry.** The **github** path keeps the shell-injection hardening (single-quote binding for user-derived text, out-of-band `--body-file` for the body) because everything passes through a shell. The **linear** path DROPS that hardening — MCP arguments are structured, not shell-parsed, so there is nothing to inject into. That's less code, not less safe.
+The one habit that survives is not a security rule: **the body goes to a file** — because that is the flag's shape. Write it (and every other `--*-file` hand-off) to an absolute path **outside the repo** — the OS temp dir, e.g. `/tmp/dobby-item-<timestamp>.md`; `Write` takes a literal path, so no `${TMPDIR:-/tmp}` shell syntax, which would create that directory under the repo root. These files are hand-offs, not artifacts: a stray one at the repo root gets staged by the next `bunx dobby ship`, so `rm -f` it once the command has run.

@@ -34,8 +34,16 @@ The user drives. The interesting moments are "wait, that shouldn't be possible" 
 
 The **answer is the only thing worth keeping**. Capture the question + verdict + why:
 
-- If a work-session doc exists (repo-root `STATE.md`), write it into the section of the stage that sent you here (`## Findings (interview)` or `## Research`), flagging it as an ADR candidate if it meets the bar (written at `/dobby:wrap`, not here).
+- If a work-session doc exists (repo-root `STATE.md`), the capture **appends** to the section of the stage that sent you here — `## Findings (interview)` (from `/dobby:interview`) or `## Research` (from `/dobby:research`) — flagged as an ADR candidate if it meets the bar (written at `/dobby:wrap`, not here).
 - Standalone → a `NOTES.md` next to the prototype (or the commit message / issue).
+
+**The append idiom** — the state engine's `set` REPLACES a section body, so an append is a read-modify-write you compose, never a hand edit of the document:
+
+1. **Read** the calling stage's current section body out of `STATE.md` (the Read tool — the engine writes, it doesn't read back).
+2. **Compose** the combined body in a scratch file outside the repo (the OS temp dir — e.g. `${TMPDIR:-/tmp}/dobby-prototype-<timestamp>.md`): that existing content verbatim, then the capture under it. **Exception — an unwritten section:** if the body you read is `_pending_` (the engine's "still empty" marker) or blank, the composed body is the **capture alone**. That is the COMMON case here — you are usually invoked mid-stage, before the calling stage has written its section — and carrying `_pending_` through would leave a false unfilled marker sitting inside a filled section.
+3. **Set** the combined body: `bunx dobby state set 'Findings (interview)' --file <scratch-file>` (or `Research`).
+
+Over a section that already holds the stage's work, passing the capture ALONE would replace it — step 1 is what makes this an append, and what tells you whether there is anything to preserve.
 
 Then **delete or absorb** (via the implementor): fold the winning variant or validated logic module into the real code through the normal flow — prototype code was written under prototype constraints, so production-bound pieces get rebuilt properly (the logic branch's pure module is the exception: it's built portable on purpose). Delete the losers, the switcher, and any throwaway route.
 
@@ -66,7 +74,7 @@ Interact with the user in their language. Write prototype code, comments, and th
 - [ ] Built by ONE `implementor` (no build loop, no work-log); throwaway, clearly marked, one command/URL
 - [ ] UI branch served from the already-running dev server; variants structurally different, switcher prod-gated
 - [ ] User drove the prototype; iterations applied through the implementor
-- [ ] Answer captured (STATE.md section of the calling stage, or NOTES.md standalone); ADR candidate flagged if warranted
+- [ ] Answer captured — appended to the calling stage's STATE.md section by read-modify-write through `bunx dobby state set` (existing body preserved, never a hand edit; capture alone when the section still held `_pending_`), or NOTES.md standalone; ADR candidate flagged if warranted
 - [ ] Prototype deleted or absorbed via the normal flow; no rot left behind
 - [ ] Next step handed off via an AskUserQuestion gate (calling-stage resume / `/dobby:spec` / Stop here)
 

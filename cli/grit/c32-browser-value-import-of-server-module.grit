@@ -1,0 +1,58 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C32 — module-conventions + import-protection: a `.browser` file may reference a
+// `.server` module for its TYPES only. This is the GritQL realization of the demoted
+// tier-(a) rule A9: biome's noRestrictedImports has no allowTypeImports and flags
+// `import type` identically to a value import, so the native rule could only be had
+// by banning exactly the legal usage. Scoped by the plugin's `includes` to
+// `*.browser.{ts,tsx}`.
+//
+// The question the convention asks is about the SPECIFIERS, not the clause: the import
+// is legal exactly when every name it binds is a type. So the pattern matches the whole
+// `JsImport` and requires ONE specifier that binds a value.
+//
+// Lab facts behind that shape (bundled biome 2.5.4):
+//  - The earlier `import $clause from $source` snippet was BOTH too narrow and too
+//    broad. Too narrow: it only matched a SINGLE-specifier named clause, so
+//    `import { a, b } from './x.server'`, the mixed `import { type A, b } from …` and
+//    the combined `import def, { a } from …` all slipped through. Too broad: it
+//    matched the INLINE type-qualifier form `import { type A } from './x.server'`,
+//    which is legal — the exact usage A9 was demoted for. Enumerating the specifier
+//    nodes fixes both directions at once.
+//  - A type qualifier is a TOKEN on the specifier node, and CST patterns expose no
+//    token fields (the limitation c05's header records for `??=`), so 'does this
+//    specifier bind a value' is decided by a regex over the SPECIFIER's own text:
+//    `type X` / `type X as Y` carry the keyword, `X` / `X as Y` do not. The regex is
+//    anchored (full-match), so `typeish` reads as a value, not as a type.
+//  - The SEPARATED form `import type { A, B } from …` puts the qualifier on the CLAUSE
+//    instead, leaving every specifier's own text bare — it therefore keeps its guard on
+//    the whole import; without it the rule would flag exactly the legal usage.
+//  - `bubble` scopes `$spec` to each candidate specifier, so the existential really is
+//    'some specifier binds a value' instead of a binding on the first one found.
+//
+// Verdicts pinned in the lab, each a literal fixture line:
+//    fires  import { a } from './x.server'          quiet  import type { A } from './x.server'
+//    fires  import { a, b } from './x.server'       quiet  import { type A } from './x.server'
+//    fires  import { type A, b } from './x.server'  quiet  import { type A, type B } from './x.server'
+//    fires  import def from './x.server'            quiet  import { type A as B } from './x.server'
+//    fires  import * as ns from './x.server'        quiet  import type * as ns from './x.server'
+//    fires  import def, { a } from './x.server'     quiet  import { a } from './x'
+//
+// Two things the pattern deliberately does NOT reach: a BARE side-effect import
+// (`import './x.server'` binds no specifier, so the existential finds nothing — it was
+// outside the earlier pattern too), and the pathological `import { type as v } from
+// './x.server'`, which imports a VALUE named `type` under an alias and reads as a type
+// qualifier to any text-level test.
+JsImport() as $import where {
+  $import <: contains JsModuleSource() as $source,
+  $source <: r"\"[^\"]*\.server\"",
+  not $import <: r"import\s+type[\s\S]*",
+  $import <: contains bubble or {
+    JsDefaultImportSpecifier(),
+    JsNamespaceImportSpecifier(),
+    JsShorthandNamedImportSpecifier(),
+    JsNamedImportSpecifier()
+  } as $spec where { not $spec <: r"type\s[\s\S]*" },
+  register_diagnostic(span=$import, message="Server imports in a .browser file must be import type only — a value import drags the server graph into the browser bundle.", severity="error")
+}

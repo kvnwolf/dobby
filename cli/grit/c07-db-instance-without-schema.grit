@@ -1,0 +1,11 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C7 — module-conventions: the `db` instance aggregates the per-module schema
+// namespaces, so `db.query.*` stays typed and extensible. Scoped by the plugin's
+// `includes` to `db.server.ts`, the one file that constructs it.
+`drizzle($options)` as $call where {
+  $options <: contains `client: $client`,
+  not $options <: contains `schema: $schema`,
+  register_diagnostic(span=$call, message="Pass schema: { ...<module>Schema } to drizzle() so db.query.* stays typed and extensible.", severity="error")
+}

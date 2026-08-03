@@ -1,0 +1,35 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C14 — data-fetching: `retry` must clear the collection's stored error BEFORE the
+// boundary resets, or the error rethrows in a loop.
+//
+// Scoped to a `<LiveQuery>` element (the retry prop of ANY other component is not
+// this convention's business) and to an INLINE handler, whose body is the only
+// place a single-file pattern can look for the clearError call.
+//
+// PARTIAL (recorded deliberately): a HOISTED handler — `retry={retryTasks}` with
+// the function declared elsewhere in the file — is NOT checked. Resolving the
+// identifier to its declaration is a scope question, and the naive "does the file
+// mention clearError" approximation flags conformant code (lab-verified: a correct
+// `<LiveQuery retry={retryTasks}>` whose hoisted handler DOES call
+// `tasks.utils.clearError()` was reported by the earlier unscoped pattern).
+//
+// The handler shape is matched by CST node kind, not by snippets: a snippet arm
+// like `function $name($params) $body` does NOT match a zero-parameter handler
+// (lab-verified — `retry={function retryTasks() { … }}` slipped through), while
+// `JsArrowFunctionExpression()` / `JsFunctionExpression()` cover every inline form
+// (arrow with or without parameters, expression or block body, named or anonymous
+// function expression).
+or {
+  `<LiveQuery $props>$children</LiveQuery>`,
+  `<LiveQuery $props />`
+} where {
+  $props <: contains `retry={$handler}`,
+  $handler <: or {
+    JsArrowFunctionExpression(),
+    JsFunctionExpression()
+  },
+  not $handler <: contains `$collection.utils.clearError()`,
+  register_diagnostic(span=$handler, message="retry must call <x>Collection.utils.clearError() before the boundary resets, or the stored error rethrows in a loop.", severity="error")
+}

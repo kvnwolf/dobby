@@ -29,7 +29,7 @@ State this in the Testing Decisions so the executor and the `dobby:test-author` 
 
 1. **Detect whether the repo has a test suite** (with a researcher if needed). No suite → the build loop runs the classic implement→review→verify path; no task is test-first; you can omit the marker.
 2. **If a suite exists, mark each task test-first or not.** Test-first = tasks with real logic or seams. Not test-first = trivial config, pure-prose, or scaffolding with no behavior to pin down.
-3. **Carry the marker into the task table** — add a `Test-first` column (`yes`/`no`) per `references/task-decomposition.md`. That column IS the flag the test-author gate reads; a task with no marker is treated as not test-first.
+3. **Carry the marker into the task table** — add a `Test-first` column (`yes`/`no`); the column layout lives in the spec skill's task-decomposition reference. That column IS the flag the test-author gate reads (`dobby build-plan` copies it into each task's `testFirst`); a task with no marker is treated as not test-first.
 
 The test-author writes tests from the spec and this section ONLY — never from the implementation — so what you decide here is the independent source of truth the tests are built against.
 
@@ -37,7 +37,7 @@ The test-author writes tests from the spec and this section ONLY — never from 
 
 Automated verification runs against the live app but CANNOT log itself in, seed data, or flip feature flags. So decide at spec time whether **this plan's** verification requires manually-prepared state — an authenticated session, seeded rows, an enabled flag — that a human must put in place before any `dobby:verifier` runs. Derive the answer from the interview's roles/routes answers: **an authed route in scope is a real need**; a purely public/anonymous change is not.
 
-Record it in the Testing Decisions as an explicit field:
+Record it in the Testing Decisions as an explicit field. **The label `Manual verify setup:` is machine-read** — `dobby build-plan` extracts it from this section into `manualVerifySetup` (either the string `none` or the list of steps) and `dobby spec lint` fails the spec when the line is missing — so write it verbatim, never paraphrased into prose:
 
 - **`Manual verify setup: none`** — the default. WRITE this line explicitly when there is no manual prerequisite (public routes, backend-only exercised via curl, a plugin/CLI with no server) — don't omit the field. The explicit `none` is the recorded decision the execute gate reads.
 - **Concrete numbered steps** the developer performs otherwise — each step names *which* test user/role to log in as, in *which* surface, and any seed rows or feature flags to enable. Write them as an operator would follow them, e.g.:
@@ -45,4 +45,4 @@ Record it in the Testing Decisions as an explicit field:
   2. Ensure at least one project exists in that account (create one if empty).
   3. Enable the `billing-v2` flag for that account.
 
-Default to `none`; only spell out steps for a real need — an authed route in scope is a real need. This field is what `/dobby:execute`'s Step 2 pre-verification gate reads: `none`/absent → it skips silently; steps present → it asks the developer to complete them (in the verifier's verification surface) and waits before launching the build workflow, so no verifier ever hits an auth wall or missing seed state.
+Default to `none`; only spell out steps for a real need — an authed route in scope is a real need. This field is what `/dobby:execute`'s Step 2 pre-verification gate reads (through `build-plan`'s `manualVerifySetup`): `none`/absent → it skips silently; steps present → it asks the developer to complete them (in the verifier's verification surface) and waits before launching the build workflow, so no verifier ever hits an auth wall or missing seed state.

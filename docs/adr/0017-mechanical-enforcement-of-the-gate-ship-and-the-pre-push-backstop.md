@@ -1,0 +1,9 @@
+# 0017. Mechanical enforcement of the Gate: ship and the pre-push backstop
+
+**Status:** accepted — supersedes ADR-0013
+
+ADR-0013 removed the `dobby commit` command and kept git hooks dead in consumers ("the gate lives in the convention, not in `.git/hooks`"). Both pillars are deliberately reversed, on field evidence: the v0.5.1 release pushed a red commit to main because running the Gate and *reading its output* were left to LLM judgment — the model piped `dobby check` through `tail -3`, the findings printed above the cut, and a failing gate was read as green. Convention-based enforcement fails exactly when nobody remembers to follow it, or misreads it.
+
+`dobby ship` re-adds the ceremony as a command (stage → in-process Gate with fix → re-stage → commit → push → PR off-main) under a new name — no alias, per 0013's own no-tombstones rule — so the **exit code decides** and no model interprets gate output again. A dobby-managed `pre-push` hook (installed idempotently by `up`'s setup phase into the common hooks dir — one install covers every worktree) re-runs the Gate on any push that didn't come through a green `ship`, honoring the composite gate cache (`{treeHash, dobbyVersion, configHash}` at `.dobby/gate-cache.json`; the tree is hashed AFTER staging to close untracked-file cache poisoning). A foreign, marker-less hook is never touched (refuse-and-report; `core.hooksPath` rejected as repo-global); `git push --no-verify` stays the conscious bypass; the hook body carries the ADR-0012 double guard, so it is inert wherever dobby isn't installed.
+
+Trade-offs accepted: the CLI now wraps git (0013's "little value" claim fell to the incident's cost); every consumer pays a hook install (mitigated by cache + double guard); and `dobby state` crosses a boundary 0013's era kept clean — the CLI's first file-authoring command — accepted because hand-edited session docs were the second-largest mechanical-error class the skill audit found.

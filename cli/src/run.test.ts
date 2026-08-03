@@ -17,6 +17,11 @@ import pkg from "../package.json";
 import { spawnFailure } from "./check.ts";
 import { run } from "./run.ts";
 import { isLiveDev } from "./tasks.ts";
+import { useSpawnBudget } from "./test-helpers.ts";
+
+// Real git/biome/tsc spawns under full-suite parallelism: the config-independent
+// budget (see `useSpawnBudget`), not vitest's 5s default.
+useSpawnBudget();
 
 // Fixture paths are anchored to THIS test file's location (never process.cwd()),
 // so `run(["env"], cwd)` reads a stable, hand-written sample project. The
@@ -747,7 +752,7 @@ describe("run() — env command (devUrl resolution)", () => {
     // runner/CI) — dobby's contract is resolution, not the scheme.
     expect(env.devUrl).toContain("scratch-vite");
     expect(env.devUrl).toMatch(/^https?:\/\//);
-  }, 20_000);
+  });
 
   it("reports devUrl as null for a project WITHOUT the vite capability (resolution never attempted)", async () => {
     const result = await run(["env"], gitNoVite);
@@ -763,7 +768,7 @@ describe("run() — env command (devUrl resolution)", () => {
     const { devUrl } = JSON.parse(result.stdout);
     expect(devUrl).not.toBe(null);
     expect(devUrl).toContain("scratch-vite");
-  }, 20_000);
+  });
 });
 
 // ===========================================================================
@@ -906,29 +911,29 @@ describe("run() — check command (project-wide biome + tsc)", () => {
     // Anti-tautology guard: an unimplemented `check` ALSO exits 1 through the
     // unknown-command branch — assert this is genuinely the check path.
     expect(result.stderr).not.toContain("unknown command");
-  }, 20_000);
+  });
 
   it("reports the biome lint finding as `file:line` (lintbad.ts, line 2)", async () => {
     const result = await run(["check"], dirty);
     expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
-  }, 20_000);
+  });
 
   it("reports the tsc type finding as `file:line` (typebad.ts, line 1)", async () => {
     const result = await run(["check"], dirty);
     expect(result.stdout).toMatch(/typebad\.ts:1\b/);
-  }, 20_000);
+  });
 
   it("surfaces BOTH tools' findings in one report (biome ran AND tsc ran)", async () => {
     const result = await run(["check"], dirty);
     expect(result.stdout).toMatch(/lintbad\.ts/);
     expect(result.stdout).toMatch(/typebad\.ts/);
-  }, 20_000);
+  });
 
   it("exits 0 on a clean project and reports no `file:line` findings", async () => {
     const result = await run(["check"], clean);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).not.toMatch(/\.ts:\d/);
-  }, 20_000);
+  });
 });
 
 // --- `dobby check <file...>` — the per-file fast path: biome only, NO tsc ----
@@ -953,14 +958,14 @@ describe("run() — check command (per-file fast path skips tsc)", () => {
     const result = await run(["check", "src/clean.ts"], dirty);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).not.toMatch(/typebad\.ts/);
-  }, 20_000);
+  });
 
   it("flags a lint error in the named file (exit 1) and never reports the untouched file's type error", async () => {
     const result = await run(["check", "src/lintbad.ts"], dirty);
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
     expect(result.stdout).not.toMatch(/typebad\.ts/);
-  }, 20_000);
+  });
 });
 
 // --- Preset exports (thin-file model): consumers extend @kvnwolf/dobby/* ------
@@ -1441,9 +1446,9 @@ describe("dobby preset — knip.base.jsonc", () => {
 
 // --- package.json `files` allowlist — the packed tarball ships only presets --
 // The npm/bun `files` field is an ALLOWLIST: the published tarball carries exactly
-// what a consumer needs (src minus the co-located test, the biome presets, the two
+// what a consumer needs (src minus the co-located tests, the biome presets, the two
 // tsconfig presets, the four .mjs config presets) and NOTHING else — the
-// __fixtures__/ dir and src/run.test.ts must never ship. Asserted against the
+// __fixtures__/ dir and every `src/*.test.ts` must never ship. Asserted against the
 // manifest (the pack itself is verified out-of-band via `bun pm pack`). Every
 // expected entry is a spec literal.
 describe("dobby packaging — package.json files allowlist", () => {
@@ -1457,10 +1462,14 @@ describe("dobby packaging — package.json files allowlist", () => {
     expect(files).toContain("biome");
   });
 
-  it("excludes the co-located run.test.ts via a negation entry", () => {
-    // The `!src/run.test.ts` negation keeps the test out of the tarball while
-    // still shipping the rest of src/.
-    expect(readCliManifest().files ?? []).toContain("!src/run.test.ts");
+  it("excludes the co-located tests and their helpers via negation entries", () => {
+    // The negations keep every test file — and the fixture helpers only tests
+    // import — out of the tarball while still shipping the rest of src/. A GLOB
+    // rather than one entry per file: the per-file form silently shipped each new
+    // suite this session added, since nobody remembers to extend an allowlist.
+    const files = readCliManifest().files ?? [];
+    expect(files).toContain("!src/*.test.ts");
+    expect(files).toContain("!src/test-helpers.ts");
   });
 
   it("never lists the __fixtures__ dir (test fixtures must not ship)", () => {
@@ -1876,14 +1885,14 @@ describe("run() — check command (selective flags subset the pipeline)", () => 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
     expect(combined(result)).not.toMatch(/typebad/);
-  }, 20_000);
+  });
 
   it("under --types runs tsc ONLY: reports the type finding (typebad.ts:2), exits 1, and never surfaces the project's lint error", async () => {
     const result = await run(["check", "--types"], dirty);
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toMatch(/typebad\.ts:2\b/);
     expect(combined(result)).not.toMatch(/lintbad/);
-  }, 20_000);
+  });
 
   it("combines flags additively and reports EVERY selected tool (does not stop at the first failing one)", async () => {
     // --lint --types: both tools run and BOTH findings surface. If the gate
@@ -1892,7 +1901,7 @@ describe("run() — check command (selective flags subset the pipeline)", () => 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
     expect(result.stdout).toMatch(/typebad\.ts:2\b/);
-  }, 30_000);
+  });
 
   it("under --unused runs knip only: exits 0 with neither the biome nor the tsc finding", async () => {
     // knip is clean by construction, so the ONLY way lintbad:2 / typebad:2 could
@@ -1902,7 +1911,7 @@ describe("run() — check command (selective flags subset the pipeline)", () => 
     expect(result.exitCode).toBe(0);
     expect(combined(result)).not.toMatch(/lintbad\.ts:2\b/);
     expect(combined(result)).not.toMatch(/typebad\.ts:2\b/);
-  }, 30_000);
+  });
 });
 
 // --- Slice 2: capability-gated build/test steps skip with a note --------------
@@ -1933,24 +1942,24 @@ describe("run() — check command (capability-gated build/test skip with a note)
     // biome/tsc are not in the --build plan, so the repo's errors are untouched.
     expect(combined(result)).not.toMatch(/lintbad/);
     expect(combined(result)).not.toMatch(/typebad/);
-  }, 20_000);
+  });
 
   it("under --build emits a single skip note naming the build step", async () => {
     const result = await run(["check", "--build"], dirty);
     expect(buildSkipNote(combined(result))).toBe(true);
-  }, 20_000);
+  });
 
   it("under --test on a project without the vitest capability: exits 0 and runs no other tool", async () => {
     const result = await run(["check", "--test"], dirty);
     expect(result.exitCode).toBe(0);
     expect(combined(result)).not.toMatch(/lintbad/);
     expect(combined(result)).not.toMatch(/typebad/);
-  }, 20_000);
+  });
 
   it("under --test emits a single skip note naming the test step", async () => {
     const result = await run(["check", "--test"], dirty);
     expect(testSkipNote(combined(result))).toBe(true);
-  }, 20_000);
+  });
 });
 
 // --- Slice 3: the full gate (no flags) composes every step --------------------
@@ -1981,17 +1990,17 @@ describe("run() — check command (full gate, no flags)", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
     expect(result.stdout).toMatch(/typebad\.ts:2\b/);
-  }, 30_000);
+  });
 
   it("emits a skip note for the build step (project has no vite capability)", async () => {
     const result = await run(["check"], dirty);
     expect(buildSkipNote(combined(result))).toBe(true);
-  }, 30_000);
+  });
 
   it("emits a skip note for the test step (project has no vitest capability)", async () => {
     const result = await run(["check"], dirty);
     expect(testSkipNote(combined(result))).toBe(true);
-  }, 30_000);
+  });
 });
 
 // --- Slice 4: config checks[] extras run last (no flags) / excluded otherwise --
@@ -2026,14 +2035,14 @@ describe("run() — check command (config checks[] extras)", () => {
   it("runs the config checks[] extras on the full gate (no flags): the extra's marker appears", async () => {
     await run(["check"], repoNoFlags);
     expect(existsSync(join(repoNoFlags, MARKER))).toBe(true);
-  }, 30_000);
+  });
 
   it("excludes the config checks[] extras when a selective flag is present: the same extra never runs", async () => {
     const result = await run(["check", "--lint"], repoWithFlag);
     // --lint on a clean project passes; extras are excluded because a flag is set.
     expect(result.exitCode).toBe(0);
     expect(existsSync(join(repoWithFlag, MARKER))).toBe(false);
-  }, 30_000);
+  });
 });
 
 // --- A2: the vitest hermeticity / missing-keys advisory -----------------------
@@ -2111,7 +2120,7 @@ describe("run() — check test step (A2 hermeticity / missing-keys advisory)", (
     } finally {
       rmSync(repo, { force: true, recursive: true });
     }
-  }, 20_000);
+  });
 
   it("warns (missing-keys note) when .env.test is an INCOMPLETE subset of .env.local's keys (F1)", async () => {
     const repo = makeVitestStubRepo();
@@ -2139,7 +2148,7 @@ describe("run() — check test step (A2 hermeticity / missing-keys advisory)", (
     } finally {
       rmSync(repo, { force: true, recursive: true });
     }
-  }, 20_000);
+  });
 
   it("is silent when .env.test is a COMPLETE superset of .env.local's keys (hermetic)", async () => {
     const repo = makeVitestStubRepo();
@@ -2156,7 +2165,7 @@ describe("run() — check test step (A2 hermeticity / missing-keys advisory)", (
     } finally {
       rmSync(repo, { force: true, recursive: true });
     }
-  }, 20_000);
+  });
 
   it("is silent when there is no .env.local", async () => {
     const repo = makeVitestStubRepo();
@@ -2167,7 +2176,7 @@ describe("run() — check test step (A2 hermeticity / missing-keys advisory)", (
     } finally {
       rmSync(repo, { force: true, recursive: true });
     }
-  }, 20_000);
+  });
 
   it("does NOT advise when the step degrades (consumer vitest bin missing — never spawned) (F2)", async () => {
     // react-default deps make the config selection `default(react)` (F3 would pass),
@@ -2190,7 +2199,7 @@ describe("run() — check test step (A2 hermeticity / missing-keys advisory)", (
     } finally {
       rmSync(repo, { force: true, recursive: true });
     }
-  }, 20_000);
+  });
 
   it("is silent under the BASE preset even when the step spawns with .env.local and no .env.test (F3)", async () => {
     // vitest present + stub → the step SPAWNS, but no react/@vitejs/plugin-react →
@@ -2208,7 +2217,7 @@ describe("run() — check test step (A2 hermeticity / missing-keys advisory)", (
     } finally {
       rmSync(repo, { force: true, recursive: true });
     }
-  }, 20_000);
+  });
 
   it("summarizes a failed suite parsed from the stubbed reporter JSON (A1 parser seam)", async () => {
     // The stub exits 1 with a file-level load failure referencing an EXISTING repo
@@ -2240,7 +2249,7 @@ describe("run() — check test step (A2 hermeticity / missing-keys advisory)", (
     } finally {
       rmSync(repo, { force: true, recursive: true });
     }
-  }, 20_000);
+  });
 });
 
 // --- Slice 5 (review-added): knip's finding-PRESENT path fails the gate --------
@@ -2311,7 +2320,7 @@ describe("run() — check command (knip finding-present path fails the gate)", (
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toMatch(/knip/i);
     expect(result.stdout).toMatch(/orphan\.ts/);
-  }, 30_000);
+  });
 });
 
 // --- Slice 6 (field-friction fix): a findingless nonzero step surfaces the tool's
@@ -2395,7 +2404,7 @@ describe("run() — check command (findingless nonzero step surfaces the raw tai
     expect(result.stdout).toContain(
       "VITE_CRASH_MARKER: simulated config error"
     );
-  }, 20_000);
+  });
 });
 
 // The ENOBUFS-aware spawn-error formatter (`check.spawnFailure`). A gate tool that
@@ -2569,7 +2578,7 @@ describe("run() — check --hook (edit-time safe auto-fix)", () => {
     expect(after).not.toContain("'hello'");
     // Silent on the model-facing channel: no findings surfaced on the fixed path.
     expect(result.stderr).toBe("");
-  }, 20_000);
+  });
 
   // --- Unfixable finding: exit 2 (the code Claude Code surfaces to the model) --
   it("exits 2 when an unfixable finding remains after the safe fix", async () => {
@@ -2584,7 +2593,7 @@ describe("run() — check --hook (edit-time safe auto-fix)", () => {
       hookStdin(join(repo, "eq.ts"))
     );
     expect(result.exitCode).toBe(2);
-  }, 20_000);
+  });
 
   it("surfaces the unfixable finding on stderr (the channel Claude Code shows the model on exit 2)", async () => {
     // The whole point of exit 2 is that Claude Code feeds STDERR back to the
@@ -2601,7 +2610,7 @@ describe("run() — check --hook (edit-time safe auto-fix)", () => {
       hookStdin(join(repo, "eq.ts"))
     );
     expect(result.stderr).toMatch(/eq\.ts/);
-  }, 20_000);
+  });
 
   // --- Guard: no dobby.config.json marker -> silent exit 0, file untouched -----
   // The config file is the "dobby project" gate. Without it the hook must not run
@@ -2619,7 +2628,7 @@ describe("run() — check --hook (edit-time safe auto-fix)", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("");
     expect(readFileSync(file, "utf8")).toBe(FIXABLE_SOURCE);
-  }, 20_000);
+  });
 
   // --- Guard: unparsable stdin payload -> silent exit 0 ------------------------
   it("exits 0 silently on an unparsable (garbage) stdin payload", async () => {
@@ -2678,7 +2687,7 @@ describe("run() — check --hook (edit-time safe auto-fix)", () => {
     const result = await run(["check", "--hook"], repo, hookStdin(file));
     expect(result.exitCode).toBe(0);
     expect(readFileSync(file, "utf8")).toBe(FIXABLE_SOURCE);
-  }, 20_000);
+  });
 
   // --- Guard (Decisions note): file_path outside the workroot -> exit 0 --------
   // The edited file lives OUTSIDE the project's workroot. With the repo's own
@@ -2706,7 +2715,7 @@ describe("run() — check --hook (edit-time safe auto-fix)", () => {
       hookStdin(join(outside, "eq.ts"))
     );
     expect(result.exitCode).toBe(0);
-  }, 20_000);
+  });
 });
 
 // ===========================================================================
@@ -2964,7 +2973,7 @@ describe("run() — setup command is removed (folded into up)", () => {
     // path (a git error, not this literal); post-removal it is the unknown command.
     expect(result.stderr).toContain("unknown command: setup");
     expect(result.stderr).toContain(upgradeHint);
-  }, 20_000);
+  });
 
   it("no longer advertises `setup` in the usage Commands list", async () => {
     // Line-anchored to the Commands column (the same shape the bare-usage `env`
@@ -2975,7 +2984,7 @@ describe("run() — setup command is removed (folded into up)", () => {
       .split("\n")
       .some((line) => /^\s+setup\b/.test(line));
     expect(advertisesSetup).toBe(false);
-  }, 20_000);
+  });
 });
 
 // ===========================================================================
@@ -3075,7 +3084,7 @@ describe("run() — db:* dispatch (real run without --dry-run fails at spawn)", 
     const result = await run(["db:push"], fixture("db-drizzle-only"));
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).not.toContain("unknown command");
-  }, 20_000);
+  });
 });
 
 // --- Slice 2b: the full drizzle task map (the ONLY db task set now) --------------
@@ -3679,7 +3688,7 @@ describe("run() — up command (no app capability: graceful no-op)", () => {
     // unknown-command branch — assert this is the genuine up/no-app path.
     expect(result.stderr).not.toContain("unknown command");
     expect(combined(result)).toMatch(/no app to run/i);
-  }, 20_000);
+  });
 
   it("under --dry-run prints the FULL plan: the setup phase (bun install) plus the run phase skipped (no app to run)", async () => {
     // The spec's --dry-run contract: "prints the FULL ordered plan (setup phase +
@@ -3699,7 +3708,7 @@ describe("run() — up command (no app capability: graceful no-op)", () => {
     expect(result.stdout).toMatch(/bun install/);
     // ...and the run phase is skipped, with the reason named.
     expect(combined(result)).toMatch(/no app to run/i);
-  }, 20_000);
+  });
 
   it("still renames the cmux workspace for a no-app project (rename is INDEPENDENT of the app gate)", async () => {
     // The workspace rename happens WHENEVER cmux is present — a no-app project
@@ -3723,7 +3732,7 @@ describe("run() — up command (no app capability: graceful no-op)", () => {
     );
     // ...proving the rename is NOT gated on the app: 'no app to run' still fires.
     expect(combined(result)).toMatch(/no app to run/i);
-  }, 20_000);
+  });
 });
 
 // --- Slice U2: `up` fails hard outside a git repo ------------------------------
@@ -3747,7 +3756,7 @@ describe("run() — up command (fail hard outside a git repo)", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).not.toContain("unknown command");
     expect(result.stderr).toMatch(/git/i);
-  }, 20_000);
+  });
 });
 
 // --- Slice U3 (headline): cmux present -> the two kit panes, in TIME order -------
@@ -3793,7 +3802,7 @@ describe("run() — up command (cmux present: kit panes in liveness order)", () 
     // that the plan came back as DATA through the capture seam.
     expect(result.stderr).not.toContain("unknown command");
     expect(result.stdout).toContain("cmux new-pane");
-  }, 20_000);
+  });
 
   it("creates the browser pane to the RIGHT of Claude (--type browser --direction right)", async () => {
     const result = await run(["up", "--dry-run"], repo);
@@ -3804,7 +3813,7 @@ describe("run() — up command (cmux present: kit panes in liveness order)", () 
         /--direction right/,
       ])
     ).toBe(true);
-  }, 20_000);
+  });
 
   it("opens the run terminal right of Claude and sends it the start line through its captured --surface ref", async () => {
     const result = await run(["up", "--dry-run"], repo);
@@ -3821,7 +3830,7 @@ describe("run() — up command (cmux present: kit panes in liveness order)", () 
     // The old layout mechanism is gone: `new-split` cannot create a browser pane,
     // so deferring the browser required the run pane to be a plain `new-pane`.
     expect(out).not.toContain("new-split");
-  }, 20_000);
+  });
 
   it("plans the RUN pane BEFORE the liveness wait and the BROWSER pane AFTER it (the 404 fix)", async () => {
     const result = await run(["up", "--dry-run"], repo);
@@ -3844,7 +3853,7 @@ describe("run() — up command (cmux present: kit panes in liveness order)", () 
     // The invariant: run terminal at start, browser pane only once the app answers.
     expect(runPaneAt).toBeLessThan(waitAt);
     expect(browserPaneAt).toBeGreaterThan(waitAt);
-  }, 20_000);
+  });
 
   it("names the panes `dobby-browser-<slug>` and `dobby-run-<slug>` (slug = workroot basename)", async () => {
     const result = await run(["up", "--dry-run"], repo);
@@ -3852,7 +3861,7 @@ describe("run() — up command (cmux present: kit panes in liveness order)", () 
     // node:path, a different mechanism than the code's git top-level + basename).
     expect(result.stdout).toContain(`dobby-browser-${slug}`);
     expect(result.stdout).toContain(`dobby-run-${slug}`);
-  }, 20_000);
+  });
 
   it("sends the workroot-pinned `dobby dev` to the run pane", async () => {
     const result = await run(["up", "--dry-run"], repo);
@@ -3864,7 +3873,7 @@ describe("run() — up command (cmux present: kit panes in liveness order)", () 
     // prefix is the workroot-pinning invariant) and runs dobby dev.
     expect(sendLine).toContain(`cd ${repo}`);
     expect(sendLine).toContain("dobby dev");
-  }, 20_000);
+  });
 
   it("renames the cmux WORKSPACE to the plain goal slug (workspace context passed explicitly)", async () => {
     const result = await run(["up", "--dry-run"], repo);
@@ -3883,7 +3892,7 @@ describe("run() — up command (cmux present: kit panes in liveness order)", () 
       .find((l) => l.includes("rename-workspace"));
     expect(renameLine).not.toContain(`dobby-browser-${slug}`);
     expect(renameLine).not.toContain(`dobby-run-${slug}`);
-  }, 20_000);
+  });
 });
 
 // --- Slice U3b (headline): a REAL `up` — the browser pane never precedes liveness -
@@ -3967,7 +3976,7 @@ describe("run() — up command (real run: the browser pane waits for liveness)",
     // (its purpose is watching the boot) and the browser pane strictly AFTER.
     expect(runPaneAt).toBeLessThan(liveAt);
     expect(browserPaneAt).toBeGreaterThan(liveAt);
-  }, 30_000);
+  });
 
   it("opens NO browser pane when the app never becomes reachable (exit 1, run pane still opened)", async () => {
     // curl NEVER succeeds; one retry keeps the wait instant. A 404/dead browser pane
@@ -3994,7 +4003,7 @@ describe("run() — up command (real run: the browser pane waits for liveness)",
     // The load-bearing negative: no browser pane was ever created or named.
     expect(lines.some((l) => l.includes("--type browser"))).toBe(false);
     expect(lines.some((l) => l.includes("dobby-browser-"))).toBe(false);
-  }, 30_000);
+  });
 
   it("opens the browser pane immediately when up finds the app ALREADY live (no wait to defer it)", async () => {
     // The already-up short-circuit: the very first probe answers, so the app is live
@@ -4010,7 +4019,7 @@ describe("run() — up command (real run: the browser pane waits for liveness)",
     // Exactly one probe was needed (the short-circuit) and the browser pane opened.
     expect(lines.filter((l) => l.startsWith("curl-ok")).length).toBe(1);
     expect(lines.some((l) => l.includes("--type browser"))).toBe(true);
-  }, 30_000);
+  });
 
   it("starts NOTHING when the app is ALREADY live and the run pane is gone (no double start)", async () => {
     // The double-start hazard: the stub cmux answers pane DISCOVERY with nothing, so
@@ -4041,7 +4050,7 @@ describe("run() — up command (real run: the browser pane waits for liveness)",
         (l) => l.startsWith("cmux new-pane") && !l.includes("--type browser")
       )
     ).toBe(false);
-  }, 30_000);
+  });
 });
 
 // --- Slice U4: NO cmux -> detached run + pidfile/log plan (the discriminator) ----
@@ -4081,7 +4090,7 @@ describe("run() — up command (no cmux: detached run + pidfile plan)", () => {
     expect(out).toContain("dobby dev");
     expect(out).toContain(".dobby/dev.pid");
     expect(out).toContain(".dobby/dev.log");
-  }, 20_000);
+  });
 
   it("plans NO cmux pane creation without a cmux workspace (the start-path discriminator)", async () => {
     const result = await run(["up", "--dry-run"], repo);
@@ -4091,7 +4100,7 @@ describe("run() — up command (no cmux: detached run + pidfile plan)", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("dobby dev");
     expect(result.stdout).not.toContain("cmux new-pane");
-  }, 20_000);
+  });
 
   it("plans NO cmux workspace rename without a cmux workspace", async () => {
     const result = await run(["up", "--dry-run"], repo);
@@ -4100,7 +4109,7 @@ describe("run() — up command (no cmux: detached run + pidfile plan)", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("dobby dev");
     expect(result.stdout).not.toContain("rename-workspace");
-  }, 20_000);
+  });
 });
 
 // --- Slice U-start: the started `dobby dev` command ------------------------------
@@ -4147,7 +4156,7 @@ describe("run() — up command (the started dev command)", () => {
     expect(sendLine).not.toContain("--no-share");
     // `--ngrok` is never in up's plan — the inner dev owns the portless wrapper.
     expect(result.stdout).not.toContain("--ngrok");
-  }, 20_000);
+  });
 
   it("no cmux: the detached command is plain `bunx dobby dev` (no share flags)", async () => {
     const result = await run(["up", "--dry-run"], repo);
@@ -4158,7 +4167,7 @@ describe("run() — up command (the started dev command)", () => {
     expect(detachedLine, "expected a `spawn detached` line").toBeDefined();
     expect(detachedLine).toContain("bunx dobby dev");
     expect(detachedLine).not.toContain("--no-share");
-  }, 20_000);
+  });
 
   it("plans no share degrade note (the share feature was removed)", async () => {
     const result = await run(["up", "--dry-run"], repo);
@@ -4168,14 +4177,14 @@ describe("run() — up command (the started dev command)", () => {
     expect(result.stdout).toContain("dobby dev");
     expect(result.stdout).not.toMatch(/share: off/);
     expect(result.stdout).not.toContain("ngrok.com/download");
-  }, 20_000);
+  });
 
   it("rejects `up --no-share` as an unknown flag (exit 1 + usage)", async () => {
     const result = await run(["up", "--dry-run", "--no-share"], repo);
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("Usage: dobby");
-  }, 20_000);
+  });
 });
 
 // --- Slice U5: neon isolation (creds parsed from .env.local at the workroot) -----
@@ -4214,7 +4223,7 @@ describe("run() — up command (neon isolation: creds from .env.local)", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).not.toContain("unknown command");
     expect(combined(result)).toMatch(/neon/i);
-  }, 20_000);
+  });
 
   it("exits 1 when only ONE of the two neon creds is present (EITHER missing fails)", async () => {
     // NEON_API_KEY present, NEON_PROJECT_ID missing -> still exit 1 (it checks BOTH,
@@ -4226,7 +4235,7 @@ describe("run() — up command (neon isolation: creds from .env.local)", () => {
     const result = await run(["up", "--dry-run"], repo);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).not.toContain("unknown command");
-  }, 20_000);
+  });
 
   it("plans an idempotent neon branch create `dobby/<slug>` with the project id parsed from .env.local when both creds are present", async () => {
     const repo = makeLifecycleRepo(dirs, {
@@ -4242,7 +4251,7 @@ describe("run() — up command (neon isolation: creds from .env.local)", () => {
     expect(out).toContain("--project-id");
     // Independent: the project id was read from OUR .env.local (proves the parse).
     expect(out).toContain("proj-123");
-  }, 20_000);
+  });
 
   it("plans rewriting the .env.local DATABASE_URL lines from the branch connection strings", async () => {
     const repo = makeLifecycleRepo(dirs, {
@@ -4254,7 +4263,7 @@ describe("run() — up command (neon isolation: creds from .env.local)", () => {
     // The rewrite target: the DATABASE_URL* keys and/or the .env.local file (the
     // exact plan wording of the rewrite is spec-thin — flagged for the reviewer).
     expect(combined(result)).toMatch(/DATABASE_URL|\.env\.local/);
-  }, 20_000);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -4306,7 +4315,7 @@ describe("run() — up command (setup phase precedes the run phase in the dry-ru
     expect(result.exitCode).toBe(0);
     expect(result.stderr).not.toContain("unknown command");
     expect(result.stdout).toMatch(/bun install/);
-  }, 20_000);
+  });
 
   it("orders the setup phase (`bun install`) BEFORE the run phase (`dobby dev`)", async () => {
     const result = await run(["up", "--dry-run"], repo);
@@ -4316,7 +4325,7 @@ describe("run() — up command (setup phase precedes the run phase in the dry-ru
     expect(out).toMatch(/bun install/);
     expect(out).toContain("dobby dev");
     expect(out.indexOf("bun install")).toBeLessThan(out.indexOf("dobby dev"));
-  }, 20_000);
+  });
 
   it("plans NO copy in a plain (non-worktree) repo even when a .worktreeinclude is present (the linked-worktree gate)", async () => {
     // Discriminator for the linked-worktree gate: re-materialization fires ONLY in
@@ -4331,7 +4340,7 @@ describe("run() — up command (setup phase precedes the run phase in the dry-ru
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toMatch(/bun install/);
     expect(result.stdout).not.toMatch(/\.env\.local/);
-  }, 20_000);
+  });
 });
 
 // --- Slice U7: up's setup phase re-materializes .worktreeinclude matches ---------
@@ -4382,7 +4391,7 @@ describe("run() — up command (setup phase: .worktreeinclude re-materialization
     expect(result.stdout).toMatch(/\.env\.local/);
     // Dry run: nothing is executed -> the file was NOT actually copied.
     expect(existsSync(join(worktree, ".env.local"))).toBe(false);
-  }, 20_000);
+  });
 
   it("copies a main-only .worktreeinclude match into the worktree with main's exact content", async () => {
     const { worktree } = makeWorktree(dirs, {
@@ -4397,7 +4406,7 @@ describe("run() — up command (setup phase: .worktreeinclude re-materialization
     // Independent expected value: the literal we wrote into MAIN (a copy is the
     // only path by which it can appear at the worktree).
     expect(readFileSync(copied, "utf8")).toBe("SECRET=from-main\n");
-  }, 20_000);
+  });
 
   it("second run is a no-op: never overwrites an already-present worktree file (idempotent end-to-end)", async () => {
     const { worktree } = makeWorktree(dirs, {
@@ -4417,7 +4426,7 @@ describe("run() — up command (setup phase: .worktreeinclude re-materialization
     const second = await run(["up"], worktree);
     expect(second.exitCode).toBe(0);
     expect(readFileSync(target, "utf8")).toBe("SECRET=edited-locally\n");
-  }, 20_000);
+  });
 });
 
 // --- Slice U8: up's setup phase runs config setup[] extras (append + fail-fast) ---
@@ -4484,7 +4493,7 @@ describe("run() — up command (setup phase: config setup[] extras)", () => {
     expect(out).toContain("dobby dev");
     expect(out.indexOf("bun install")).toBeLessThan(out.indexOf(ALPHA));
     expect(out.indexOf(ALPHA)).toBeLessThan(out.indexOf("dobby dev"));
-  }, 20_000);
+  });
 
   it("dry-run lists a setup extra but does not execute it (its marker never appears)", async () => {
     const repo = makeLifecycleRepo(dirs, {
@@ -4495,7 +4504,7 @@ describe("run() — up command (setup phase: config setup[] extras)", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(MARKER);
     expect(existsSync(join(repo, MARKER))).toBe(false);
-  }, 20_000);
+  });
 
   it("real run executes a passing setup extra (its side-effect appears) then reaches the no-app gate, exit 0", async () => {
     // Efficacy anchor: the extra genuinely runs on the real setup path (so the
@@ -4511,7 +4520,7 @@ describe("run() — up command (setup phase: config setup[] extras)", () => {
     expect(result.exitCode).toBe(0);
     expect(existsSync(join(repo, MARKER))).toBe(true);
     expect(combined(result)).toMatch(/no app to run/i);
-  }, 20_000);
+  });
 
   it("real run fails fast on a nonzero setup extra (exit 1) and the RUN PHASE never starts", async () => {
     // `false` exits nonzero; the `touch` extra ordered AFTER it must never run
@@ -4531,7 +4540,7 @@ describe("run() — up command (setup phase: config setup[] extras)", () => {
     expect(existsSync(join(repo, MARKER))).toBe(false);
     // The setup-phase failure short-circuits before the no-app gate (step 2).
     expect(combined(result)).not.toMatch(/no app to run/i);
-  }, 20_000);
+  });
 });
 
 // --- Slice D1 (tracer bullet): `down` is wired and no-ops on nothing to clean ----
@@ -4567,7 +4576,7 @@ describe("run() — down command (nothing to clean: no-op)", () => {
     const result = await run(["down"], repo);
     expect(result.exitCode).toBe(0);
     expect(result.stderr).not.toContain("unknown command");
-  }, 20_000);
+  });
 });
 
 // --- Slice D2: `down` fails hard outside a git repo ----------------------------
@@ -4590,7 +4599,7 @@ describe("run() — down command (fail hard outside a git repo)", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).not.toContain("unknown command");
     expect(result.stderr).toMatch(/git/i);
-  }, 20_000);
+  });
 });
 
 // --- Slice D3: down plans the neon branch delete (neon + creds) -----------------
@@ -4631,7 +4640,7 @@ describe("run() — down command (neon branch delete plan)", () => {
     const out = result.stdout;
     expect(out).toContain("neonctl branches delete");
     expect(out).toContain(`dobby/${slug}`);
-  }, 20_000);
+  });
 });
 
 // --- Slice D4: the `--db` flag is REMOVED; supabase is never stopped -------------
@@ -4681,7 +4690,7 @@ describe("run() — down command (the --db flag is removed; supabase is never st
     // FLAG, not an unimplemented command.
     expect(result.stderr).not.toContain("unknown command");
     expect(combined(result)).not.toContain("supabase stop");
-  }, 20_000);
+  });
 
   it("plans the neon-branch delete but NEVER a `supabase stop` on a plain `down`", async () => {
     const result = await run(["down", "--dry-run"], repo);
@@ -4691,7 +4700,7 @@ describe("run() — down command (the --db flag is removed; supabase is never st
     expect(result.stdout).toContain("neonctl branches delete");
     // The removal: no supabase stop, even though a `supabase` dependency is declared.
     expect(combined(result)).not.toContain("supabase stop");
-  }, 20_000);
+  });
 });
 
 // --- Slice D5: config teardown[] extras run on down ------------------------------
@@ -4733,7 +4742,7 @@ describe("run() — down command (config teardown[] extras)", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(MARKER);
     expect(existsSync(join(repo, MARKER))).toBe(false);
-  }, 20_000);
+  });
 
   it("real run executes the teardown extra (its file side-effect appears), exit 0", async () => {
     const repo = makeLifecycleRepo(dirs, {
@@ -4743,7 +4752,7 @@ describe("run() — down command (config teardown[] extras)", () => {
     const result = await run(["down"], repo);
     expect(result.exitCode).toBe(0);
     expect(existsSync(join(repo, MARKER))).toBe(true);
-  }, 20_000);
+  });
 });
 
 // --- Slice D6: a stale pidfile is cleaned up silently ---------------------------
@@ -4786,7 +4795,7 @@ describe("run() — down command (stale pidfile cleaned up silently)", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).not.toContain("unknown command");
     expect(existsSync(pidfile)).toBe(false);
-  }, 20_000);
+  });
 });
 
 // ===========================================================================
@@ -4859,7 +4868,7 @@ describe("run() — commit command is removed", () => {
     // path (a git error, not this literal); post-removal it is the unknown command.
     expect(result.stderr).toContain("unknown command: commit");
     expect(result.stderr).toContain(upgradeHint);
-  }, 20_000);
+  });
 
   it("no longer advertises `commit` in the usage Commands list", async () => {
     const result = await run([], plainDir());
@@ -4977,7 +4986,7 @@ describe("run() — check --fix (safe project-wide fix, then report)", () => {
     const after = readFileSync(file, "utf8");
     expect(after).toContain('"hello"');
     expect(after).not.toContain("'hello'");
-  }, 30_000);
+  });
 
   // --- Slice 2: --fix applies SAFE fixes but NEVER the unsafe `==` fix -----------
   it("applies the safe format fix but leaves the unsafe `==` untouched under --fix", async () => {
@@ -4991,7 +5000,7 @@ describe("run() — check --fix (safe project-wide fix, then report)", () => {
     expect(after).not.toContain("'x'");
     // … yet the UNSAFE `==`→`===` fix was NEVER applied: the `==` survives on disk.
     expect(after).toContain("a == b");
-  }, 30_000);
+  });
 
   // --- Slice 3: the remaining unfixable finding is reported ----------------------
   it("reports the remaining unfixable finding (names the file) and exits 1 under --fix", async () => {
@@ -5002,7 +5011,7 @@ describe("run() — check --fix (safe project-wide fix, then report)", () => {
     // what remains — the `==` finding names the file (stdout is empty on the
     // pre-removal parse-error path, so this is a genuine red).
     expect(result.stdout).toMatch(/mixed\.ts/);
-  }, 30_000);
+  });
 
   // --- Slice 4: project-wide reach + full-gate composition (no flags) ------------
   // `--fix` with NO selective flag fixes EVERY file (project-wide) and then runs
@@ -5021,7 +5030,7 @@ describe("run() — check --fix (safe project-wide fix, then report)", () => {
     expect(readFileSync(join(repo, "src", "other.ts"), "utf8")).toContain(
       '"y"'
     );
-  }, 60_000);
+  });
 
   // --- Slice 5: per-file mode fixes ONLY the named file --------------------------
   it("fixes only the named file under per-file mode (check <file> --fix), leaving others untouched", async () => {
@@ -5037,7 +5046,7 @@ describe("run() — check --fix (safe project-wide fix, then report)", () => {
     );
     // … and the OTHER file is left exactly as written (per-file scope).
     expect(readFileSync(join(repo, "src", "other.ts"), "utf8")).toBe(FIX_OTHER);
-  }, 30_000);
+  });
 
   // --- Slice 6 (guard): a plain check (no --fix) never mutates -------------------
   // Proves --fix is the mutation trigger: an ordinary `check` is read-only, so the
@@ -5048,7 +5057,7 @@ describe("run() — check --fix (safe project-wide fix, then report)", () => {
     const file = join(repo, "src", "greeting.ts");
     await run(["check", "--lint"], repo);
     expect(readFileSync(file, "utf8")).toBe(FIX_FORMAT_ONLY);
-  }, 30_000);
+  });
 });
 // ===========================================================================
 // TASK 11 — cli/README.md + capability-aware usage.
@@ -5339,20 +5348,25 @@ describe("cli/README.md — npm-facing package documentation", () => {
     expect(raw).toMatch(/pre[- ]commit/i);
   });
 
-  it("no longer documents the removed `dobby commit` command or its `--pr` flag", () => {
-    // The removal contract on the docs: the commit command and its commit-only PR
-    // flags are gone from the CLI, so the README must not advertise them.
+  it("no longer documents the removed `dobby commit` command", () => {
+    // The removal contract on the docs: the commit command is gone from the CLI,
+    // so the README must not advertise it — `dobby ship` is the ceremony now.
+    //
+    // `--pr` is NOT part of this negative anymore: the flag came back as the
+    // pull-request SELECTOR of the live `review` / `pr watch` commands (`--pr
+    // <number>`), so its absence would pin the docs against the current surface
+    // rather than against the removed one.
     const raw = safeRead("README.md");
-    // Anti-vacuous guard: the README must have real content, else the negatives
-    // below pass trivially on an empty string.
+    // Anti-vacuous guard: the README must have real content, else the negative
+    // below passes trivially on an empty string.
     expect(raw.length).toBeGreaterThan(0);
     expect(raw).not.toContain("dobby commit");
-    expect(raw).not.toContain("--pr");
+    expect(raw).toContain("dobby ship");
   });
 
   it("documents the key command flags in examples (--json, --hook, --dry-run, --fix)", () => {
-    // `--db` (supabase-local) and `--pr` (commit) are both REMOVED, so neither is
-    // documented; `--fix` is the new documented check flag.
+    // `--db` (supabase-local) is REMOVED, so it is not documented; `--fix` is the
+    // check flag every caller reaches for.
     const raw = safeRead("README.md");
     for (const flag of ["--json", "--hook", "--dry-run", "--fix"]) {
       expect(raw, `README must document the ${flag} flag`).toContain(flag);
@@ -5532,7 +5546,7 @@ describe("run() — dev command (bundled portless resolves from dobby's own tree
     // The field bug: a BARE `portless` (off PATH) fails to spawn. The fix
     // resolves dobby's bundled copy to an ABSOLUTE path.
     expect(token?.startsWith("/")).toBe(true);
-  }, 20_000);
+  });
 
   it("resolves portless to a real bin inside a node_modules tree (absolute + exists on disk)", async () => {
     const result = await run(["dev", "--dry-run"], repo);
@@ -5542,7 +5556,7 @@ describe("run() — dev command (bundled portless resolves from dobby's own tree
     // node_modules tree and names a REAL file (not a fabricated string).
     expect(token).toContain("node_modules");
     expect(existsSync(token)).toBe(true);
-  }, 20_000);
+  });
 
   it("still resolves portless to an absolute existing path when PATH is emptied (reproduces the field condition)", async () => {
     // The exact field condition: portless is NOT on the spawn PATH. Bundled
@@ -5567,7 +5581,7 @@ describe("run() — dev command (bundled portless resolves from dobby's own tree
         process.env.PATH = savedPath;
       }
     }
-  }, 20_000);
+  });
 });
 
 // --- Slice 2: consumer bin resolution in `dev --dry-run` (vite) -----------------
@@ -5602,7 +5616,7 @@ describe("run() — dev command (consumer vite bin resolution in the plan)", () 
       "expected a portless-wrapped dev line in the plan"
     ).toBeDefined();
     expect(line).toContain(viteBin);
-  }, 20_000);
+  });
 
   it("falls back to the bare `vite` name when no consumer vite bin is installed", async () => {
     // Regression guard for the fallback half: no consumer bin → the bare tool
@@ -5615,7 +5629,7 @@ describe("run() — dev command (consumer vite bin resolution in the plan)", () 
     const token = toolToken(devMainLine(result.stdout) ?? "", "vite");
     expect(token, "expected a vite token on the main line").toBeDefined();
     expect(token).toBe("vite");
-  }, 20_000);
+  });
 });
 
 // --- Slice 3: consumer bin resolution in `db:* --dry-run` (drizzle-kit) ---------
@@ -5652,7 +5666,7 @@ describe("run() — db:* dispatch (consumer bin resolution in the dry-run plan)"
     const line = dbCommandLine(result.stdout, "drizzle-kit");
     expect(line, "expected a drizzle-kit command line").toBeDefined();
     expect(line).toContain("generate");
-  }, 20_000);
+  });
 
   it("falls back to the bare `drizzle-kit` name in db:* --dry-run when no consumer bin is installed", async () => {
     // Regression guard: no consumer bin → the bare command, never an absolute
@@ -5670,7 +5684,7 @@ describe("run() — db:* dispatch (consumer bin resolution in the dry-run plan)"
     expect(line, "expected a drizzle-kit command line").toBeDefined();
     expect(line).toContain("drizzle-kit generate");
     expect(line).not.toContain(join(repo, "node_modules", ".bin"));
-  }, 20_000);
+  });
 });
 
 // ===========================================================================
@@ -5802,7 +5816,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(line, "expected a portless-wrapped vite dev line").toBeDefined();
       expect(line).toContain("--config");
       expect(line).toContain(VITE_BASE_ASSET);
-    }, 20_000);
+    });
 
     it("picks the tanstack vite preset for a tanstack app declaring ALL five imported packages", async () => {
       const repo = makeCfglessRepo(dirs, {
@@ -5818,7 +5832,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(line).toContain(VITE_TANSTACK_ASSET);
       // The base preset must NOT leak in — every imported package is present.
       expect(line).not.toContain(VITE_BASE_ASSET);
-    }, 20_000);
+    });
 
     // The fail-loud stance (ADR-0015, round 3): the tanstack-start capability fires
     // on @tanstack/react-start ALONE, but the preset imports five packages
@@ -5838,7 +5852,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr).not.toContain("unknown command");
       expectViteBlocked(combined(result), "nitro");
-    }, 20_000);
+    });
 
     it("omits --config entirely when the consumer ships a vite.config.ts (total override)", async () => {
       const repo = makeCfglessRepo(dirs, {
@@ -5850,7 +5864,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       const line = devMainLine(result.stdout);
       expect(line, "expected a vite dev line").toBeDefined();
       expect(line).not.toContain("--config");
-    }, 20_000);
+    });
 
     // A tanstack app MISSING an import but shipping its OWN vite.config is NOT
     // blocked: a present config is a TOTAL override that supersedes both the default
@@ -5872,7 +5886,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       const line = devMainLine(result.stdout);
       expect(line, "expected a vite dev line").toBeDefined();
       expect(line).not.toContain("--config");
-    }, 20_000);
+    });
 
     // vite@8's DEFAULT_CONFIG_FILES includes the `.cts` form, so a `vite.config.cts`
     // is a LEGAL consumer override that vite's bare discovery finds — dobby must NOT
@@ -5888,7 +5902,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       const line = devMainLine(result.stdout);
       expect(line, "expected a vite dev line").toBeDefined();
       expect(line).not.toContain("--config");
-    }, 20_000);
+    });
   });
 
   // --- dobby build (new command) ----------------------------------------------
@@ -5904,7 +5918,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(result.stdout).toContain("build");
       expect(result.stdout).toContain(VITE_BASE_ASSET);
       expect(result.stdout).toContain(`cwd: ${repo}`);
-    }, 20_000);
+    });
 
     it("picks the tanstack vite preset for a tanstack app declaring ALL five imported packages", async () => {
       const repo = makeCfglessRepo(dirs, {
@@ -5917,7 +5931,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       const result = await run(["build", "--dry-run"], repo);
       expect(result.stdout).toContain(VITE_TANSTACK_ASSET);
       expect(result.stdout).not.toContain(VITE_BASE_ASSET);
-    }, 20_000);
+    });
 
     // The fail-loud stance on the build surface (shares `viteConfigSpec` with dev +
     // check --build): a config-less tanstack app missing an imported package has no
@@ -5935,7 +5949,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr).not.toContain("unknown command");
       expectViteBlocked(combined(result), "nitro");
-    }, 20_000);
+    });
 
     it("omits --config when the consumer ships a vite.config.ts (total override)", async () => {
       const repo = makeCfglessRepo(dirs, {
@@ -5945,7 +5959,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       const result = await run(["build", "--dry-run"], repo);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).not.toContain("--config");
-    }, 20_000);
+    });
 
     // The `.cts` form is in vite@8's DEFAULT_CONFIG_FILES — build must treat it as a
     // consumer override too (the build/dev/check surfaces share `viteConfigSpec`).
@@ -5957,7 +5971,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       const result = await run(["build", "--dry-run"], repo);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).not.toContain("--config");
-    }, 20_000);
+    });
 
     it("exits 1 with 'nothing to build' for a project without the vite capability", async () => {
       const repo = makeCfglessRepo(dirs, {
@@ -5970,7 +5984,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr).not.toContain("unknown command");
       expect(combined(result)).toMatch(/nothing to build/i);
-    }, 20_000);
+    });
 
     it("a real build with no consumer vite installed fails at resolution (not the unknown-command path)", async () => {
       const repo = makeCfglessRepo(dirs, {
@@ -5980,7 +5994,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).not.toContain("unknown command");
       expect(result.stderr).toMatch(/vite not found|dobby up/);
-    }, 20_000);
+    });
   });
 
   // --- check --build surface: the SAME fail-loud stance ------------------------
@@ -6000,7 +6014,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr).not.toContain("unknown command");
       expectViteBlocked(combined(result), "nitro");
-    }, 20_000);
+    });
   });
 
   // --- db:* --dry-run: drizzle-kit --config= when absent ----------------------
@@ -6014,7 +6028,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       const line = dbCommandLine(result.stdout, "drizzle-kit");
       expect(line, "expected a drizzle-kit command line").toBeDefined();
       expect(line).toContain(`--config=${DRIZZLE_ASSET}`);
-    }, 20_000);
+    });
 
     it("omits --config= when the consumer ships a drizzle.config.ts (total override)", async () => {
       const repo = makeCfglessRepo(dirs, {
@@ -6028,7 +6042,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(result.exitCode).toBe(0);
       const line = dbCommandLine(result.stdout, "drizzle-kit");
       expect(line).not.toContain("--config");
-    }, 20_000);
+    });
 
     // drizzle-kit's bare discovery tries drizzle.config.ts → .js → .json (verified
     // against drizzle-kit 0.31.10 `bin.cjs`), so a `drizzle.config.json` is a LEGAL
@@ -6046,7 +6060,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(result.exitCode).toBe(0);
       const line = dbCommandLine(result.stdout, "drizzle-kit");
       expect(line).not.toContain("--config");
-    }, 20_000);
+    });
   });
 
   // --- usage shows `build` for vite repos, hides it otherwise -----------------
@@ -6056,9 +6070,11 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
         pkg: { devDependencies: { vite: "^5.0.0" }, name: "usage-vite" },
       });
       const result = await run([], repo);
+      // The name column ends at whitespace, so `\s` (not `\b`, for which "-" is a
+      // boundary) is what distinguishes `build` from the sibling `build-plan`.
       const advertises = result.stdout
         .split("\n")
-        .some((line) => /^\s+build\b/.test(line));
+        .some((line) => /^\s+build\s/.test(line));
       expect(advertises).toBe(true);
     });
 
@@ -6070,9 +6086,11 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
         },
       });
       const result = await run([], repo);
+      // `\s`, not `\b`: the always-listed `build-plan` entry would satisfy a
+      // word-boundary match and make this assertion unfalsifiable.
       const advertises = result.stdout
         .split("\n")
-        .some((line) => /^\s+build\b/.test(line));
+        .some((line) => /^\s+build\s/.test(line));
       expect(advertises).toBe(false);
     });
   });
@@ -6093,7 +6111,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(hasNoteLine(combined(result), [/configs:/, /biome=default/])).toBe(
         true
       );
-    }, 30_000);
+    });
 
     it("labels the default `default(react)` when the react capability is present", async () => {
       const repo = makeCfglessRepo(dirs, {
@@ -6103,7 +6121,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       const result = await run(["check", "--lint"], repo);
       expect(result.exitCode).toBe(1);
       expect(combined(result)).toContain("biome=default(react)");
-    }, 30_000);
+    });
 
     it("omits the configs note when the consumer ships its OWN biome.jsonc (total override)", async () => {
       const repo = makeCfglessRepo(dirs, {
@@ -6129,7 +6147,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(result.stdout).toMatch(/lintbad\.ts:2\b/);
       // …but NO default was used, so the configs note is omitted entirely.
       expect(combined(result)).not.toContain("configs:");
-    }, 30_000);
+    });
   });
 
   // --- check --hook autofix via the default (real biome) ----------------------
@@ -6152,7 +6170,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(result.stderr).toBe("");
       // The default preset formatted the file in place: single → double quotes.
       expect(readFileSync(messy, "utf8")).toContain('"hi"');
-    }, 30_000);
+    });
   });
 
   // --- knip default: a test file is an entry, not an unused file ---------------
@@ -6178,7 +6196,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(hasNoteLine(combined(result), [/configs:/, /knip=default/])).toBe(
         true
       );
-    }, 30_000);
+    });
 
     // knip@6's KNIP_CONFIG_LOCATIONS includes `knip.config.ts` (verified against
     // knip 6.26.0 `dist/constants.js`), so a consumer `knip.config.ts` is a LEGAL
@@ -6200,7 +6218,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       // The consumer config is a TOTAL override → dobby stayed bare → no default.
       expect(combined(result)).not.toContain("knip=default");
       expect(combined(result)).not.toContain("configs:");
-    }, 30_000);
+    });
   });
 
   // --- vitest vite-fallback stance: a vite.config test block is NOT a vitest override
@@ -6229,7 +6247,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       // No dedicated vitest.config.* → the vite.config test block is NOT treated as
       // an override → dobby's vitest default is still planned and named.
       expect(combined(result)).toContain("vitest=default");
-    }, 30_000);
+    });
   });
 
   // --- vitest react variant require-all-imports guard (ADR-0015) ---------------
@@ -6254,7 +6272,7 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       // → the base default, NOT the react one.
       expect(combined(result)).toContain("vitest=default");
       expect(combined(result)).not.toContain("vitest=default(react)");
-    }, 30_000);
+    });
 
     it("picks vitest.react (label `default(react)`) for a react app WITH @vitejs/plugin-react + vite", async () => {
       const repo = makeCfglessRepo(dirs, {
@@ -6272,6 +6290,6 @@ describe("config-less defaults (ADR-0015) + dobby build", () => {
       expect(result.stderr).not.toContain("unknown command");
       // Every package vitest.react.mjs imports is declared → the react variant.
       expect(combined(result)).toContain("vitest=default(react)");
-    }, 30_000);
+    });
   });
 });

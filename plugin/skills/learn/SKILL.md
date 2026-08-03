@@ -8,9 +8,17 @@ This is **kit self-improvement tooling**. You work in the dobby repo and improve
 
 ## Step 1: Resolve the pointer
 
-From `$ARGUMENTS`, extract the transcript path: the `transcript:` line of a `dobby-session` block, or a bare `…/<uuid>.jsonl` path. Confirm it exists (`test -f`). Also note the user's improvement intent — which skill or area (the `note:` field, or what they typed). If the target skill is ambiguous, ask once; otherwise proceed.
+Hand `$ARGUMENTS` — the whole `dobby-session` block, or a bare `…/<uuid>.jsonl` path — to the resolver, which walks the ladder and answers a path that exists on disk:
 
-**Moved-transcript fallback.** Claude Code relocates a live session's transcript when the session enters a worktree — `EnterWorktree` changes the cwd, which changes the project slug dir — so an indicator emitted BEFORE entering points at a path that no longer exists. When `test -f` fails, don't declare the pointer dead yet: recover by the session id, since the `.jsonl` basename is the immutable session uuid — `find ~/.claude/projects -maxdepth 2 -name "<uuid>.jsonl"`. If several match, take the largest/newest (the live one keeps accreting). Proceed with the found path; only report the pointer as dead when the uuid search comes up empty.
+```bash
+bash scripts/resolve-session.sh "<$ARGUMENTS>"
+```
+
+Spell the script by its absolute path under this skill's base directory rather than `cd`-ing to it: `/dobby:learn` runs with the cwd at the dobby repo root, which has no `scripts/` dir, so the literal relative form above just fails. Nothing else about the call depends on the cwd — the pointer comes in as the argument (or on stdin).
+
+It prints the resolved transcript on stdout and its reasoning on stderr; **exit 1 means the pointer is dead** — say so and stop, don't hunt for a substitute session. The ladder it walks (so you can read its stderr): the `transcript:` line first, else the first bare `.jsonl` path in the input → `test -f` → **moved-transcript fallback**. That fallback matters because Claude Code relocates a live session's transcript when the session enters a worktree (`EnterWorktree` changes the cwd, which changes the project slug dir), so an indicator emitted BEFORE entering points at a path that no longer exists; the `.jsonl` basename is the immutable session uuid, so the file is recovered by searching `~/.claude/projects` for it, taking the largest/newest match (the live one keeps accreting).
+
+Also note the user's improvement intent — which skill or area (the `note:` field, or what they typed). If the target skill is ambiguous, ask once; otherwise proceed.
 
 If the block carries a `state:` path, `test -f` it: a live `STATE.md` is the richest context (goal, decisions, plan, work-log). It's ephemeral — `/dobby:wrap` deletes it and the worktree at `cwd:` may be archived — so treat both as best-effort. When `STATE.md` is gone, its content is still embedded in the transcript; the digest recovers it there.
 
@@ -19,10 +27,13 @@ If the block carries a `state:` path, `test -f` it: a live `STATE.md` is the ric
 ## Step 2: Delegate the digest
 
 Dispatch one `dobby:researcher` (Agent tool, `subagent_type: "dobby:researcher"`). Tell it:
-- The transcript path, and to parse it with `python3` — **never** Read it (it can be megabytes).
-- The `STATE.md` path if it's still on disk — read it directly for the plan/decisions/work-log; otherwise reconstruct that spine from the transcript's tool-result reads of `STATE.md`.
-- JSONL shape: one JSON object per line; `type` is `user`/`assistant`/…; `message.content` is a string or an array of blocks (`text`/`tool_use`/`tool_result`). Human messages are `type=user` with string or `text` content and **no** `tool_result` block — tool results also arrive as `type=user` and are NOT the human.
-- What to extract, scoped to the target skill/area: friction and rework, the user's literal corrections ("no, mejor así" / "siempre haz X"), where the recipe failed, and which `/dobby:*` skills ran (`grep -oE 'dobby/skills/[a-z-]+'`).
+- The transcript path, and to work it through the digest script — **never** Read the transcript (it can be megabytes). Give the script by ABSOLUTE path (this skill's base directory + `scripts/digest-transcript.py`), since the agent doesn't inherit this skill's directory:
+  - `python3 …/scripts/digest-transcript.py <transcript>` — the turn index: one line per turn (`index<TAB>kind<TAB>preview`), the kind tally, and the `/dobby:*` skills the session launched, read off the skill-launch banner.
+  - `--grep '<regex>'` — the turn indexes whose text matches (`-i` for case-insensitive). This is how a friction gets ANCHORED: the index is the citation.
+  - `--show 12,40-44` — the full text of those turns, which is where the literal quote comes from.
+  - The script already does the discrimination that trips hand-rolled passes — human vs `tool_result` (both arrive as `type=user`), the slash-command echoes Claude Code injects as `meta`, and the host bookkeeping it hides by default (`--all` to include). The researcher reads its output; it does not re-implement the parse.
+- The `STATE.md` path if it's still on disk — read it directly for the plan/decisions/work-log; otherwise reconstruct that spine from the transcript's tool-result reads of `STATE.md` (`--grep 'STATE\.md'`).
+- What to extract, scoped to the target skill/area: friction and rework, the user's literal corrections ("no, mejor así" / "siempre haz X"), where the recipe failed, and which `/dobby:*` skills ran (the digest header answers the last one).
 - To return short **literal quotes** + why each matters — findings, not solutions.
 - **Verify the claim, don't just report it.** For each friction it surfaces, the researcher must confirm it is actually *reproducible in this transcript* — cite the concrete turns (a message index or the paired tool_use/tool_result) where the friction happened, not a paraphrase or an impression. A friction it can't anchor to specific turns is a **`unverified`** finding and must be labelled so — it carries no weight in the proposal.
 
@@ -50,3 +61,14 @@ The researcher extracts **method and pattern** signal — how the agent should *
 
 ## Language
 User-facing output in the user's language; skill edits in English (the kit is all-English).
+
+## Acceptance checklist
+
+- [ ] Pointer resolved with `bash scripts/resolve-session.sh` — a dead pointer (exit 1) reported and the run stopped, never substituted with another session
+- [ ] Discarded-frictions KB consulted by CONCEPT before proposing; a prior rejection surfaced to the maintainer instead of re-proposed
+- [ ] Digest delegated to a `dobby:researcher` driving `scripts/digest-transcript.py` (index → `--grep` → `--show`); the transcript never Read, the parse never re-implemented
+- [ ] Every friction anchored to concrete turn indexes; anything unanchored labelled `unverified` and carrying no weight
+- [ ] Each proposed edit cross-referenced against the skill's CURRENT text — no redundant wording piled onto a skill that already said the right thing
+- [ ] Declined-but-verified frictions recorded in `docs/learn-discarded/` with the maintainer's agreement, and named in the proposal
+- [ ] Proposal approved before any write; edits applied by a worker at cwd-relative paths — the architect edited nothing
+- [ ] Findings carry method/pattern signal only, never the consumer project's domain specifics

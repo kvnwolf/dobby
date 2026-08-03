@@ -9,6 +9,7 @@ import {
   resolve,
 } from "node:path";
 import { loadConfig } from "./config.ts";
+import { type ConventionsReport, scanConventions } from "./conventions.ts";
 import { detectCapabilities, scanCapabilities } from "./detect.ts";
 import {
   configArgs,
@@ -21,6 +22,7 @@ import {
   biomeConfigSpec,
   type CheckFlags,
   checkPipeline,
+  conventionsEnabled,
   knipConfigSpec,
   viteBlockedMessage,
   viteConfigSpec,
@@ -31,12 +33,19 @@ import {
 // SHELLING OUT and parsing their machine reporters — never an in-process/WASM
 // API (slower, and TS7 has no JS API at all). Two shapes:
 //   - project-wide (no file args): the pipeline `tasks.ts` composes — biome +
-//     tsc + knip, the capability-gated build/test steps, and config `checks[]`
-//     extras. Selective flags (`--lint/--types/--unused/--build/--test`) subset
-//     it. A finding from ANY findings tool, or a nonzero build/test/extra exit,
-//     fails the gate — but ALL selected steps run (report everything).
-//   - per-file fast path (file args): biome ONLY over those files, NO pipeline —
-//     the edit-adjacent quick check where a slow whole-project gate is skipped.
+//     tsc + knip, the capability-gated build, the stack-gated tier-(b) conventions
+//     scan (after build: its bundle rule reads what build wrote), the
+//     capability-gated test, and config `checks[]` extras. Selective flags
+//     (`--lint/--types/--unused/--build/--test`) subset it. A finding from ANY
+//     findings tool, or a nonzero build/test/extra exit, fails the gate — but ALL
+//     selected steps run (report everything).
+//   - per-file fast path (file args): biome over those files (plus the conventions
+//     rules that judge them, for a stack consumer), NO pipeline — the
+//     edit-adjacent quick check where a slow whole-project gate is skipped.
+// The conventions step is the ONE step that does not shell out: `conventions.ts`
+// scans the filesystem in-process and its findings are adapted into the same
+// CheckGroup shape (`conventionsGroup`), so nothing downstream knows the
+// difference.
 // The BUNDLED tool binaries (biome/tsc/knip) resolve from DOBBY's OWN dependency
 // tree; the capability-gated build/test bins (vite/vitest) resolve from the
 // CONSUMER's tree instead — a second bundled vite would clash with the consumer's
@@ -91,14 +100,16 @@ type CheckReport =
   | { ok: false; error: string };
 
 // Run the quality gate. `files` empty = project-wide (the composed pipeline);
-// non-empty = per-file fast path (biome only). `flags` subset the project-wide
-// pipeline (ignored on the per-file path). `fix` applies biome's SAFE fixes in
+// non-empty = per-file fast path (biome over those files, plus — for a stack
+// consumer — the tier-(b) convention rules that judge those same files; no other
+// pipeline step runs). `flags` subset the project-wide pipeline (ignored on the
+// per-file path). `fix` applies biome's SAFE fixes in
 // place FIRST (project-wide `biome check --write .`, or over the named files) so
 // the pre-commit gate never fails on formatting the edit hook did not reach — then
 // the selected pipeline runs and reports whatever biome could NOT safely fix (the
 // UNSAFE rewrites, e.g. `==`→`===`, are never applied). `cwd` is the caller's
 // directory; the workroot is resolved from it and pinned as every child's cwd.
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: enumeration, not tangled logic — a flat switch dispatching 6 independent gate-step handlers (biome/tsc/knip/build/test/extra), several of which fatal-return from check(); extracting them would thread shared accumulators + fatal-return plumbing through 6 helpers and regress a load-bearing, tested executor
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: enumeration, not tangled logic — a flat switch dispatching 7 independent gate-step handlers (biome/tsc/knip/conventions/build/test/extra), several of which fatal-return from check(); extracting them would thread shared accumulators + fatal-return plumbing through 7 helpers and regress a load-bearing, tested executor
 export function check(
   files: string[],
   cwd: string,
@@ -132,26 +143,29 @@ export function check(
   const { capabilities, dependencies } = scanCapabilities(root);
   const biomeCfg = configArgs(root, biomeConfigSpec(capabilities));
 
-  // Per-file fast path: biome ONLY over the named files (resolved against the
-  // CALLER's cwd so a relative arg from a subdirectory still points at the right
-  // file). No pipeline, no tsc/knip/build/test, no extras — the edit-adjacent
-  // quick check where a whole-project gate would defeat the point. With `--fix`,
-  // biome's SAFE fixes are written to just those files (`--write`) and the
-  // remaining findings are reported. (The `configs:` note is a project-wide-gate
-  // concern; the edit-adjacent path stays note-free but still uses the default.)
+  // Per-file fast path: biome over the named files (resolved against the CALLER's
+  // cwd so a relative arg from a subdirectory still points at the right file) PLUS
+  // — for a stack consumer — the tier-(b) convention checks that judge those same
+  // files. No pipeline, no tsc/knip/build/test, no extras — the edit-adjacent quick
+  // check where a whole-project gate would defeat the point. The conventions scan
+  // is pure fs/content work (no spawn), and in per-file mode it runs ONLY the rules
+  // that judge the named files, so a neighbour's violation never surfaces here.
+  // With `--fix`, biome's SAFE fixes are written to just those files (`--write`)
+  // and the remaining findings are reported; convention findings are never fixable.
+  // (The `configs:` note is a project-wide-gate concern; the edit-adjacent path
+  // stays note-free but still uses the default.)
   if (files.length > 0) {
-    const biome = runBiome(
-      root,
-      files.map((file) => resolve(cwd, file)),
-      biomeBin,
-      biomeCfg.args,
-      fix
-    );
+    const absolute = files.map((file) => resolve(cwd, file));
+    const biome = runBiome(root, absolute, biomeBin, biomeCfg.args, fix);
     if ("error" in biome) {
       return { error: biome.error, ok: false };
     }
-    const exitCode = biome.group.findings.length > 0 ? 1 : 0;
-    return { exitCode, groups: [biome.group], notes: [], ok: true };
+    const groups = [biome.group];
+    if (conventionsEnabled(capabilities)) {
+      groups.push(conventionsGroup(scanConventions(root, absolute)));
+    }
+    const exitCode = groups.some((group) => group.findings.length > 0) ? 1 : 0;
+    return { exitCode, groups, notes: [], ok: true };
   }
 
   // The tool spawns that used a dobby DEFAULT config (ADR-0015 observability):
@@ -275,6 +289,25 @@ export function check(
         fail(built.exitCode);
         break;
       }
+      case "conventions": {
+        // Tier (b): the house-convention filesystem checks. NO spawn — pure
+        // fs/content scanning in-process (`conventions.ts`) — but the output folds
+        // through the SAME reducer as biome/tsc: one labeled findings group, one
+        // note per check that could not run (a missing build output), and a finding
+        // fails the gate exactly like a lint finding. The step is in the plan only
+        // for a stack consumer (`conventionsEnabled`), so reaching here means the
+        // conventions apply. Planned AFTER `build` so its bundle rule (B8) reads
+        // the client bundle THIS run produced, not the previous one's.
+        const report = scanConventions(root);
+        groups.push(conventionsGroup(report));
+        for (const note of report.notes) {
+          notes.push({ raw: null, text: note });
+        }
+        if (report.findings.length > 0) {
+          fail(1);
+        }
+        break;
+      }
       case "test": {
         if (step.skipNote !== null) {
           notes.push({ raw: null, text: step.skipNote });
@@ -342,6 +375,22 @@ export function check(
   }
 
   return { exitCode, groups, notes, ok: true };
+}
+
+// Reduce a conventions report to the gate's own findings shape — the adapter that
+// lets tier (b) ride the EXISTING reducer instead of a parallel channel. A
+// convention finding is about a PATH, not a position, so `line` is 0 (exactly how
+// knip's unused-FILE findings already render); the inventory rule id leads the
+// message so a finding is traceable to the convention row that motivated it.
+function conventionsGroup(report: ConventionsReport): CheckGroup {
+  return {
+    findings: report.findings.map((found) => ({
+      file: found.path,
+      line: 0,
+      message: `${found.rule}: ${found.message}`,
+    })),
+    tool: "conventions",
+  };
 }
 
 // Caps for a crashed tool's raw-output tail: the LAST ~40 lines AND ~4KB (both
@@ -433,19 +482,24 @@ interface HookPayload {
 // The outcome of the edit-time hook (`dobby check --hook`):
 //   - { surface: false } — a guard tripped (unparsable payload / no file_path /
 //     missing file / not a git repo / no dobby.config.json marker / file outside
-//     the workroot / unsupported extension) OR biome applied every fix cleanly.
-//     run.ts exits 0 with NOTHING surfaced — harness noise must never block an edit.
+//     the workroot / unsupported extension) OR biome applied every fix cleanly and
+//     the file breaks no convention. run.ts exits 0 with NOTHING surfaced — harness
+//     noise must never block an edit.
 //   - { surface: true, groups } — biome left unfixable findings after its SAFE
-//     auto-fix. run.ts prints them to STDERR and exits 2 (the code Claude Code
-//     feeds back to the model on the channel it shows it — stderr, not stdout).
+//     auto-fix, and/or the tier-(b) conventions scan flagged the edited file (a
+//     stack consumer only). run.ts prints them to STDERR and exits 2 (the code
+//     Claude Code feeds back to the model on the channel it shows it — stderr, not
+//     stdout).
 export type HookResult =
   | { surface: false }
   | { surface: true; groups: CheckGroup[] };
 
 // The edit-time hook: parse the PostToolUse payload from stdin, apply biome's SAFE
 // fixes to the edited file (mutating it on disk so formatting never bothers the
-// model), and report ONLY the findings biome could not fix. Every guard is a
-// silent exit 0 (surface:false); the only surfaced outcome is unfixable findings.
+// model), and report ONLY the findings biome could not fix — plus, for a stack
+// consumer, the tier-(b) convention findings about that one file (never fixable by
+// construction: no convention rule ships a rewrite). Every guard is a silent exit 0
+// (surface:false); the only surfaced outcome is unfixable findings.
 // `cwd` is the caller's directory (the bin passes process.cwd()); the workroot is
 // resolved from it and every biome spawn is pinned there.
 export function checkHook(stdin: string | undefined, cwd: string): HookResult {
@@ -493,15 +547,28 @@ export function checkHook(stdin: string | undefined, cwd: string): HookResult {
   // Config-less default (ADR-0015): a consumer without biome.json/jsonc still gets
   // linted+autofixed via dobby's shipped preset (react vs core, capability-driven);
   // a consumer WITH one keeps native discovery (bare spawn — a total override).
-  const biomeCfg = configArgs(root, biomeConfigSpec(detectCapabilities(root)));
+  const capabilities = detectCapabilities(root);
+  const biomeCfg = configArgs(root, biomeConfigSpec(capabilities));
   const biome = runBiome(root, [absolute], biomeBin, biomeCfg.args, true);
-  if ("error" in biome) {
-    // biome could not spawn / emitted no JSON — never block an edit on harness noise.
-    return { surface: false };
+  const groups: CheckGroup[] = [];
+  // biome could not spawn / emitted no JSON — never block an edit on harness noise
+  // (its group is simply absent; the conventions scan below still has its say,
+  // because a convention finding is a real finding, not harness noise).
+  if (!("error" in biome) && biome.group.findings.length > 0) {
+    groups.push(biome.group);
   }
-  return biome.group.findings.length > 0
-    ? { groups: [biome.group], surface: true }
-    : { surface: false };
+  // Tier (b), edit-time: the SAME reducer, so an unfixable convention finding
+  // reaches the model through the exit-2/stderr contract just like a lint finding.
+  // Scoped to the ONE edited file (per-file mode), so the hook reports what the
+  // model just wrote and never a neighbour's violation. Runs AFTER biome's
+  // `--write`, so it reads the file as it now stands on disk.
+  if (conventionsEnabled(capabilities)) {
+    const conventions = conventionsGroup(scanConventions(root, [absolute]));
+    if (conventions.findings.length > 0) {
+      groups.push(conventions);
+    }
+  }
+  return groups.length > 0 ? { groups, surface: true } : { surface: false };
 }
 
 // Pull `tool_input.file_path` out of the hook's stdin payload, DEFENSIVELY: an
@@ -629,6 +696,34 @@ export function spawnFailure(tool: string, error: Error): string {
   return `${tool} could not be spawned: ${error.message}`;
 }
 
+// dobby's OWN machine-state directory, as a repo-relative prefix. Everything
+// under `.dobby/` is written BY dobby (the gate cache `ship` records, the run
+// state `up` keeps) and is never the consumer's source — so a lint/format
+// diagnostic there is not a gate finding. Without this, dobby's own bookkeeping
+// fails the consumer's gate: `ship` writes `.dobby/gate-cache.json` as 2-space
+// JSON and the very next gate run reports it as unformatted, which (via the
+// pre-push backstop) would refuse the push over dobby's own file.
+//
+// Dropped HERE, after biome reported it, rather than through the presets'
+// `!.dobby` ignore, because that ignore reaches only ONE of the three config
+// modes (each verified against the bundled biome 2.5.4):
+//   - the consumer's OWN biome.jsonc → dobby passes NO config args (the total
+//     override), and a consumer's includes never mention dobby's state dir;
+//   - config-less REACT → `--config-path=biome/configless.react.jsonc`, a ROOT
+//     config that extends core, so `!.dobby` does apply (this mode is fine);
+//   - config-less CORE → `--config-path=biome/core.jsonc`, which carries
+//     ultracite's `"root": false`. Biome treats it as a NESTED config and applies
+//     NONE of its settings to files outside its own directory, so the ignore never
+//     fires (a plain `!.dobby`, a glob-anchored `!**/.dobby` and `--vcs-use-ignore-file`
+//     were each measured to make no difference). That inertness is a WIDER gap —
+//     a config-less non-react consumer gets biome's defaults instead of dobby's
+//     preset — reported separately; it is not this filter's job to fix.
+const DOBBY_STATE_PREFIX = ".dobby/";
+
+function isDobbyState(file: string): boolean {
+  return file === ".dobby" || file.startsWith(DOBBY_STATE_PREFIX);
+}
+
 // Spawn biome (via node/bun) with the JSON reporter and reduce it to findings.
 // ONLY error/warning severities count — biome also emits info/hint diagnostics
 // (e.g. a config-deprecation notice) that must not fail the gate. `write` adds
@@ -668,17 +763,32 @@ function runBiome(
   }
 
   const findings: Finding[] = [];
+  let ownState = 0;
   for (const diagnostic of report.diagnostics ?? []) {
     if (diagnostic.severity !== "error" && diagnostic.severity !== "warning") {
       continue;
     }
+    const file = relativize(root, biomePath(diagnostic.location?.path));
+    if (isDobbyState(file)) {
+      ownState += 1;
+      continue;
+    }
     findings.push({
-      file: relativize(root, biomePath(diagnostic.location?.path)),
+      file,
       line: diagnostic.location?.start?.line ?? 0,
       message: collapse(diagnostic.message ?? ""),
     });
   }
-  return { group: { findings, tool: "biome" }, result };
+  // biome exits 1 for "diagnostics were emitted". When EVERY one of them was
+  // dobby's own state, the run is clean and must not reach `findingsStepCode`,
+  // which would read the findingless nonzero exit as a biome CRASH. Status 2 (a
+  // config/internal error) is left alone — that is a real failure.
+  const ownStateOnly =
+    ownState > 0 && findings.length === 0 && result.status === 1;
+  return {
+    group: { findings, tool: "biome" },
+    result: ownStateOnly ? { ...result, status: 0 } : result,
+  };
 }
 
 // tsc --pretty false emits one diagnostic per line: `path(line,col): error TSxxxx: message`.

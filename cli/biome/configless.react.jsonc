@@ -1,3 +1,6 @@
+// GENERATED — regenerate: bun cli/scripts/vendor-biome.ts
+// DO NOT EDIT: drift is gated by src/vendor-biome.test.ts.
+//
 // Internal config-less ROOT wrapper — NOT a consumer extends target. dobby's
 // package.json `exports` expose ONLY `./biome/core` and `./biome/react`, so a
 // consumer can never `extends` this file by package specifier (consumers extending
@@ -6,6 +9,142 @@
 // Used ONLY by dobby: `tasks.biomeConfigSpec` points a config-less react app's
 // `--config-path` here via `resolveAsset`. Biome's `extends` resolves ONE level
 // from the ROOT config, and both targets are now flat/vendored, so nothing is lost.
+//
+// `plugins` — the tier-(c) GritQL rules — is declared HERE and not in react.jsonc
+// because biome resolves a plugin path relative to the ROOT config, never to the
+// config that declares it: from this file `../grit/x.grit` lands inside dobby's own
+// package, while from a CONSUMER's biome.jsonc extending react.jsonc the same path
+// would miss and abort their entire run. See the tier-(c) block in the generator.
 {
-  "extends": ["./core.jsonc", "./react.jsonc"]
+  "extends": [
+    "./core.jsonc",
+    "./react.jsonc"
+  ],
+  "plugins": [
+    {
+      "path": "../grit/c01-server-fn-outside-functions.grit",
+      "includes": [
+        "**/*.ts",
+        "**/*.tsx",
+        "!**/*.test.ts",
+        "!**/*.test.tsx",
+        "!**/functions.ts"
+      ]
+    },
+    {
+      "path": "../grit/c04-eager-instance-outside-server-file.grit",
+      "includes": [
+        "**/*.ts",
+        "**/*.tsx",
+        "!**/*.test.ts",
+        "!**/*.test.tsx",
+        "!**/*.server.ts",
+        "!**/*.server.tsx"
+      ]
+    },
+    {
+      "path": "../grit/c05-lazy-server-instance.grit",
+      "includes": [
+        "**/*.server.ts",
+        "**/*.server.tsx"
+      ]
+    },
+    {
+      "path": "../grit/c06-table-outside-schema-file.grit",
+      "includes": [
+        "**/*.ts",
+        "**/*.tsx",
+        "!**/*.test.ts",
+        "!**/*.test.tsx",
+        "!**/schema.ts",
+        "!**/schema.gen.ts"
+      ]
+    },
+    {
+      "path": "../grit/c07-db-instance-without-schema.grit",
+      "includes": [
+        "**/db.server.ts"
+      ]
+    },
+    {
+      "path": "../grit/c09-collection-persistence-handlers.grit"
+    },
+    {
+      "path": "../grit/c10-collection-not-eager.grit"
+    },
+    {
+      "path": "../grit/c13-live-query-prop-set.grit"
+    },
+    {
+      "path": "../grit/c14-retry-without-clear-error.grit"
+    },
+    {
+      "path": "../grit/c15-raw-live-query-hooks.grit",
+      "includes": [
+        "**",
+        "!**/src/shared/**"
+      ]
+    },
+    {
+      "path": "../grit/c18-form-without-submit-validator.grit"
+    },
+    {
+      "path": "../grit/c19-field-control-without-render.grit"
+    },
+    {
+      "path": "../grit/c20-incomplete-field-anatomy.grit"
+    },
+    {
+      "path": "../grit/c21-dialog-form-not-rendered-as-form.grit"
+    },
+    {
+      "path": "../grit/c23-raw-value-submitted.grit"
+    },
+    {
+      "path": "../grit/c24-email-not-lowercased.grit"
+    },
+    {
+      "path": "../grit/c25-hand-rolled-submit-button.grit"
+    },
+    {
+      "path": "../grit/c26-secondary-button-outside-form-button.grit"
+    },
+    {
+      "path": "../grit/c27-manual-field-a11y-props.grit"
+    },
+    {
+      "path": "../grit/c29-test-reaches-into-form-internals.grit",
+      "includes": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx"
+      ]
+    },
+    {
+      "path": "../grit/c31-barrel-module-import.grit"
+    },
+    {
+      "path": "../grit/c32-browser-value-import-of-server-module.grit",
+      "includes": [
+        "**/*.browser.ts",
+        "**/*.browser.tsx"
+      ]
+    },
+    {
+      "path": "../grit/c33-zod-v3-email-validator.grit"
+    },
+    {
+      "path": "../grit/a2-import-meta-env.grit",
+      "includes": [
+        "**",
+        "!**/src/shared/env.ts",
+        "!**/src/lib/env.ts",
+        "!**/src/router.tsx",
+        "!**/drizzle.config.ts",
+        "!**/src/emails/**",
+        "!**/src/notifications/templates/**"
+      ]
+    }
+  ]
 }

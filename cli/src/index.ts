@@ -18,15 +18,24 @@ import { isLiveDev } from "./tasks.ts";
 //     `--no-share` exits 1 with the usage instead of being silently swallowed by
 //     the stream.
 //
-// (2) `check --hook` needs the PostToolUse payload on stdin; when --hook is present
-//     we drain process stdin and pass it as run()'s third argument.
+// (2) `check --hook` needs the PostToolUse payload on stdin, `check --pre-push`
+//     needs git's ref lines there (the pre-push hook pipes them in — without this
+//     the backstop would see nothing and wave every push through), and the
+//     `--stdin` commands (`state set` / `state append-worklog`) take their BODY
+//     there; when any of those flags is present we drain process stdin and pass it
+//     as run()'s third argument. All are explicit opt-ins, so dobby never blocks
+//     on a stdin nobody piped to.
 const argv = process.argv.slice(2);
 
 if (isLiveDev(argv)) {
   process.exit(await runDev(process.cwd()));
 }
 
-const stdin = argv.includes("--hook") ? await readStdin() : undefined;
+const STDIN_FLAGS = ["--hook", "--pre-push", "--stdin"];
+
+const stdin = STDIN_FLAGS.some((flag) => argv.includes(flag))
+  ? await readStdin()
+  : undefined;
 
 const { exitCode, stdout, stderr } = await run(argv, process.cwd(), stdin);
 if (stdout) {

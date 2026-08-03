@@ -1,0 +1,12 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C24 — data-processing: email-type fields are normalized while the payload is
+// assembled — `.trim()` AND `.toLowerCase()`. Matches a payload property whose KEY
+// reads as an email field and whose value is trimmed but not lowercased.
+`$key: $expression` as $property where {
+  $key <: r"(?i)[a-z_$]*email[a-z_$]*",
+  $expression <: contains `$trimmed.trim()`,
+  not $expression <: contains `$lowered.toLowerCase()`,
+  register_diagnostic(span=$property, message="Email fields also need .toLowerCase() while assembling the payload.", severity="error")
+}

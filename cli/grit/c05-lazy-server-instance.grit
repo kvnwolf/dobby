@@ -1,0 +1,36 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// C5 — module-conventions: eager, never lazy. Inside a `.server` file (the plugin's
+// `includes` scope) a `??=` assignment whose right-hand side CONSTRUCTS one of the
+// eager server instances is the lazy-singleton shape the convention rejects: the
+// file suffix already IS the boundary, so the runtime guard buys only indirection.
+//
+// The constructor list is C4's, and it is what keeps the rule off unrelated code:
+// a bare `??=` is ordinary JS (lab-verified false positive — `options.timeout ??= 30`
+// inside a plain helper in a `.server.ts` was reported by the earlier text-only
+// pattern), so the instance being memoized has to be part of the match.
+//
+// PARTIAL (recorded deliberately): only the `??=` half ships. The other half of the
+// inventory row — a `getX()` wrapper that caches an instance — needs "is this value
+// cached across calls" semantics, which a single-file syntactic pattern cannot
+// decide without flagging every legitimate getter. The NAME half of that rule is
+// already enforced natively (tier-(a) A10 bans importing getDb/getAuth/getResend).
+// A `??=` memoizing anything OUTSIDE the eager list (a project-local factory that
+// wraps one of them) is likewise not flagged — "this value is a server instance"
+// is exactly the cross-file question, and guessing it re-opens the false positive.
+//
+// `??=` is matched by a regex over the assignment node's own text: GritQL snippets
+// cannot express the `??=` operator (`$x ??= $init` fails to compile), and biome's
+// CST patterns expose no operator field (`JsAssignmentExpression(operator_token=…)`
+// fails to compile too). Both lab-verified against bundled biome 2.5.4.
+JsAssignmentExpression() as $assignment where {
+  $assignment <: r"[^=]*\?\?=[\s\S]*",
+  $assignment <: contains or {
+    `betterAuth($...)`,
+    `drizzle($...)`,
+    `new Pool($...)`,
+    `new Resend($...)`
+  },
+  register_diagnostic(span=$assignment, message="Write the bare eager export (export const auth = betterAuth(…)) — laziness is a runtime guard bolted onto a boundary .server.ts already provides.", severity="error")
+}

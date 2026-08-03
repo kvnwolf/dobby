@@ -21,7 +21,7 @@ If nothing is uncertain and no external tech is involved, say so and stop — do
 
 Hand each independent research item to a `researcher` agent (Agent tool, `subagent_type: "dobby:researcher"`), in parallel — each one fetches current docs (via `ctx7`), traces the codebase, and returns grounded findings. Group sensibly — one per technology, or per cluster of related unknowns:
 
-Feed each researcher **dual vocabulary** so findings name things consistently: (1) the **architecture vocabulary** (`/dobby:spec`'s `references/architecture-vocab.md` — module / interface / depth / seam / adapter / leverage / locality) for structural claims, and (2) the **project's own domain glossary** (its `CONTEXT.md`) for domain nouns. A researcher that doesn't hold both invents its own words and the plan has to re-translate. Tell each one to report in these two vocabularies (structure in the architecture terms, domain in the project's terms) and to flag any concept it can't name in either.
+Feed each researcher **dual vocabulary** so findings name things consistently: (1) the **architecture vocabulary** (`/dobby:spec`'s `../spec/references/architecture-vocab.md` — module / interface / depth / seam / adapter / leverage / locality) for structural claims, and (2) the **project's own domain glossary** (its `CONTEXT.md`) for domain nouns. A researcher that doesn't hold both invents its own words and the plan has to re-translate. Tell each one to report in these two vocabularies (structure in the architecture terms, domain in the project's terms) and to flag any concept it can't name in either.
 
 - **Per technology** → "fetch current docs for `<lib>` and report the exact signatures / config keys / version gotchas this task needs: `<specifics>`".
 - **Codebase reuse** → "find existing modules/patterns in this repo that already do `<X>`; report paths + how callers use them".
@@ -34,11 +34,19 @@ For BROAD or open web questions (architecture comparisons, "how do teams do X", 
 From the researchers' findings, write a tight brief the planning step can consume verbatim:
 
 - **Per technology** — the key facts the task relies on (signatures, config, version/gotcha), each with its doc source.
-- **Reuse** — applicable skills and existing modules, and what each is for. For each applicable **convention/design** skill, record its plan-shaping **dictate** stated concretely — e.g. "this stack's data-fetching convention dictates: consume through the read-through component boundary, not the underlying hook, even for a single value". These dictates are what `/dobby:spec` bakes into the plan's Module structure and each task's approach, so the plan is convention-correct before the implementor ever sees it — auto-activation at build becomes the safety net, not the first place the convention gets considered. Before recommending a NEW shared skill/module (extracting a pattern to a common place), apply the **two-adapters test** (`/dobby:spec`'s `references/architecture-vocab.md`): a shared seam is only real once **two real use sites** need it. One real case is a *hypothetical* seam — flag the reuse but say it stays inline until a second caller appears; don't recommend extracting on a single case. (Reusing what ALREADY exists needs no second site — that's already a real seam.)
+- **Reuse** — applicable skills and existing modules, and what each is for. For each applicable **convention/design** skill, record its plan-shaping **dictate** stated concretely — e.g. "this stack's data-fetching convention dictates: consume through the read-through component boundary, not the underlying hook, even for a single value". These dictates are what `/dobby:spec` bakes into the plan's Module structure and each task's approach, so the plan is convention-correct before the implementor ever sees it — auto-activation at build becomes the safety net, not the first place the convention gets considered. Before recommending a NEW shared skill/module (extracting a pattern to a common place), apply the **two-adapters test** (`/dobby:spec`'s `../spec/references/architecture-vocab.md`): a shared seam is only real once **two real use sites** need it. One real case is a *hypothetical* seam — flag the reuse but say it stays inline until a second caller appears; don't recommend extracting on a single case. (Reusing what ALREADY exists needs no second site — that's already a real seam.)
 - **Resolved** — each answered question + the answer + why.
 - **Open** — what still needs a spike or a decision. Don't hand the plan a bare list of unknowns: carry a **recommended hypothesis** for each — the architect's falsifiable default to confirm or refute (like `/dobby:diagnose`'s ranked hypotheses), stated as "*default: X, because Y — confirm before building*". An Open item is "open WITH a proposed default", not just a question, so the plan can proceed on the default if the spike stays cheap.
 
-Keep it to what the task needs. Don't paste raw docs. If a work-session doc exists (the repo-root `STATE.md` from `/dobby:scope`), write this brief into its `## Research` section.
+Keep it to what the task needs. Don't paste raw docs.
+
+**Land it through the state engine, never by hand-editing the document.** If a work-session doc exists (the repo-root `STATE.md` from `/dobby:scope`), write the brief to a scratch file outside the repo (the OS temp dir — e.g. `${TMPDIR:-/tmp}/dobby-research-<timestamp>.md`, never a file inside the worktree) and hand that file to the engine:
+
+```bash
+bunx dobby state set Research --file <scratch-file>
+```
+
+(`--stdin` pipes a short body instead of a file.) The engine replaces that ONE section body and preserves every other section verbatim. Because `set` REPLACES, a second research pass writes the FULL brief (what's already there plus the new findings), not only the additions. A refusal goes to stderr with a nonzero exit: no `STATE.md` means there is no work session to write into (`/dobby:scope` creates it), so the brief stays in the conversation.
 
 ## Next step
 
@@ -59,5 +67,6 @@ Interact with the user in their language. Write the research brief in English; k
 - [ ] Each researcher fed dual vocabulary (architecture-vocab + the project's `CONTEXT.md`) so findings name structure and domain consistently
 - [ ] Broad/open web questions sent to `deep-research`; empirical questions sent to `/dobby:prototype` or flagged as Open
 - [ ] Concise research brief synthesized from the findings; no code written, no plan made
+- [ ] Brief persisted to `## Research` via `bunx dobby state set` (full brief, never a hand edit) when a work-session doc exists
 - [ ] Reuse recommendations pass the two-adapters test (extract only on a second real use site); every Open item carries a recommended falsifiable default
 - [ ] Next step offered via an AskUserQuestion gate (recommended route first, alternatives + Stop here); chosen route invoked via the Skill tool

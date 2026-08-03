@@ -74,6 +74,8 @@ The AI disclaimer is the first line because this brief is posted as a tracker co
 
 A completed brief can be handed straight to `/dobby:scope` as the goal for a work session — the Category/Summary/Current/Desired framing is exactly the shape `/dobby:scope` expects.
 
+**`bunx dobby brief lint --file <file>` judges the SHAPE of all this** — the disclaimer on the first line, the `## Agent Brief` heading, all seven labeled sections present, a category of `bug` or `enhancement`, a one-line summary, at least two acceptance checkboxes with none vacuous, at least one `Out of scope` bullet, and the two durability rules (no code-file paths, no line numbers, no `Files to change` / `What to do` heading). It cannot judge whether the *content* is right: a brief that passes the linter and still describes the wrong behavior is a bad brief. Lint before posting; the judgment below stays yours.
+
 ## Examples
 
 ### Good agent brief (bug)
@@ -96,7 +98,7 @@ Truncation should break at the last word boundary before the cap and append
 **Key interfaces:**
 - The skill-metadata `description` field — no type change, but the
   validation/processing logic that populates it must respect word boundaries.
-- Any function that reads SKILL.md frontmatter and extracts the description.
+- The parser that reads skill frontmatter and extracts the description.
 
 **Acceptance criteria:**
 - [ ] Descriptions under the cap are unchanged
