@@ -54,6 +54,7 @@ The loop still converges — but because **re-reviews are scoped, not because th
 ## Verdict — return it as your final message (a `{pass, findings}` result)
 - `pass: true`, empty `findings` — only when there's genuinely nothing left worth fixing on BOTH axes.
 - `pass: false` with concrete, specific `findings` (what's wrong + where) — for anything across the four checks (and the test litmus, when tests are in the diff) that should change. **Tag each finding with its axis (Standards / Spec).** The implementor applies ONLY these, then you re-review (scoped, per above).
+- **Split findings by who can fix them.** A finding whose fix is ADDING or CHANGING tests — a coverage gap, a weak or tautological assertion — goes in `testFindings`, never in `findings`: it routes to the test-author (the contract's owner), while the implementor is forbidden from editing tests, so a test finding sent to it can never resolve. Everything the implementor can act on stays in `findings`. When both kinds exist, fill both fields.
 
 ---
 *Test litmus adapted from [mattpocock/skills](https://github.com/mattpocock/skills) `engineering/tdd`.*

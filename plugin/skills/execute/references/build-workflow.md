@@ -17,7 +17,7 @@ Encoded rules:
 - **Compute `workRoot` ONCE before launching, and pass it in `args`.** Before running the Workflow, resolve the absolute worktree root — `WORKROOT="$(git rev-parse --show-toplevel)"` — and hand it in as `args.workRoot`. The script PREPENDS a mandatory worktree preamble to every agent's `ctx` when `workRoot` is present (see the `WORKTREE` note below for why this is load-bearing — the session's worktree is nested under the main checkout).
 - Test-author, implement, review, verify = four separate agents (`agentType: 'dobby:test-author' | 'dobby:implementor' | 'dobby:reviewer' | 'dobby:verifier'`) — never one agent in two roles. Their role instructions live in the agent definitions, NOT in this script.
 - Order: (test-author, if gated in) → implement → review (loop until pass) → verify → (fail → restart implement→review→verify).
-- **Test-author runs ONCE, at task start, and only when gated in** (suite exists AND the task is test-first). Its tests are the FIXED contract for the whole task: outer-loop retries re-implement / re-review / re-verify against those SAME tests — the test-author never re-runs, so a green-vs-red disagreement always means the code is wrong, never that the goalposts moved. The implementor does NOT edit these tests; if it believes a test is wrong it says so in its work-log for the reviewer to scrutinize (no cheating the contract).
+- **Test-author runs ONCE, at task start, and only when gated in** (suite exists AND the task is test-first). Its tests are the FIXED contract for the whole task: outer-loop retries re-implement / re-review / re-verify against those SAME tests, so a green-vs-red disagreement always means the code is wrong, never that the goalposts moved. The ONE exception is the reviewer's `testFindings` — the arbiter demanding more/better coverage re-dispatches the test-author to EXTEND the contract (never the implementor). The implementor does NOT edit these tests and can never send the test-author back; if it believes a test is wrong it says so in its work-log for the reviewer to scrutinize (no cheating the contract).
 - Caps prevent infinite loops; a task that exhausts them is flagged `needs-human`.
 - When a test step ran, the **reviewer receives the COMBINED diff** (the test-author's tests + the implementor's code) and judges test quality (spec coverage, behavior-not-implementation) under its Spec axis; the **verifier runs the suite** (must be green) plus the dynamic tautology litmus. Those role behaviors live in the `dobby:reviewer` / `dobby:verifier` definitions — the script just wires the same review/verify steps; it does not special-case them.
 - The implementor RETURNS its work-log entry (it does NOT write `STATE.md` — parallel self-appends race and clobber each other). The workflow accumulates them per task; the coordinator appends them to `STATE.md` serially AFTER the workflow returns (single writer). The test-author's returned tests are part of the diff the reviewer/verifier see; the coordinator does not separately record them.
@@ -40,6 +40,7 @@ const VERDICT = {
   properties: {
     pass: { type: 'boolean' },
     findings: { type: 'string', description: 'concrete issues if pass=false, else empty' },
+    testFindings: { type: 'string', description: 'reviewer only: findings whose FIX is adding/changing tests (coverage gap, weak/tautological assertion) — routed to the test-author, never the implementor; empty if none' },
     evidence: { type: 'string', description: 'what was observed if verifying, else empty' },
   },
   required: ['pass', 'findings', 'evidence'],
@@ -70,8 +71,9 @@ async function runTask(t) {
   // 0. TEST-AUTHOR (conditional, runs ONCE at task start) — gated on suite-exists AND this task marked test-first.
   // When it doesn't run, the loop below is the classic 3-step (implement → review → verify), byte-for-byte unchanged.
   // The tests it writes are the FIXED contract for the whole task: outer-loop retries re-implement/re-review/re-verify
-  // against these SAME tests — the test-author never re-runs. Written blind to the implementation (independent source
-  // of truth). The reviewer/verifier see these tests in the combined diff; how they judge/run them lives in their agents.
+  // against these SAME tests — the test-author re-runs ONLY on the reviewer's testFindings (contract extension by the
+  // arbiter, wired in the review loop below). Written blind to the implementation (independent source of truth). The
+  // reviewer/verifier see these tests in the combined diff; how they judge/run them lives in their agents.
   let testContract = ''
   if (HAS_SUITE && t.testFirst) {
     const authored = await agent(`${ctx}\nWrite the tests for this task from the spec ALONE, before any implementation exists. They are the fixed contract the implementor must satisfy.`,
@@ -99,10 +101,24 @@ async function runTask(t) {
         { label: `review:${t.id}`, phase: 'Build', agentType: 'dobby:reviewer', schema: VERDICT })
       if (!review) continue                  // agent() returns null if it errors/is skipped — retry within the cap, never deref null
       if (review.pass) { reviewed = true; break }
-      prior = review.findings
-      const fix = await agent(`${ctx}${testContract}\nApply ONLY these code-review findings:\n${review.findings}`,
-        { label: `fix:${t.id}`, phase: 'Build', agentType: 'dobby:implementor', schema: IMPL })
-      if (fix?.workLog) workLog.push(fix.workLog)
+      // Route findings by who CAN fix them. A test finding sent to the implementor is unresolvable by
+      // construction (the contract is off-limits to it) and deadlocks the loop into needs-human. The
+      // reviewer demanding coverage is the ARBITER extending the contract — not the implementor moving
+      // goalposts — so this is the ONE re-dispatch the fixed contract allows. Without a test-author
+      // (classic 3-step) there is no contract, and the implementor takes test findings like any other.
+      const testF = (testContract && review.testFindings) ? review.testFindings : ''
+      const codeF = testF ? review.findings : [review.findings, review.testFindings].filter(Boolean).join('\n')
+      prior = [codeF, testF].filter(Boolean).join('\n')
+      if (testF) {
+        const tfix = await agent(`${ctx}\nThe code reviewer requests these TEST additions/changes to the contract you authored for this task — extend it with EXACTLY what these findings name (the rest of the contract stays fixed):\n${testF}`,
+          { label: `test-fix:${t.id}`, phase: 'Build', agentType: 'dobby:test-author', schema: IMPL })
+        if (tfix?.workLog) workLog.push(tfix.workLog)
+      }
+      if (codeF) {
+        const fix = await agent(`${ctx}${testContract}\nApply ONLY these code-review findings:\n${codeF}`,
+          { label: `fix:${t.id}`, phase: 'Build', agentType: 'dobby:implementor', schema: IMPL })
+        if (fix?.workLog) workLog.push(fix.workLog)
+      }
     }
     if (!reviewed) return { id: t.id, status: 'needs-human', reason: 'code review never passed', workLog: workLog.join('\n\n') }
 
