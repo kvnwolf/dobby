@@ -1106,3 +1106,61 @@ describe("scanConventions — C12 resolves a hoisted select projection", () => {
     );
   });
 });
+
+// ===========================================================================
+// SLICE 9 — field fix from vonda's 0.8.0 run: vendored trees are exempt from
+// tier (b), mirroring the preset's `!src/shadcn/**` / `!src/components/ui/**`
+// excludes. `src/shadcn/utils.ts` is shadcn's own components.json contract and
+// must need no dobby-allow B2.
+// ===========================================================================
+
+describe("scanConventions — vendored trees are never judged", () => {
+  it("exempts src/shadcn/** and the legacy src/components/ui/** from every rule", () => {
+    const root = makeTree({
+      // B2 bait (the un-renameable contract file), B1 bait, B3 bait — plus a
+      // role file that would demand a CONTEXT.md (B9) if the tree were judged.
+      "src/components/ui/utils.ts": "export const cn = (s: string) => s;\n",
+      "src/shadcn/hooks/utils.ts": "export const useX = () => null;\n",
+      "src/shadcn/ui/index.ts": "export const button = 1;\n",
+      "src/shadcn/ui/theme.client.ts": "export const theme = 1;\n",
+      "src/shadcn/utils.ts": "export const cn = (s: string) => s;\n",
+      // The control: the same basename OUTSIDE the vendored trees still fires.
+      "src/tasks/utils.ts": "export const fmt = (s: string) => s;\n",
+    });
+
+    const report = scanConventions(root);
+
+    expect(rulePaths(report, "B2")).toEqual(["src/tasks/utils.ts"]);
+    expect(
+      report.findings.filter((finding) => isVendoredPath(finding.path))
+    ).toEqual([]);
+  });
+
+  it("exempts a vendored file on the per-file path too (the edit hook stays silent)", () => {
+    const root = makeTree({
+      "src/shadcn/utils.ts": "export const cn = (s: string) => s;\n",
+    });
+
+    const report = scanConventions(root, [join(root, "src/shadcn/utils.ts")]);
+
+    expect(report.findings).toEqual([]);
+  });
+
+  it("still judges a consumer module merely NAMED shadcn deeper in the tree", () => {
+    const root = makeTree({
+      "src/foo/shadcn/utils.ts": "export const fmt = (s: string) => s;\n",
+    });
+
+    expect(rulePaths(scanConventions(root), "B2")).toEqual([
+      "src/foo/shadcn/utils.ts",
+    ]);
+  });
+});
+
+// The test-side twin of the scanner's vendored-prefix match, so the blanket
+// no-vendored-findings assertion cannot silently narrow.
+function isVendoredPath(path: string): boolean {
+  return ["src/shadcn/", "src/components/ui/"].some((dir) =>
+    path.startsWith(dir)
+  );
+}
