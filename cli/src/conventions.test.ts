@@ -1025,6 +1025,39 @@ describe("scanConventions — B7 ignores prose in comments", () => {
     ]);
   });
 
+  it("reads a regex after a keyword as a regex, not as division", () => {
+    // `return` is followed by an EXPRESSION, so the `/` after it opens a regex —
+    // a character-only prev-token rule sees the `n` of `return` and calls it
+    // division, letting the class's `//` erase the read behind it.
+    const root = makeTree({
+      "src/tasks/pick.ts":
+        "export function pick(s: string) {\n" +
+        "  return /[//]/.test(s) && process.env.SECRET;\n" +
+        "}\n",
+    });
+
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/pick.ts",
+    ]);
+  });
+
+  it("does not treat an identifier merely ENDING in a keyword as one", () => {
+    // The word boundary is real: `myreturn / b` is division, so the `//` after it
+    // is a genuine comment and its prose stays prose. (A regex reading here would
+    // swallow `/ b; /` and leave the comment's tail behind as code.)
+    const root = makeTree({
+      "src/tasks/reader.ts": "export const key = process.env.SCALE;\n",
+      "src/tasks/scale.ts":
+        "export const scale = (myreturn: number, b: number) =>\n" +
+        "  myreturn / b; // process.env.SCALE tuned this in prod\n",
+    });
+
+    // The unblessed reader beside it proves the rule is live in this fixture.
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/reader.ts",
+    ]);
+  });
+
   it("exempts nitro.config.ts — it configures the server runtime outside Vite", () => {
     const root = makeTree({
       "nitro.config.ts":

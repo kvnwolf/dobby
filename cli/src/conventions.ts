@@ -792,6 +792,30 @@ const QUOTES = "\"'`";
 // a literal) the `/` is division.
 const REGEX_PRECEDERS = "=(,:[!&|?;{}+-*%~^<>";
 
+// The keyword extension of that heuristic: these keywords are followed by an
+// EXPRESSION, so a `/` after one can only open a regex literal — never divide.
+// (`return /[//]/` is the case a character-only rule gets wrong.)
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  "await",
+  "case",
+  "delete",
+  "do",
+  "else",
+  "in",
+  "instanceof",
+  "new",
+  "of",
+  "return",
+  "throw",
+  "typeof",
+  "void",
+  "yield",
+]);
+
+// What may appear INSIDE an identifier — the word-boundary test for the keyword
+// extension (`myreturn` must not read as `return`).
+const IDENTIFIER_CHAR = /[\w$]/;
+
 // `text` with `/* */` blocks and `//` line comments removed. A single-pass
 // character SCANNER, not a regex (no parser either — ADR-0008), because only a
 // scanner can decide what a `/` MEANS. Its states:
@@ -801,20 +825,22 @@ const REGEX_PRECEDERS = "=(,:[!&|?;{}+-*%~^<>";
 //   - string      — `"` / `'` / `` ` `` copy VERBATIM to their closing quote,
 //                   backslash-escape aware. A template is copied whole without
 //                   parsing `${…}`, so an interpolated read stays VISIBLE.
-//   - regex       — a `/` in a REGEX_PRECEDERS position copies verbatim to its
-//                   closing `/`, with `[…]` classes swallowing slashes; a `/`
+//   - regex       — a `/` in a REGEX_PRECEDERS position, or after one of the
+//                   REGEX_PRECEDING_KEYWORDS (`return /[//]/`), copies verbatim to
+//                   its closing `/`, with `[…]` classes swallowing slashes; a `/`
 //                   anywhere else is division and copies as one character.
 // This is what spares a `//` inside a string (a URL, a path fragment) AND inside a
 // regex character class (`/[//]/`) from being read as a comment — either would
 // erase the rest of its line and with it a real env read after it.
 //
-// CEILING: the prev-token heuristic is textual, so a regex literal in a position
-// it reads as DIVISION — after an identifier, `)` or a keyword, e.g.
-// `return /[//]/` — still falls through to the comment arm and drops that line's
-// tail (the pre-existing false-negative direction, now confined to raw
-// consecutive slashes inside a regex written after such a token). A string
-// literal that spells out `process.env` in prose remains the accepted
-// false-positive ceiling.
+// CEILING: with the operator and keyword positions both covered, the residue is a
+// regex literal carrying RAW consecutive slashes written directly after `)`, `]`
+// or a non-keyword identifier — `if (x) /[//]/.test(s)`, where the very same text
+// is a division in `(a + b) /[c]/ d`. That position is genuinely ambiguous without
+// grammar context (a real lexer resolves it from the parser state, not from the
+// previous token), so it stays out of reach here; the failure there is the
+// pre-existing one — the line's tail is dropped. A string literal that spells out
+// `process.env` in prose remains the accepted false-positive ceiling.
 function withoutComments(text: string): string {
   let kept = "";
   let index = 0;
@@ -918,15 +944,38 @@ function regexEnd(text: string, open: number): number {
 }
 
 // Whether a `/` following `kept` opens a regex literal: the last significant
-// character of the output so far is an operator/opener/separator, or there is
-// none at all (start of file). Reading the KEPT text rather than the source is
-// deliberate — a comment already dropped must not count as a token.
+// character of the output so far is an operator/opener/separator, there is none
+// at all (start of file), or the word ending there is one of the keywords that
+// must be followed by an expression. Reading the KEPT text rather than the source
+// is deliberate — a comment already dropped must not count as a token.
 function startsRegex(kept: string): boolean {
   let index = kept.length - 1;
   while (index >= 0 && WHITESPACE.test(kept.charAt(index))) {
     index -= 1;
   }
-  return index < 0 || REGEX_PRECEDERS.includes(kept.charAt(index));
+  if (index < 0) {
+    return true;
+  }
+  const char = kept.charAt(index);
+  if (REGEX_PRECEDERS.includes(char)) {
+    return true;
+  }
+  return IDENTIFIER_CHAR.test(char) && endsWithRegexKeyword(kept, index);
+}
+
+// Whether the identifier word ENDING at `end` is one of REGEX_PRECEDING_KEYWORDS.
+// The word is taken back to its real boundary (the run of identifier characters),
+// so `myreturn` reads as `myreturn` and stays division; a word reached through `.`
+// is a PROPERTY named like a keyword (`iterator.return / 2`), which divides too.
+function endsWithRegexKeyword(kept: string, end: number): boolean {
+  let start = end;
+  while (start > 0 && IDENTIFIER_CHAR.test(kept.charAt(start - 1))) {
+    start -= 1;
+  }
+  if (kept.charAt(start - 1) === ".") {
+    return false;
+  }
+  return REGEX_PRECEDING_KEYWORDS.has(kept.slice(start, end + 1));
 }
 
 // Every rule id the text dobby-allows WITH a reason, wherever the annotation
