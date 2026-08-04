@@ -7,5 +7,5 @@ language js(typescript, jsx)
 // (startSync defaults to false, so constructing it during SSR is already inert).
 `createCollection($...)` as $call where {
   not $call <: within `export const $name = $initializer` ,
-  register_diagnostic(span=$call, message="Export the collection eagerly (export const xCollection = createCollection(…)) — startSync defaults to false, so constructing it during SSR is inert.", severity="error")
+  register_diagnostic(span=$call, message="Export the collection eagerly (export const xCollection = createCollection(…)) — startSync defaults to false, so constructing it during SSR is inert. The one sanctioned exception is the memoized per-input collection factory (an input-scoped read needs a collection per input value — see /dobby:data-fetching); suppress that case with 'biome-ignore lint/plugin/c10-collection-not-eager: <why>'.", severity="error")
 }

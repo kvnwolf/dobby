@@ -45,9 +45,11 @@ import { cleanupDirs, makeScratchRepo } from "./test-helpers.ts";
 // shipped preset paths disagree about indent style, and un-indented sources are
 // format-clean under both, so the formatter never contributes a finding.
 const APP_SOURCES: Record<string, string> = {
-  // A1 — the three blessed out-of-Vite exceptions the spec allowlists.
+  // A1 — the blessed out-of-Vite exceptions the spec allowlists.
   "drizzle.config.ts":
     'export default { dialect: "postgresql", url: process.env.DATABASE_URL };\n',
+  "nitro.config.ts":
+    "export default { supabaseUrl: process.env.VITE_PUBLIC_SUPABASE_URL };\n",
   "src/emails/welcome.tsx": "export const emailBase = process.env.APP_URL;\n",
 
   // A1 — ordinary app code: `env` is the single source, so a raw read is banned.
@@ -176,9 +178,10 @@ describe("dobby check — tier (a) rules in a react/tanstack project", () => {
     expect(exitCode).toBe(1);
   });
 
-  it("exempts the three out-of-Vite files the spec allowlists from the process.env ban", () => {
+  it("exempts the out-of-Vite files the spec allowlists from the process.env ban", () => {
     expect(findingsFor(stdout, "src/router.tsx")).toEqual([]);
     expect(findingsFor(stdout, "drizzle.config.ts")).toEqual([]);
+    expect(findingsFor(stdout, "nitro.config.ts")).toEqual([]);
     expect(findingsFor(stdout, "src/emails/welcome.tsx")).toEqual([]);
   });
 

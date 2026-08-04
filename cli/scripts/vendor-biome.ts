@@ -35,8 +35,10 @@ const SCHEMA_URL = "https://biomejs.dev/schemas/2.5.4/schema.json";
 // + skills lockfile) and CSS (biome's CSS parser aborts on Tailwind 4 @apply/@theme
 // and the house stack is Tailwind-only, so CSS is out of biome's scope entirely);
 // (4) the house-convention generated/vendored consumer dirs biome should never lint
-// (Convex functions + generated dir, shadcn-vendored ui components, generated DB
-// types). Their group comments are injected via `injectBefore` at the markers below.
+// (Convex functions + generated dir, shadcn-vendored code at BOTH its homes —
+// `src/components/ui` pre-migration and `src/shadcn` post-B4-dissolution — and the
+// generated DB types wherever their module home is). Their group comments are
+// injected via `injectBefore` at the markers below.
 const DOBBY_IGNORES: readonly string[] = [
   "!!**/.nitro",
   "!!**/.vinxi",
@@ -51,7 +53,8 @@ const DOBBY_IGNORES: readonly string[] = [
   "!**/*.css",
   "!convex/**",
   "!src/components/ui/**",
-  "!src/lib/database.types.ts",
+  "!src/shadcn/**",
+  "!src/**/database.types.ts",
 ];
 
 // The house-style comment (kept verbatim from the previous hand-written core):
@@ -265,8 +268,9 @@ const GRIT_PLUGINS: readonly GritPlugin[] = [
   ]),
   // C7 — the db instance built without the aggregated schema namespaces.
   gritPlugin("c07-db-instance-without-schema.grit", ["**/db.server.ts"]),
-  // C9/C10/C13/C14 — the collection + <LiveQuery> shape rules (no path scope).
-  gritPlugin("c09-collection-persistence-handlers.grit"),
+  // C10/C13/C14 — the collection + <LiveQuery> shape rules (no path scope).
+  // (C9 — "collections are read-only" — was RETIRED: the shipped write-model is
+  // persistence handlers that call the module's server fns; see grit/CONTEXT.md.)
   gritPlugin("c10-collection-not-eager.grit"),
   gritPlugin("c13-live-query-prop-set.grit"),
   gritPlugin("c14-retry-without-clear-error.grit"),
@@ -447,7 +451,7 @@ function routesRestrictedImports(): Record<string, unknown> {
 }
 
 // A1 — module-conventions: `env` is the single source. core ships noProcessEnv
-// OFF; the stack path turns it on, with the env module ITSELF plus the three
+// OFF; the stack path turns it on, with the env module ITSELF plus the
 // out-of-Vite files allowlisted.
 const PROCESS_ENV_REASON: readonly string[] = [
   "// House convention (env is the single source): app code reads validated env from",
@@ -461,8 +465,9 @@ const PROCESS_ENV_ALLOWLIST_REASON: readonly string[] = [
   "// `env` — without this entry the rule is unsatisfiable for every house app, since",
   "// the single blessed source of env would itself fail the gate. Both house locations",
   "// are listed (`@/shared/env` per module-conventions, `src/lib/env.ts` per",
-  "// onboard/migrate-config). Then the three blessed out-of-Vite files: the router",
-  "// (pre-Vite bootstrap), the drizzle-kit config (drizzle-kit's own process), and the",
+  "// onboard/migrate-config). Then the blessed out-of-Vite files: the router",
+  "// (pre-Vite bootstrap), the drizzle-kit config (drizzle-kit's own process), the",
+  "// nitro config (server-runtime config, loads before the app graph), and the",
   "// react-email templates (rendered by the email preview/CLI). Globs are",
   "// `**/`-prefixed like every other override glob here — see the routes rationale below.",
 ];
@@ -723,6 +728,7 @@ function generateReact(version: string): string {
         "**/src/lib/env.ts",
         "**/src/router.tsx",
         "**/drizzle.config.ts",
+        "**/nitro.config.ts",
         "**/src/emails/**/*.tsx",
       ],
       linter: { rules: { style: { noProcessEnv: "off" } } },

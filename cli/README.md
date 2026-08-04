@@ -107,18 +107,20 @@ The full list, each rule's scope, and the conventions that were deliberately **n
 | `B1` | An `index.ts`/`index.tsx` barrel under `src/` (`src/routes/**` exempt — a route index is not a barrel). |
 | `B2` | A generic, role-less filename: `service` · `db` · `lib` · `api` · `actions` · `handlers` · `hooks` · `utils` · `models` · `tables` · `entities`. (Matched on the whole basename, so `db.server.ts` is fine.) |
 | `B3` | A `*.client.ts(x)` file — it reads like the mirror of `.server` but nothing enforces it; use `*.browser.ts`. |
-| `B4` | A type-based bucket directory: `src/{components,services,hooks,lib,utils}/` or any `-components/`. `src/shared/` is blessed. |
+| `B4` | A type-based bucket directory: `src/{components,services,hooks,lib,utils}/` or any `-components/`. `src/shared/` is blessed. Full-gate only — the edit hook never blocks an edit on its directory's pre-existing debt. |
 | `B5` | A `pgTable(…)` outside its module's `schema.ts`/`schema.gen.ts`, or inside a central `src/schema/` · `src/db/schema/`. |
 | `B6` | A `collection.browser.ts` with no sibling `functions.ts` — half the data-fetching recipe. |
-| `B7` | A **new** file reading `process.env`/`import.meta.env`, beyond the same exception set `noProcessEnv` lifts for. |
+| `B7` | A **new** file reading `process.env`/`import.meta.env`, beyond the same exception set `noProcessEnv` lifts for. Comments are stripped first — prose that names the API is not a read. |
 | `B8` | A server-only symbol (`betterAuth(`, `new Pool(`, `drizzle(`, `new Resend(`, `neonConfig`) in the built client bundle. Runs only when `.output/public` exists; otherwise the step reports a skip note. It reads the output on disk — on the full gate that is the build this run just made, but if the build step was skipped (no vite) or failed, an older build is what gets scanned. |
 | `B9` | A module directory (one holding a role file) with no `CONTEXT.md`. |
 | `B10` | A react-email template outside `src/emails/`. |
 | `C2` | A `createMiddleware(…)` declared in a `*.server.ts` — server fns and their middlewares live in `functions.ts`. |
-| `C3` | A `createServerFn(…)` chain in `functions.ts` with no `.middleware(…)` call at all — a server fn is a public HTTP endpoint and a route guard does not protect it. |
-| `C12` | A collection whose `.pick({…})` keys differ from its server fn's `.select({…})` keys. |
+| `C3` | A `createServerFn(…)` chain in `functions.ts` with no `.middleware(…)` call at all — a server fn is a public HTTP endpoint and a route guard does not protect it. A deliberately public endpoint is blessed per chain (see the escape hatch below). |
+| `C12` | A collection whose `.pick({…})` keys differ from its server fn's `.select({…})` keys. A `db.select(<identifier>)` is resolved to its same-file hoisted `const <identifier> = {…}` projection. |
 
 Findings render as `path:0 B1: …` in the `conventions` group and fail the gate exactly like a lint finding; the edit-time hook reports the ones about the file you just edited (exit 2 on stderr). None is auto-fixable — `dobby check --fix` never rewrites convention code. When a check cannot run (no build output for `B8`, an unreadable projection for `C12`) it reports a **skip note**, never a finding.
+
+**The escape hatch** — a deliberate exception is annotated at the site with `// dobby-allow <RULE-ID>: <non-empty reason>` (an empty reason is not honored): anywhere in the judged file for a per-file rule, in the comment run directly above the `createServerFn` chain for `C3` (per chain — blessing one public endpoint never covers its neighbour), in the directory's `CONTEXT.md` for `B4`. The full gate counts honored allows in a note so they stay visible. (Biome-tier rules use `// biome-ignore` instead — `lint/<group>/<rule>` for native rules, `lint/plugin/<grit-file-stem>` for the GritQL plugins.)
 
 For a **progressive migration**, use a **denylist**: biome unions `files.includes` across `extends`, so the preset's `**` always applies — you subtract paths to opt out (an allowlist can't survive it, since `"!**"` would exclude everything):
 

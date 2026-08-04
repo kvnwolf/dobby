@@ -37,10 +37,19 @@ import { join, relative, resolve, sep } from "node:path";
 //     residual stale-output ceiling). Produces notes.
 //   - per-file (`files` = ABSOLUTE paths, what `check.ts`'s per-file path and the
 //     edit hook resolve) — ONLY the rules that judge the named files themselves.
-//     The whole-tree rules (B9 module docs, B8 bundle leak) are OUT: the model
-//     edited one file and must not be nagged about a neighbour's omission. No
-//     notes either — an edit-adjacent run stays silent unless the edited file is
+//     The whole-tree rules (B9 module docs, B8 bundle leak, B4 bucket dirs) are
+//     OUT: the model edited one file and must not be nagged about a neighbour's
+//     omission (for B4, about the directory's pre-existing debt). No notes
+//     either — an edit-adjacent run stays silent unless the edited file is
 //     itself wrong.
+//
+// THE ESCAPE HATCH (the tier-(b) mirror of biome-ignore): a finding site may
+// carry `// dobby-allow <RULE-ID>: <non-empty reason>` — an empty reason is NOT
+// honored. For the per-file rules the comment lives anywhere in the judged file;
+// for C3 (judged per STATEMENT) it must sit in the comment run directly above
+// the chain, so blessing one public endpoint never covers its neighbour; for B4
+// (judged per DIRECTORY) it lives in the directory's CONTEXT.md. Honored allows
+// are counted in a note on the whole-tree path, so they stay visible.
 
 // One convention finding. `path` is repo-RELATIVE with POSIX separators and names
 // what the rule judges — the offending FILE for a file rule, the offending
@@ -79,22 +88,26 @@ export function scanConventions(
 ): ConventionsReport {
   const findings: ConventionFinding[] = [];
   const notes: string[] = [];
+  const honored: string[] = [];
   const scope =
     files === undefined ? treeScope(root) : subsetScope(root, files);
   const wholeTree = files === undefined;
   const read = fileReader(root);
 
   for (const file of scope.files) {
-    collectFileFindings(file, read, findings);
+    collectFileFindings(file, read, findings, honored);
     checkCollectionPairing(root, file, findings);
   }
-  for (const dir of scope.dirs) {
-    const bucket = bucketDirectoryRule(dir);
-    if (bucket !== null) {
-      findings.push(bucket);
-    }
-  }
   if (wholeTree) {
+    // B4 judges the DIRECTORY, not the edited file — like B9, it never runs on
+    // the per-file path, so an edit inside a legacy bucket is not hook-blocked
+    // on its neighbourhood's pre-existing debt. The full gate still reports it.
+    for (const dir of scope.dirs) {
+      const bucket = bucketDirectoryRule(dir, read, honored);
+      if (bucket !== null) {
+        findings.push(bucket);
+      }
+    }
     checkModuleDocs(scope.files, findings);
     checkBundleLeak(root, findings, notes);
   }
@@ -103,8 +116,14 @@ export function scanConventions(
     scope.modules,
     read,
     findings,
+    honored,
     wholeTree ? notes : null
   );
+  if (wholeTree && honored.length > 0) {
+    notes.push(
+      `conventions: ${honored.length} dobby-allow suppression(s) honored — ${honored.join(", ")}`
+    );
+  }
 
   return { findings, notes };
 }
@@ -158,9 +177,9 @@ function treeScope(root: string): Scope {
   return { dirs, files, modules: modulesOf(files) };
 }
 
-// Per-file scope: the named files (dropped when they point outside the workroot)
-// plus their ancestor directories under `src/`, so a bucket directory is still
-// reported for a file edited inside one.
+// Per-file scope: the named files (dropped when they point outside the
+// workroot). No directories: the only directory rule that could apply, B4, is
+// whole-tree only (see scanConventions).
 function subsetScope(root: string, files: string[]): Scope {
   const judged: string[] = [];
   for (const file of files) {
@@ -169,15 +188,7 @@ function subsetScope(root: string, files: string[]): Scope {
       judged.push(rel);
     }
   }
-  const dirs = new Set<string>();
-  for (const file of judged) {
-    let dir = dirnameOf(file);
-    while (isUnderSrc(dir) && dir !== "src") {
-      dirs.add(dir);
-      dir = dirnameOf(dir);
-    }
-  }
-  return { dirs: [...dirs], files: judged, modules: modulesOf(judged) };
+  return { dirs: [], files: judged, modules: modulesOf(judged) };
 }
 
 // The module directories worth a projection comparison: those holding either half
@@ -242,6 +253,22 @@ const GENERIC_FILE =
 const CLIENT_SUFFIX = /\.client\.tsx?$/;
 const SERVER_FILE = /\.server\.tsx?$/;
 const ENV_ACCESS = /process\.env|import\.meta\.env/;
+// B7 judges CODE, so comments are stripped before ENV_ACCESS runs — prose that
+// merely NAMES the API (documenting legacy behavior) must not red the gate. The
+// strip is string-blind on purpose (no parser, ADR-0008): the one real hazard —
+// `//` INSIDE a string, i.e. a URL — is spared by the leading `[^:]`, and a
+// string literal that spells out `process.env` in prose is rare enough to accept
+// as this rule's ceiling.
+const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
+const LINE_COMMENT = /(^|[^:])\/\/.*$/gm;
+// The tier-(b) escape hatch, one line: `// dobby-allow <RULE-ID>: <reason>`.
+// The trailing `\S` is the non-empty-reason requirement — a bare annotation
+// with no justification is NOT honored.
+const DOBBY_ALLOW_LINE = /\/\/\s*dobby-allow\s+([A-Z]\d{1,2})\s*:\s*\S/;
+// C3 is judged per STATEMENT, so its allow must sit directly above the chain
+// (see serverFnGuardRule) — a file-wide C3 allow would silently bless the
+// neighbour chain the author never meant to cover.
+const STATEMENT_ALLOW_RULES = new Set(["C3"]);
 const EMAIL_TEMPLATE = /^src\/emails\/.+\.tsx$/;
 const REACT_EMAIL_IMPORT =
   /from\s+["'](?:@react-email\/[^"']+|react-email)["']/;
@@ -264,12 +291,16 @@ const CENTRAL_SCHEMA_DIRS = ["src/schema/", "src/db/schema/"];
 // `noProcessEnv` allowlist VERBATIM (`biome/react.jsonc`) — the env module itself
 // (both house locations: `@/shared/env` per module-conventions, `src/lib/env.ts`
 // per onboard/migrate-config) plus the files that load OUTSIDE Vite: the router
-// (pre-Vite bootstrap), the drizzle-kit config (its own process) and the email
+// (pre-Vite bootstrap), the drizzle-kit and nitro configs (their own processes,
+// loaded before the app graph — no @/shared/env to read) and the email
 // templates (`EMAIL_TEMPLATE`, rendered by the email CLI). Keeping the two tiers'
 // sets identical is what makes B7 a set-EQUALITY check that adds no false positive
-// biome would not already report.
+// biome would not already report. The set stays CLOSED (known filenames, not a
+// `*.config.ts` glob — a config that Vite itself loads has no business here);
+// whatever framework config it misses next reaches for `// dobby-allow B7: …`.
 const ENV_EXCEPTIONS = new Set([
   "drizzle.config.ts",
+  "nitro.config.ts",
   "src/lib/env.ts",
   "src/router.tsx",
   "src/shared/env.ts",
@@ -288,20 +319,41 @@ const FILE_RULES: FileRule[] = [
 
 // Run every file rule over one judged path. Non-code files (CONTEXT.md, assets)
 // are skipped wholesale — no rule here judges them, and not reading them keeps a
-// binary asset out of the scanner.
+// binary asset out of the scanner. A finding whose rule the file dobby-allows
+// (with a reason) is dropped into `honored` instead — except the per-statement
+// rules, which honor their own site-scoped allow (see STATEMENT_ALLOW_RULES).
 function collectFileFindings(
   file: string,
   read: (path: string) => string,
-  findings: ConventionFinding[]
+  findings: ConventionFinding[],
+  honored: string[]
 ): void {
   if (!CODE_FILE.test(file)) {
     return;
   }
   const text = read(file);
+  const allowed = allowedRules(text);
   for (const rule of FILE_RULES) {
     const found = rule(file, text);
-    if (found !== null) {
-      findings.push(found);
+    if (found === null) {
+      continue;
+    }
+    if (allowed.has(found.rule) && !STATEMENT_ALLOW_RULES.has(found.rule)) {
+      honored.push(`${found.rule} ${file}`);
+      continue;
+    }
+    findings.push(found);
+  }
+  // A per-statement allow (C3) is honored INSIDE its rule, so it never flows
+  // through the filter above — surface it in the count when the file ended
+  // clean. (A leftover annotation with nothing left to suppress lands here too;
+  // that visibility is what gets it cleaned up.)
+  for (const rule of STATEMENT_ALLOW_RULES) {
+    const clean = !findings.some(
+      (found) => found.rule === rule && found.path === file
+    );
+    if (allowed.has(rule) && clean) {
+      honored.push(`${rule} ${file}`);
     }
   }
 }
@@ -376,9 +428,11 @@ function tableLocationRule(
 
 // B7 — the env exception set is CLOSED (see ENV_EXCEPTIONS). Judges `src/**` and
 // the root config layer, so a new out-of-Vite file is caught the day it appears.
+// Comments are stripped first: a comment that NAMES process.env is prose, not a
+// read.
 function envAccessRule(file: string, text: string): ConventionFinding | null {
   const inScope = isUnderSrc(file) || isRootFile(file);
-  if (!(inScope && ENV_ACCESS.test(text))) {
+  if (!(inScope && ENV_ACCESS.test(withoutComments(text)))) {
     return null;
   }
   if (ENV_EXCEPTIONS.has(file) || EMAIL_TEMPLATE.test(file)) {
@@ -387,7 +441,7 @@ function envAccessRule(file: string, text: string): ConventionFinding | null {
   return finding(
     "B7",
     file,
-    "reads process.env / import.meta.env — app code reads the validated env from @/shared/env; only the env module and the files that load outside Vite (src/router.tsx, drizzle.config.ts, src/emails/**/*.tsx) may read the raw environment"
+    "reads process.env / import.meta.env — app code reads the validated env from @/shared/env; only the env module and the files that load outside Vite (src/router.tsx, drizzle.config.ts, nitro.config.ts, src/emails/**/*.tsx) may read the raw environment"
   );
 }
 
@@ -448,6 +502,10 @@ function middlewareLocationRule(
 // middleware passes, and so does a public endpoint that carries any middleware) in
 // exchange for no false positive.
 //
+// A DELIBERATELY public endpoint is blessed per chain: `// dobby-allow C3: <why>`
+// in the comment run directly above the declaration (the doc block over it
+// counts). Per chain, not per file — see STATEMENT_ALLOW_RULES.
+//
 // SCOPED to `src/**` like every other rule here: in per-file mode this judges
 // whatever absolute path it is handed, and a `scripts/functions.ts` is not a
 // module's server-fn file.
@@ -460,14 +518,19 @@ function serverFnGuardRule(
   if (!isModuleFunctionsFile) {
     return null;
   }
-  for (const chain of statementChains(text, "createServerFn(")) {
-    if (!MIDDLEWARE_CALL.test(chain)) {
+  const marker = "createServerFn(";
+  let index = text.indexOf(marker);
+  while (index !== -1) {
+    const end = statementEnd(text, index);
+    const chain = text.slice(index, end);
+    if (!(MIDDLEWARE_CALL.test(chain) || allowsAbove(text, index).has("C3"))) {
       return finding(
         "C3",
         file,
-        "createServerFn chain with no .middleware(…) — a server fn is a publicly invokable HTTP endpoint and route guards do NOT protect it; add the session middleware (requireAuth) or document why it is public"
+        "createServerFn chain with no .middleware(…) — a server fn is a publicly invokable HTTP endpoint and route guards do NOT protect it; add the session middleware (requireAuth) or mark it '// dobby-allow C3: <why it is public>'"
       );
     }
+    index = text.indexOf(marker, end);
   }
   return null;
 }
@@ -495,8 +558,16 @@ const MODULE_DOC = "CONTEXT.md";
 const SRC_DEPTH = 2;
 
 // B4 — a type-based bucket directory. `src/shared/` is the blessed cross-cutting
-// module, so nothing inside it is a bucket.
-function bucketDirectoryRule(dir: string): ConventionFinding | null {
+// module, so nothing inside it is a bucket. WHOLE-TREE ONLY (B9's own reasoning
+// applies: the bucket is a fact about the DIRECTORY, so the edit hook must not
+// block an unrelated edit inside a legacy bucket on move-before-edit ordering).
+// A directory judged a bucket may be blessed via `dobby-allow B4: <reason>` in
+// its CONTEXT.md — the one place a directory-level annotation can live.
+function bucketDirectoryRule(
+  dir: string,
+  read: (path: string) => string,
+  honored: string[]
+): ConventionFinding | null {
   if (!isUnderSrc(dir) || isUnder(dir, SHARED_DIR)) {
     return null;
   }
@@ -506,6 +577,10 @@ function bucketDirectoryRule(dir: string): ConventionFinding | null {
     name === SCATTER_DIR ||
     (segments.length === SRC_DEPTH && BUCKET_DIRS.has(name));
   if (!bucket) {
+    return null;
+  }
+  if (allowedRules(read(`${dir}/${MODULE_DOC}`)).has("B4")) {
+    honored.push(`B4 ${dir}`);
     return null;
   }
   return finding(
@@ -643,15 +718,19 @@ function checkBundleLeak(
 // key set in `functions.ts`. Compared as SETS (key order is free).
 //
 // CEILINGS: both sides are read from the source TEXT (balanced-brace scan, no
-// AST), so a projection built from a hoisted constant, a spread or a computed key
-// is UNPARSEABLE — which is a NOTE and never a finding. A `functions.ts` holding
-// several server fns is satisfied when ANY of its `.select({…})` sets matches, so
-// a multi-fn module is never flagged on the wrong pair.
+// AST). On the SELECT side a `db.select(<identifier>)` is resolved to a
+// same-file `const <identifier> = {…}` object literal (the hoisted-projection
+// shape the house code actually writes); a projection built from a spread, a
+// computed key or an import stays UNPARSEABLE — a NOTE and never a finding. A
+// `functions.ts` holding several server fns is satisfied when ANY of its
+// readable select sets matches, so a multi-fn module is never flagged on an
+// unrelated fn's projection.
 function checkProjections(
   root: string,
   modules: string[],
   read: (path: string) => string,
   findings: ConventionFinding[],
+  honored: string[],
   notes: string[] | null
 ): void {
   for (const dir of modules) {
@@ -674,9 +753,7 @@ function checkProjections(
       );
       continue;
     }
-    const selected = projectionKeys(read(functions), ".select(").filter(
-      isKeySet
-    );
+    const selected = selectKeySets(read(functions)).filter(isKeySet);
     if (selected.length === 0) {
       notes?.push(
         `conventions: projection check skipped (C12) for ${dir} — no readable .select({…}) in ${FUNCTIONS_FILE}`
@@ -684,6 +761,10 @@ function checkProjections(
       continue;
     }
     if (selected.some((keys) => sameKeys(keys, picked))) {
+      continue;
+    }
+    if (allowedRules(read(collection)).has("C12")) {
+      honored.push(`C12 ${collection}`);
       continue;
     }
     findings.push(
@@ -709,19 +790,87 @@ const OPENERS = "([{";
 const CLOSERS = ")]}";
 const QUOTES = "\"'`";
 
-// Every `marker`-rooted STATEMENT in `text`: from the marker to the `;` that ends
-// the expression at depth 0 (or to EOF). This is what makes C3 read a chain
-// instead of a file — a guarded chain sitting directly above an unguarded one must
-// not vouch for it.
-function statementChains(text: string, marker: string): string[] {
-  const chains: string[] = [];
+// `text` with `/* */` blocks and `//` line comments removed (see the
+// BLOCK_COMMENT / LINE_COMMENT ceiling note). B7's pre-pass: prose is not code.
+function withoutComments(text: string): string {
+  return text.replace(BLOCK_COMMENT, "").replace(LINE_COMMENT, "$1");
+}
+
+// Every rule id the text dobby-allows WITH a reason, wherever the annotation
+// sits in it. File-granular on purpose: each per-file rule emits at most one
+// finding per file, so "anywhere in the file" and "at the site" suppress the
+// same thing — the per-statement rules opt out via STATEMENT_ALLOW_RULES.
+function allowedRules(text: string): Set<string> {
+  const rules = new Set<string>();
+  for (const line of text.split("\n")) {
+    const match = DOBBY_ALLOW_LINE.exec(line);
+    if (match?.[1] !== undefined) {
+      rules.add(match[1]);
+    }
+  }
+  return rules;
+}
+
+// The rule ids dobby-allowed in the contiguous `//` comment run directly above
+// the statement starting at `from` — the site-scoped allow the per-statement
+// rules (C3) honor. The run may be the declaration's own doc block; a blank
+// line or any code line ends it.
+function allowsAbove(text: string, from: number): Set<string> {
+  const lineStart = text.lastIndexOf("\n", from - 1) + 1;
+  const lines = text.slice(0, lineStart).split("\n");
+  const rules = new Set<string>();
+  for (let index = lines.length - 2; index >= 0; index -= 1) {
+    const line = (lines[index] ?? "").trim();
+    if (!line.startsWith("//")) {
+      break;
+    }
+    const match = DOBBY_ALLOW_LINE.exec(line);
+    if (match?.[1] !== undefined) {
+      rules.add(match[1]);
+    }
+  }
+  return rules;
+}
+
+// The identifier argument of a call: `(facilityColumns)` — used to resolve
+// `db.select(<identifier>)` to its same-file `const` initializer.
+const IDENTIFIER_ARG = /^\s*([A-Za-z_$][\w$]*)\s*\)/;
+
+// The key sets of every `.select(…)` in a functions.ts, in source order: a
+// readable object literal is read directly; an IDENTIFIER argument is resolved
+// to a same-file `const <identifier> = {…}` literal (the hoisted-projection
+// shape). Anything else is null — the caller's skip, never a finding.
+function selectKeySets(text: string): (Set<string> | null)[] {
+  const marker = ".select(";
+  const results: (Set<string> | null)[] = [];
   let index = text.indexOf(marker);
   while (index !== -1) {
-    const end = statementEnd(text, index);
-    chains.push(text.slice(index, end));
-    index = text.indexOf(marker, end);
+    const argAt = index + marker.length;
+    const body = objectAfter(text, argAt);
+    results.push(
+      body === null ? resolvedConstKeys(text, argAt) : objectKeys(body)
+    );
+    index = text.indexOf(marker, argAt);
   }
-  return chains;
+  return results;
+}
+
+// Resolve the identifier at `argAt` to the keys of its same-file
+// `const <name> = {…}` object-literal initializer (null when the argument is
+// not a bare identifier, the const is elsewhere, or its initializer is not a
+// readable literal).
+function resolvedConstKeys(text: string, argAt: number): Set<string> | null {
+  const name = IDENTIFIER_ARG.exec(text.slice(argAt))?.[1];
+  if (name === undefined) {
+    return null;
+  }
+  const declaration = `const ${name} =`;
+  const at = text.indexOf(declaration);
+  if (at === -1) {
+    return null;
+  }
+  const body = objectAfter(text, at + declaration.length);
+  return body === null ? null : objectKeys(body);
 }
 
 // The index just past the `;` that closes the expression starting at `from`
