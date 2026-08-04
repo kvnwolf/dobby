@@ -974,6 +974,27 @@ describe("scanConventions — B7 ignores prose in comments", () => {
     ]);
   });
 
+  it("does not let a non-URL string's // hide the read after it", () => {
+    // The comment strip must be STRING-aware, not just URL-aware: a `//` inside
+    // ANY string literal — no `:` before it, so the old `[^:]` guard did not
+    // spare it — used to erase the rest of the line and with it the real env
+    // read. All three literal forms carry the same hazard.
+    const root = makeTree({
+      "src/tasks/double.ts":
+        'const marker = "a//b" + process.env.API_KEY;\nexport const value = marker;\n',
+      "src/tasks/single.ts":
+        "const marker = 'a//b' + process.env.API_KEY;\nexport const value = marker;\n",
+      "src/tasks/template.ts":
+        "const marker = `a//b` + process.env.API_KEY;\nexport const value = marker;\n",
+    });
+
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/double.ts",
+      "src/tasks/single.ts",
+      "src/tasks/template.ts",
+    ]);
+  });
+
   it("exempts nitro.config.ts — it configures the server runtime outside Vite", () => {
     const root = makeTree({
       "nitro.config.ts":

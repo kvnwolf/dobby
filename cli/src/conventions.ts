@@ -254,13 +254,21 @@ const CLIENT_SUFFIX = /\.client\.tsx?$/;
 const SERVER_FILE = /\.server\.tsx?$/;
 const ENV_ACCESS = /process\.env|import\.meta\.env/;
 // B7 judges CODE, so comments are stripped before ENV_ACCESS runs — prose that
-// merely NAMES the API (documenting legacy behavior) must not red the gate. The
-// strip is string-blind on purpose (no parser, ADR-0008): the one real hazard —
-// `//` INSIDE a string, i.e. a URL — is spared by the leading `[^:]`, and a
-// string literal that spells out `process.env` in prose is rare enough to accept
-// as this rule's ceiling.
-const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
-const LINE_COMMENT = /(^|[^:])\/\/.*$/gm;
+// merely NAMES the API (documenting legacy behavior) must not red the gate. ONE
+// regex does it (no parser, ADR-0008), string-AWARE by ordering: the first three
+// arms match a double-quoted, single-quoted and template literal (escape-aware),
+// the last two a `//` line and a `/* */` block comment. A `//` inside ANY string —
+// a URL, a path fragment — is consumed by the string arm first and kept verbatim,
+// so the code after it on that line survives the strip (a string-blind strip
+// erased it, hiding the real read that followed).
+//
+// CEILING: a template literal whose `${…}` nests a backtick, and a regex literal
+// carrying an unescaped `//` or quote, can still mis-pair an arm — either way the
+// worst case is text KEPT (at most a false positive on prose naming process.env),
+// never a real read erased. A string literal that spells out `process.env` in
+// prose is the same accepted ceiling as before.
+const STRING_OR_COMMENT =
+  /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
 // The tier-(b) escape hatch, one line: `// dobby-allow <RULE-ID>: <reason>`.
 // The trailing `\S` is the non-empty-reason requirement — a bare annotation
 // with no justification is NOT honored.
@@ -790,10 +798,14 @@ const OPENERS = "([{";
 const CLOSERS = ")]}";
 const QUOTES = "\"'`";
 
-// `text` with `/* */` blocks and `//` line comments removed (see the
-// BLOCK_COMMENT / LINE_COMMENT ceiling note). B7's pre-pass: prose is not code.
+// `text` with `/* */` blocks and `//` line comments removed, STRING-AWARE: a
+// match that starts with a quote character is a string literal and rides through
+// verbatim, so only the comment arms are erased (see STRING_OR_COMMENT for the
+// ordering argument and the ceiling). B7's pre-pass: prose is not code.
 function withoutComments(text: string): string {
-  return text.replace(BLOCK_COMMENT, "").replace(LINE_COMMENT, "$1");
+  return text.replace(STRING_OR_COMMENT, (match) =>
+    QUOTES.includes(match.charAt(0)) ? match : ""
+  );
 }
 
 // Every rule id the text dobby-allows WITH a reason, wherever the annotation
