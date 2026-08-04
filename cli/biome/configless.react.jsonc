@@ -67,9 +67,6 @@
       ]
     },
     {
-      "path": "../grit/c09-collection-persistence-handlers.grit"
-    },
-    {
       "path": "../grit/c10-collection-not-eager.grit"
     },
     {

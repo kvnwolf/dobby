@@ -486,12 +486,12 @@ describe("scanConventions — B6 a collection needs its server functions", () =>
 });
 
 describe("scanConventions — B7 the env exception set is closed", () => {
-  it("reports any NEW file reading process.env / import.meta.env beyond the three blessed exceptions", () => {
-    // module-conventions: app code reads the validated `env`; exactly three
-    // files load OUTSIDE Vite and may read the raw environment — src/router.tsx
-    // (import.meta.env.DEV), drizzle.config.ts, and the email templates. The
-    // check is set EQUALITY against that list, so a fourth exception is caught
-    // the day it appears.
+  it("reports any NEW file reading process.env / import.meta.env beyond the blessed exceptions", () => {
+    // module-conventions: app code reads the validated `env`; only the files
+    // that load OUTSIDE Vite may read the raw environment — src/router.tsx
+    // (import.meta.env.DEV), drizzle.config.ts, nitro.config.ts, and the email
+    // templates. The check is set EQUALITY against that list, so a new
+    // exception is caught the day it appears.
     const root = makeTree({
       "drizzle.config.ts":
         "export default { url: process.env.DATABASE_URL };\n",
@@ -799,5 +799,310 @@ describe("scanConventions — per-file mode", () => {
     ]);
 
     expect(report.findings).toEqual([]);
+  });
+
+  it("does not report B4 for a file edited inside a pre-existing bucket (whole-tree only)", () => {
+    // B9's own reasoning, applied to B4: the bucket is a fact about the
+    // DIRECTORY, so the edit hook must not block an unrelated edit inside a
+    // legacy bucket on move-before-edit ordering. The full gate still reports.
+    const root = makeTree({
+      "src/lib/format.ts": "export const fmt = (s: string) => s;\n",
+    });
+
+    const perFile = scanConventions(root, [join(root, "src/lib/format.ts")]);
+
+    expect(rulePaths(perFile, "B4")).toEqual([]);
+    expect(rulePaths(scanConventions(root), "B4")).toEqual(["src/lib"]);
+  });
+});
+
+// ===========================================================================
+// SLICE 8 — field fixes from the first consumer gate run (vonda on 0.7.0):
+// the dobby-allow escape hatch, comment-stripped B7, the nitro.config.ts env
+// exception, and the resolved-const C12 select.
+// ===========================================================================
+
+describe("scanConventions — the dobby-allow escape hatch", () => {
+  it("honors a reasoned allow for a per-file rule and counts it in a note", () => {
+    const root = makeTree({
+      "src/tasks/functions.ts":
+        "// dobby-allow B7: bridges the legacy worker until the env port lands\n" +
+        "export const key = () => process.env.STRIPE_SECRET;\n",
+    });
+
+    const report = scanConventions(root);
+
+    expect(rulePaths(report, "B7")).toEqual([]);
+    expect(
+      report.notes.some(
+        (note) => note.includes("dobby-allow") && note.includes("B7")
+      )
+    ).toBe(true);
+  });
+
+  it("does not honor an annotation with an empty reason", () => {
+    const root = makeTree({
+      "src/tasks/functions.ts":
+        "// dobby-allow B7:\n" +
+        "export const key = () => process.env.STRIPE_SECRET;\n",
+    });
+
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/functions.ts",
+    ]);
+  });
+
+  it("suppresses on the per-file path too, with no note (the edit hook honors the allow)", () => {
+    const root = makeTree({
+      "src/tasks/functions.ts":
+        "// dobby-allow B7: bridges the legacy worker until the env port lands\n" +
+        "export const key = () => process.env.STRIPE_SECRET;\n",
+    });
+
+    const report = scanConventions(root, [
+      join(root, "src/tasks/functions.ts"),
+    ]);
+
+    expect(report.findings).toEqual([]);
+    expect(report.notes).toEqual([]);
+  });
+
+  it("blesses a bucket directory via dobby-allow B4 in its CONTEXT.md, sparing only that directory", () => {
+    const root = makeTree({
+      "src/components/button.tsx": "export const Button = () => null;\n",
+      "src/lib/CONTEXT.md":
+        "# lib\n\n// dobby-allow B4: dissolving in the shadcn wave — tracked\n",
+      "src/lib/format.ts": "export const fmt = (s: string) => s;\n",
+    });
+
+    expect(rulePaths(scanConventions(root), "B4")).toEqual(["src/components"]);
+  });
+});
+
+describe("scanConventions — the C3 allow is per chain, not per file", () => {
+  const PUBLIC_CHAIN =
+    'export const listFacilities = createServerFn({ method: "GET" }).handler(\n' +
+    "  async () => []\n" +
+    ");\n";
+
+  it("passes an annotated public endpoint (the doc block above it counts) and counts the allow", () => {
+    const root = makeTree({
+      "src/facilities/functions.ts":
+        "// The catalog read serves the anonymous intake dropdown — no session exists.\n" +
+        "// dobby-allow C3: public by design — anonymous co-signer intake dropdown\n" +
+        PUBLIC_CHAIN,
+    });
+
+    const report = scanConventions(root);
+
+    expect(rulePaths(report, "C3")).toEqual([]);
+    expect(
+      report.notes.some(
+        (note) => note.includes("dobby-allow") && note.includes("C3")
+      )
+    ).toBe(true);
+  });
+
+  it("still fails the unannotated neighbour chain in the same file", () => {
+    const root = makeTree({
+      "src/facilities/functions.ts":
+        "// dobby-allow C3: public by design — anonymous co-signer intake dropdown\n" +
+        PUBLIC_CHAIN +
+        "\n" +
+        'export const deleteFacility = createServerFn({ method: "POST" }).handler(\n' +
+        "  async () => undefined\n" +
+        ");\n",
+    });
+
+    expect(rulePaths(scanConventions(root), "C3")).toEqual([
+      "src/facilities/functions.ts",
+    ]);
+  });
+
+  it("does not let a detached top-of-file C3 allow bless a later chain", () => {
+    // A blank line ends the comment run — the allow must sit ON the chain.
+    const root = makeTree({
+      "src/marketing/functions.ts":
+        "// dobby-allow C3: a detached annotation covers nothing\n" +
+        "\n" +
+        'export const requestDemo = createServerFn({ method: "POST" }).handler(\n' +
+        "  async () => undefined\n" +
+        ");\n",
+    });
+
+    expect(rulePaths(scanConventions(root), "C3")).toEqual([
+      "src/marketing/functions.ts",
+    ]);
+  });
+});
+
+describe("scanConventions — B7 ignores prose in comments", () => {
+  it("passes a file whose only env mention is a comment", () => {
+    // The vonda class: comments documenting legacy behavior name the API —
+    // prose, not a read.
+    const root = makeTree({
+      "src/tasks/notify.ts":
+        "// Legacy Convex behavior read process.env.SITE_URL here; the port\n" +
+        "/* reads import.meta.env via @/shared/env instead. */\n" +
+        "export const notify = () => undefined;\n",
+    });
+
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([]);
+  });
+
+  it("still fails a real read beside an env-mentioning comment", () => {
+    const root = makeTree({
+      "src/tasks/functions.ts":
+        "/* the old code used import.meta.env */\n" +
+        "export const key = () => process.env.STRIPE_SECRET;\n",
+    });
+
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/functions.ts",
+    ]);
+  });
+
+  it("does not mistake a URL's // for a comment (the read after it still fails)", () => {
+    const root = makeTree({
+      "src/tasks/fetcher.ts":
+        "export const call = () =>\n" +
+        '  fetch("https://api.example.com/v1?key=" + process.env.API_KEY);\n',
+    });
+
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/fetcher.ts",
+    ]);
+  });
+
+  it("does not let a non-URL string's // hide the read after it", () => {
+    // The comment strip must be STRING-aware, not just URL-aware: a `//` inside
+    // ANY string literal — no `:` before it, so the old `[^:]` guard did not
+    // spare it — used to erase the rest of the line and with it the real env
+    // read. All three literal forms carry the same hazard.
+    const root = makeTree({
+      "src/tasks/double.ts":
+        'const marker = "a//b" + process.env.API_KEY;\nexport const value = marker;\n',
+      "src/tasks/single.ts":
+        "const marker = 'a//b' + process.env.API_KEY;\nexport const value = marker;\n",
+      "src/tasks/template.ts":
+        "const marker = `a//b` + process.env.API_KEY;\nexport const value = marker;\n",
+    });
+
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/double.ts",
+      "src/tasks/single.ts",
+      "src/tasks/template.ts",
+    ]);
+  });
+
+  it("does not let a regex character class's // hide the read after it", () => {
+    // Raw consecutive slashes are legal INSIDE a character class, so `/[//]/` is
+    // a regex literal, not a comment. The `/` sits after `=`, the prev-token
+    // position that says "regex", and the read after it must survive the strip.
+    const root = makeTree({
+      "src/tasks/matcher.ts":
+        'export const ok = /[//]/.test("x") && process.env.API_KEY;\n',
+    });
+
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/matcher.ts",
+    ]);
+  });
+
+  it("still strips the comment after a division (the / is not a regex)", () => {
+    // The mirror of the case above: after an identifier a `/` divides, so the
+    // scanner must NOT swallow the line as a regex — the `//` that follows is a
+    // real comment and its prose stays prose.
+    const root = makeTree({
+      "src/tasks/ratio.ts":
+        "export const ratio = (a: number, b: number) => a / b; // uses process.env.RATIO in prod\n",
+      "src/tasks/reader.ts": "export const key = process.env.RATIO;\n",
+    });
+
+    // The unblessed reader beside it proves the rule is live in this fixture.
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/reader.ts",
+    ]);
+  });
+
+  it("reads a regex after a keyword as a regex, not as division", () => {
+    // `return` is followed by an EXPRESSION, so the `/` after it opens a regex —
+    // a character-only prev-token rule sees the `n` of `return` and calls it
+    // division, letting the class's `//` erase the read behind it.
+    const root = makeTree({
+      "src/tasks/pick.ts":
+        "export function pick(s: string) {\n" +
+        "  return /[//]/.test(s) && process.env.SECRET;\n" +
+        "}\n",
+    });
+
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/pick.ts",
+    ]);
+  });
+
+  it("does not treat an identifier merely ENDING in a keyword as one", () => {
+    // The word boundary is real: `myreturn / b` is division, so the `//` after it
+    // is a genuine comment and its prose stays prose. (A regex reading here would
+    // swallow `/ b; /` and leave the comment's tail behind as code.)
+    const root = makeTree({
+      "src/tasks/reader.ts": "export const key = process.env.SCALE;\n",
+      "src/tasks/scale.ts":
+        "export const scale = (myreturn: number, b: number) =>\n" +
+        "  myreturn / b; // process.env.SCALE tuned this in prod\n",
+    });
+
+    // The unblessed reader beside it proves the rule is live in this fixture.
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/reader.ts",
+    ]);
+  });
+
+  it("exempts nitro.config.ts — it configures the server runtime outside Vite", () => {
+    const root = makeTree({
+      "nitro.config.ts":
+        'export default { proxy: process.env.VITE_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321" };\n',
+      "vite.config.ts": "export default { mode: process.env.NODE_ENV };\n",
+    });
+
+    // The unblessed reader beside it proves the rule is live in this fixture.
+    expect(rulePaths(scanConventions(root), "B7")).toEqual(["vite.config.ts"]);
+  });
+});
+
+describe("scanConventions — C12 resolves a hoisted select projection", () => {
+  it("resolves db.select(<identifier>) to its same-file const and ignores an unrelated literal select", () => {
+    // The facilities shape: the projection is a hoisted const, and the ONE
+    // literal `.select({…})` in the file belongs to a different fn entirely —
+    // it must not be invented into a mismatch against the collection's pick.
+    const root = makeTree({
+      "src/facilities/collection.browser.ts":
+        "const rowSchema = createSelectSchema(facility).pick({ city: true, id: true, name: true });\n",
+      "src/facilities/functions.ts":
+        "const facilityColumns = { city: facilities.city, id: facilities.id, name: facilities.name };\n" +
+        "export const listFacilities = () => db.select(facilityColumns).from(facilities);\n" +
+        "export const getFacilityPin = () => db.select({ pin: facilities.pin }).from(facilities);\n",
+    });
+
+    expect(rulePaths(scanConventions(root), "C12")).toEqual([]);
+  });
+
+  it("really checks the hoisted shape — a drifted pick fails instead of skipping", () => {
+    const root = makeTree({
+      "src/courts/collection.browser.ts":
+        "const rowSchema = createSelectSchema(court).pick({ county: true, id: true, name: true });\n",
+      "src/courts/functions.ts":
+        "const courtColumns = { id: courts.id, name: courts.name };\n" +
+        "export const listCourts = () => db.select(courtColumns).from(courts);\n",
+    });
+
+    const report = scanConventions(root);
+
+    expect(rulePaths(report, "C12")).toEqual([
+      "src/courts/collection.browser.ts",
+    ]);
+    expect(report.notes.some((note) => note.includes("src/courts"))).toBe(
+      false
+    );
   });
 });
