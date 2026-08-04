@@ -995,6 +995,36 @@ describe("scanConventions — B7 ignores prose in comments", () => {
     ]);
   });
 
+  it("does not let a regex character class's // hide the read after it", () => {
+    // Raw consecutive slashes are legal INSIDE a character class, so `/[//]/` is
+    // a regex literal, not a comment. The `/` sits after `=`, the prev-token
+    // position that says "regex", and the read after it must survive the strip.
+    const root = makeTree({
+      "src/tasks/matcher.ts":
+        'export const ok = /[//]/.test("x") && process.env.API_KEY;\n',
+    });
+
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/matcher.ts",
+    ]);
+  });
+
+  it("still strips the comment after a division (the / is not a regex)", () => {
+    // The mirror of the case above: after an identifier a `/` divides, so the
+    // scanner must NOT swallow the line as a regex — the `//` that follows is a
+    // real comment and its prose stays prose.
+    const root = makeTree({
+      "src/tasks/ratio.ts":
+        "export const ratio = (a: number, b: number) => a / b; // uses process.env.RATIO in prod\n",
+      "src/tasks/reader.ts": "export const key = process.env.RATIO;\n",
+    });
+
+    // The unblessed reader beside it proves the rule is live in this fixture.
+    expect(rulePaths(scanConventions(root), "B7")).toEqual([
+      "src/tasks/reader.ts",
+    ]);
+  });
+
   it("exempts nitro.config.ts — it configures the server runtime outside Vite", () => {
     const root = makeTree({
       "nitro.config.ts":

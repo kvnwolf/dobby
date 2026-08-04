@@ -254,21 +254,9 @@ const CLIENT_SUFFIX = /\.client\.tsx?$/;
 const SERVER_FILE = /\.server\.tsx?$/;
 const ENV_ACCESS = /process\.env|import\.meta\.env/;
 // B7 judges CODE, so comments are stripped before ENV_ACCESS runs — prose that
-// merely NAMES the API (documenting legacy behavior) must not red the gate. ONE
-// regex does it (no parser, ADR-0008), string-AWARE by ordering: the first three
-// arms match a double-quoted, single-quoted and template literal (escape-aware),
-// the last two a `//` line and a `/* */` block comment. A `//` inside ANY string —
-// a URL, a path fragment — is consumed by the string arm first and kept verbatim,
-// so the code after it on that line survives the strip (a string-blind strip
-// erased it, hiding the real read that followed).
-//
-// CEILING: a template literal whose `${…}` nests a backtick, and a regex literal
-// carrying an unescaped `//` or quote, can still mis-pair an arm — either way the
-// worst case is text KEPT (at most a false positive on prose naming process.env),
-// never a real read erased. A string literal that spells out `process.env` in
-// prose is the same accepted ceiling as before.
-const STRING_OR_COMMENT =
-  /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
+// merely NAMES the API (documenting legacy behavior) must not red the gate. The
+// strip is a single-pass character scanner (`withoutComments`), which is where its
+// states and its one remaining ceiling are documented.
 // The tier-(b) escape hatch, one line: `// dobby-allow <RULE-ID>: <reason>`.
 // The trailing `\S` is the non-empty-reason requirement — a bare annotation
 // with no justification is NOT honored.
@@ -798,14 +786,147 @@ const OPENERS = "([{";
 const CLOSERS = ")]}";
 const QUOTES = "\"'`";
 
-// `text` with `/* */` blocks and `//` line comments removed, STRING-AWARE: a
-// match that starts with a quote character is a string literal and rides through
-// verbatim, so only the comment arms are erased (see STRING_OR_COMMENT for the
-// ordering argument and the ceiling). B7's pre-pass: prose is not code.
+// The significant characters after which a `/` opens a REGEX literal rather than
+// dividing: an operator, an opener or a separator — the standard prev-token
+// heuristic (start-of-file counts too). After anything else (an identifier, `)`,
+// a literal) the `/` is division.
+const REGEX_PRECEDERS = "=(,:[!&|?;{}+-*%~^<>";
+
+// `text` with `/* */` blocks and `//` line comments removed. A single-pass
+// character SCANNER, not a regex (no parser either — ADR-0008), because only a
+// scanner can decide what a `/` MEANS. Its states:
+//   - normal      — copy through; `//` drops to end of line, `/*` drops through
+//                   `*/` (newlines inside a dropped comment are not preserved:
+//                   B7 only regex-tests the result, no line numbers ride on it).
+//   - string      — `"` / `'` / `` ` `` copy VERBATIM to their closing quote,
+//                   backslash-escape aware. A template is copied whole without
+//                   parsing `${…}`, so an interpolated read stays VISIBLE.
+//   - regex       — a `/` in a REGEX_PRECEDERS position copies verbatim to its
+//                   closing `/`, with `[…]` classes swallowing slashes; a `/`
+//                   anywhere else is division and copies as one character.
+// This is what spares a `//` inside a string (a URL, a path fragment) AND inside a
+// regex character class (`/[//]/`) from being read as a comment — either would
+// erase the rest of its line and with it a real env read after it.
+//
+// CEILING: the prev-token heuristic is textual, so a regex literal in a position
+// it reads as DIVISION — after an identifier, `)` or a keyword, e.g.
+// `return /[//]/` — still falls through to the comment arm and drops that line's
+// tail (the pre-existing false-negative direction, now confined to raw
+// consecutive slashes inside a regex written after such a token). A string
+// literal that spells out `process.env` in prose remains the accepted
+// false-positive ceiling.
 function withoutComments(text: string): string {
-  return text.replace(STRING_OR_COMMENT, (match) =>
-    QUOTES.includes(match.charAt(0)) ? match : ""
-  );
+  let kept = "";
+  let index = 0;
+  while (index < text.length) {
+    const char = text.charAt(index);
+    const next = text.charAt(index + 1);
+    if (char === "/" && next === "/") {
+      index = lineCommentEnd(text, index);
+    } else if (char === "/" && next === "*") {
+      index = blockCommentEnd(text, index);
+    } else {
+      const literalEnd = literalRun(text, index, kept);
+      kept += text.slice(index, literalEnd);
+      index = literalEnd;
+    }
+  }
+  return kept;
+}
+
+// The index just past the run starting at `index` that must be COPIED: a whole
+// string/template literal, a whole regex literal, or a single ordinary character.
+// `kept` is the output so far — the regex-vs-division decision reads its last
+// significant character.
+function literalRun(text: string, index: number, kept: string): number {
+  const char = text.charAt(index);
+  if (QUOTES.includes(char)) {
+    return stringEnd(text, index);
+  }
+  if (char === "/" && startsRegex(kept)) {
+    return regexEnd(text, index);
+  }
+  return index + 1;
+}
+
+// The index OF the `\n` that ends the `//` comment at `from` (text.length when it
+// runs to EOF) — the newline itself is kept, so the prev-token scan-back still
+// sees the line break.
+function lineCommentEnd(text: string, from: number): number {
+  const end = text.indexOf("\n", from);
+  return end === -1 ? text.length : end;
+}
+
+// The index just past the `*/` closing the block comment at `from` (text.length
+// when it never closes).
+function blockCommentEnd(text: string, from: number): number {
+  const end = text.indexOf("*/", from + 2);
+  return end === -1 ? text.length : end + 2;
+}
+
+// The index just past the string literal opening at `open`, backslash-escape
+// aware. `"` / `'` stop at a newline (JS forbids one inside them, so an
+// apostrophe in JSX prose can never swallow the rest of the file); a template
+// literal spans lines and is copied through its closing backtick WITHOUT parsing
+// `${…}` — an interpolated `process.env` read therefore stays visible.
+function stringEnd(text: string, open: number): number {
+  const quote = text.charAt(open);
+  let index = open + 1;
+  while (index < text.length) {
+    const char = text.charAt(index);
+    if (char === "\\") {
+      index += 2;
+      continue;
+    }
+    if (char === quote) {
+      return index + 1;
+    }
+    if (char === "\n" && quote !== "`") {
+      return index;
+    }
+    index += 1;
+  }
+  return text.length;
+}
+
+// The index just past the regex literal opening at `open`. Escape aware, and a
+// `[…]` character class swallows `/` — which is exactly what makes `/[//]/` close
+// at its LAST slash instead of being read as a comment. A newline ends the scan
+// (a regex literal cannot span lines).
+function regexEnd(text: string, open: number): number {
+  let index = open + 1;
+  let inClass = false;
+  while (index < text.length) {
+    const char = text.charAt(index);
+    if (char === "\\") {
+      index += 2;
+      continue;
+    }
+    if (char === "\n") {
+      return index;
+    }
+    if (char === "[") {
+      inClass = true;
+    } else if (char === "]") {
+      inClass = false;
+    } else if (char === "/" && !inClass) {
+      return index + 1;
+    }
+    index += 1;
+  }
+  return text.length;
+}
+
+// Whether a `/` following `kept` opens a regex literal: the last significant
+// character of the output so far is an operator/opener/separator, or there is
+// none at all (start of file). Reading the KEPT text rather than the source is
+// deliberate — a comment already dropped must not count as a token.
+function startsRegex(kept: string): boolean {
+  let index = kept.length - 1;
+  while (index >= 0 && WHITESPACE.test(kept.charAt(index))) {
+    index -= 1;
+  }
+  return index < 0 || REGEX_PRECEDERS.includes(kept.charAt(index));
 }
 
 // Every rule id the text dobby-allows WITH a reason, wherever the annotation
