@@ -160,6 +160,19 @@ const IGNORED_DIRS = new Set([
 // are skipped outright: a symlink is neither isDirectory() nor isFile()).
 const MAX_DEPTH = 12;
 
+// Vendored trees are NEVER judged, in either mode: vendored code answers to
+// upstream shadcn, not the house style — `src/shadcn/utils.ts` is shadcn's own
+// components.json contract (`"utils": "@/shadcn/utils"`) and cannot rename to
+// satisfy B2. The tier-(b) mirror of the preset's `!src/shadcn/**` +
+// `!src/components/ui/**` excludes (`biome/core.jsonc` — the second is the
+// legacy location kept for repos mid-migration). Matched as PATH PREFIXES, so
+// a consumer's own `src/foo/shadcn` module is still judged.
+const VENDORED_DIRS = ["src/shadcn", "src/components/ui"];
+
+function isVendored(path: string): boolean {
+  return VENDORED_DIRS.some((dir) => isUnder(path, dir));
+}
+
 // Project-wide scope: everything under `src/`, plus the ROOT code files (the
 // config layer B7 judges — `drizzle.config.ts`, `vite.config.ts`, …). The root is
 // read ONE level deep only; nothing else at the root is a convention's business.
@@ -184,7 +197,7 @@ function subsetScope(root: string, files: string[]): Scope {
   const judged: string[] = [];
   for (const file of files) {
     const rel = toRelative(root, file);
-    if (rel !== null) {
+    if (rel !== null && !isVendored(rel)) {
       judged.push(rel);
     }
   }
@@ -222,7 +235,7 @@ function walk(
   for (const entry of safeReaddir(join(root, rel))) {
     const child = `${rel}/${entry.name}`;
     if (entry.isDirectory()) {
-      if (IGNORED_DIRS.has(entry.name)) {
+      if (IGNORED_DIRS.has(entry.name) || isVendored(child)) {
         continue;
       }
       dirs.push(child);
