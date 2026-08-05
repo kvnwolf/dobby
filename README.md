@@ -69,7 +69,7 @@ A work session moves through six stages. Each stage ends by asking which command
 ```
 /dobby:scope        ground the goal in the codebase, create STATE.md
       │
-/dobby:interview    resolve EVERY ambiguity, one question at a time
+/dobby:interview    resolve EVERY ambiguity, a round of questions per turn
       │
 /dobby:research     current docs + unknowns, via researchers     (skipped when no external tech)
       │
@@ -121,7 +121,7 @@ The architect creates `STATE.md` at your repo root (the session's shared doc) an
 
 ### 2. Interview
 
-The architect now interrogates you — **one focused question at a time**, each informed by what the researcher found, each with a recommended answer:
+The architect now interrogates you **in rounds**: each turn asks everything that's answerable right now — up to four questions in one popup, with any open-ended ones following as a numbered list you can answer in a single message. Every question is informed by what the researcher found, restates its own context (so you never have to remember the previous three), and carries a recommended answer. Anything that depends on an answer you haven't given yet waits for the next round, so a chain of dependent decisions still arrives one step at a time, round by round:
 
 > Should the export respect the current filters and search, or always dump the full table? *(Recommended: respect filters — that's what the visible data implies.)*
 
