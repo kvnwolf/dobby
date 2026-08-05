@@ -11,9 +11,13 @@ import { readSection } from "./state.ts";
 // a grid, made once per plan, with no way to check the answer:
 //
 //   - `tasks[]` — the workflow `args` VERBATIM (`{id, title, spec, decisions,
-//     constraints, areas[], verifyRecipe, testFirst}` + `destructive`), the exact
-//     shape `plugin/skills/execute/references/build-workflow.md` consumes. The
+//     constraints, areas[], verifyRecipe, testFirst}` + `destructive` +
+//     `dependsOn[]`), the exact shape
+//     `plugin/skills/execute/references/build-workflow.md` consumes. The
 //     coordinator merges `devUrl` itself (research R4), so it is NOT emitted here.
+//     `dependsOn` is the `Depends on` cell's ids: `waves` says WHEN a task runs,
+//     `dependsOn` says WHO it waits for — a different question, and the one the
+//     build run asks to SKIP a task whose dependency ended needs-human.
 //   - `waves[][]` — the parallel batches: topological over `Depends on`, and
 //     within one batch no two tasks share an Affected area. Readiness is REFILLED
 //     each round (a task deferred by an area clash rejoins the next wave next to
@@ -68,23 +72,24 @@ const NONE = "none";
 // ONE task as the build workflow consumes it. `decisions`/`constraints` are
 // deliberately EMPTY: plan-level decisions are distributed per task by the
 // coordinator's judgment (research R4), never guessed from a table cell.
+//
+// `dependsOn` carries the row's dependency ids AS THE SPEC WROTE THEM (`—`/empty
+// → none), and it is the SAME list this module schedules from — the edges are
+// the task's own field rather than a parallel structure beside it, so an id the
+// waves order a task under and the id its dependent reads can never drift apart.
+// That identity is load-bearing downstream: the build run matches `dependsOn`
+// against the ids in `waves` to decide whether a blocker actually passed.
 interface PlanTask {
   areas: string[];
   constraints: string;
   decisions: string;
+  dependsOn: string[];
   destructive: boolean;
   id: string;
   spec: string;
   testFirst: boolean;
   title: string;
   verifyRecipe: string;
-}
-
-// A task PLUS the dependency ids that order it. `deps` never reaches the payload
-// — the workflow schedules from `waves`, not from per-task edges.
-interface PlannedTask {
-  deps: string[];
-  task: PlanTask;
 }
 
 // A required cell the spec left empty, named per task so the fix is mechanical.
@@ -135,7 +140,7 @@ interface SpecGates {
 // none (a missing document, an unparseable ad-hoc file, a spec with no table).
 type PlanSource =
   | { error: string; ok: false }
-  | { gates: SpecGates; ok: true; planned: PlannedTask[] };
+  | { gates: SpecGates; ok: true; tasks: PlanTask[] };
 
 export function runBuildPlan(context: CommandContext): CommandResult {
   // An ACTION command: outside a git repo it fails hard rather than planning
@@ -151,7 +156,7 @@ export function runBuildPlan(context: CommandContext): CommandResult {
   if (!source.ok) {
     return { error: source.error, exitCode: 1 };
   }
-  const plan = assemble(root, source.planned, source.gates);
+  const plan = assemble(root, source.tasks, source.gates);
   const { ok } = plan.preconditions;
   // A refusal still ANSWERS: exit 1 carries the message on stderr AND the whole
   // payload on stdout, because `missing`/`danglingDeps`/`cycles` are the fix list.
@@ -166,7 +171,7 @@ export function runBuildPlan(context: CommandContext): CommandResult {
 // The payload, from the parsed tasks + the repo's own facts.
 function assemble(
   root: string,
-  planned: PlannedTask[],
+  tasks: PlanTask[],
   gates: SpecGates
 ): BuildPlan {
   const value = detectCapabilities(root).includes(SUITE_CAPABILITY);
@@ -178,9 +183,9 @@ function assemble(
       value,
     },
     manualVerifySetup: gates.manualVerifySetup,
-    preconditions: judge(planned),
-    tasks: planned.map((entry) => entry.task),
-    waves: schedule(planned),
+    preconditions: judge(tasks),
+    tasks,
+    waves: schedule(tasks),
     workRoot: root,
   };
 }
@@ -217,14 +222,14 @@ function readSpecDocument(path: string): PlanSource {
       ok: false,
     };
   }
-  const planned = parseTaskTable(spec);
-  if (planned.length === 0) {
+  const tasks = parseTaskTable(spec);
+  if (tasks.length === 0) {
     return {
       error: `no task table in \`## ${SPEC_SECTION}\` of ${path} — the plan needs a markdown table whose header carries \`Task\` plus \`Depends on\` / \`Affected areas\` / \`Verify recipe\``,
       ok: false,
     };
   }
-  return { gates: readGates(spec), ok: true, planned };
+  return { gates: readGates(spec), ok: true, tasks };
 }
 
 // The `/dobby:dispatch` source: ONE ad-hoc task as JSON — a dispatch is one task
@@ -253,7 +258,7 @@ function readAdhoc(path: string): PlanSource {
   return {
     gates: { manualVerifySetup: NONE, specSays: null },
     ok: true,
-    planned: [adhocTask(parsed as Record<string, unknown>)],
+    tasks: [adhocTask(parsed as Record<string, unknown>)],
   };
 }
 
@@ -262,24 +267,24 @@ function readAdhoc(path: string): PlanSource {
 // table row, `decisions`/`constraints` are PASSED THROUGH when the file carries
 // them: there is no plan for the coordinator to distribute from, so the file is
 // the only place they could come from. Being the only task, it takes id `1` when
-// the file names none.
-function adhocTask(raw: Record<string, unknown>): PlannedTask {
+// the file names none — and, having no table around it, it normally waits for
+// nobody (`dependsOn: []`), the `deps` spelling being accepted only because a
+// hand-written dispatch file may use it.
+function adhocTask(raw: Record<string, unknown>): PlanTask {
   const id = stringOf(raw.id);
   const title = stringOf(raw.title);
   const spec = stringOf(raw.spec);
   return {
-    deps: listOf(raw.dependsOn ?? raw.deps),
-    task: {
-      areas: listOf(raw.areas),
-      constraints: stringOf(raw.constraints),
-      decisions: stringOf(raw.decisions),
-      destructive: raw.destructive === true,
-      id: id === "" ? "1" : id,
-      spec: spec === "" ? title : spec,
-      testFirst: raw.testFirst === true,
-      title,
-      verifyRecipe: stringOf(raw.verifyRecipe),
-    },
+    areas: listOf(raw.areas),
+    constraints: stringOf(raw.constraints),
+    decisions: stringOf(raw.decisions),
+    dependsOn: listOf(raw.dependsOn ?? raw.deps),
+    destructive: raw.destructive === true,
+    id: id === "" ? "1" : id,
+    spec: spec === "" ? title : spec,
+    testFirst: raw.testFirst === true,
+    title,
+    verifyRecipe: stringOf(raw.verifyRecipe),
   };
 }
 
@@ -347,7 +352,7 @@ function columnKey(header: string): ColumnKey | null {
 // the HEADER, never on a `### Tasks` heading: the sub-heading format is new, and a
 // spec written before it (plain prose + a `Tasks:` lead-in) must still plan. A
 // non-task table in the spec (an edge-case grid) simply fails the header test.
-function parseTaskTable(spec: string): PlannedTask[] {
+function parseTaskTable(spec: string): PlanTask[] {
   const lines = spec.split("\n");
   for (const [index, line] of lines.entries()) {
     const cells = tableRow(line);
@@ -385,12 +390,8 @@ function columnIndex(cells: string[]): ColumnMap {
 
 // Every data row under the header, in TABLE order, stopping at the first line
 // that is not a table row (the alignment row is skipped, not planned).
-function readRows(
-  lines: string[],
-  from: number,
-  index: ColumnMap
-): PlannedTask[] {
-  const planned: PlannedTask[] = [];
+function readRows(lines: string[], from: number, index: ColumnMap): PlanTask[] {
+  const tasks: PlanTask[] = [];
   for (let at = from; at < lines.length; at += 1) {
     const cells = tableRow(lines[at] ?? "");
     if (cells === null) {
@@ -399,9 +400,9 @@ function readRows(
     if (isAlignmentRow(cells)) {
       continue;
     }
-    planned.push(rowTask(cells, index, planned.length + 1));
+    tasks.push(rowTask(cells, index, tasks.length + 1));
   }
-  return planned;
+  return tasks;
 }
 
 // One row as a task. Cells are carried VERBATIM (a title, a description and a
@@ -412,7 +413,7 @@ function rowTask(
   cells: string[],
   index: ColumnMap,
   position: number
-): PlannedTask {
+): PlanTask {
   const cell = (key: ColumnKey): string => {
     const at = index[key];
     return at === undefined ? "" : (cells[at] ?? "");
@@ -421,18 +422,16 @@ function rowTask(
   const title = cell("title");
   const description = cell("description");
   return {
-    deps: splitList(cell("deps")),
-    task: {
-      areas: splitList(cell("areas")),
-      constraints: "",
-      decisions: "",
-      destructive: isAffirmative(cell("destructive")),
-      id: id === "" ? String(position) : id,
-      spec: description === "" ? title : description,
-      testFirst: isAffirmative(cell("testFirst")),
-      title,
-      verifyRecipe: cell("verifyRecipe"),
-    },
+    areas: splitList(cell("areas")),
+    constraints: "",
+    decisions: "",
+    dependsOn: splitList(cell("deps")),
+    destructive: isAffirmative(cell("destructive")),
+    id: id === "" ? String(position) : id,
+    spec: description === "" ? title : description,
+    testFirst: isAffirmative(cell("testFirst")),
+    title,
+    verifyRecipe: cell("verifyRecipe"),
   };
 }
 
@@ -598,23 +597,23 @@ function collectSteps(lines: string[], from: number): string[] {
 // while a ready task exists, so the loop always terminates: it stops either with
 // everything scheduled or with an unschedulable remainder (a cycle or a dangling
 // dependency) that `preconditions` names.
-function schedule(planned: PlannedTask[]): string[][] {
+function schedule(planned: PlanTask[]): string[][] {
   const remaining = [...planned];
   const done = new Set<string>();
   const waves: string[][] = [];
   while (remaining.length > 0) {
-    const ready = remaining.filter((entry) =>
-      entry.deps.every((dep) => done.has(dep))
+    const ready = remaining.filter((task) =>
+      task.dependsOn.every((dep) => done.has(dep))
     );
     if (ready.length === 0) {
       break;
     }
     const wave = nextWave(ready);
-    for (const entry of wave) {
-      done.add(entry.task.id);
-      remaining.splice(remaining.indexOf(entry), 1);
+    for (const task of wave) {
+      done.add(task.id);
+      remaining.splice(remaining.indexOf(task), 1);
     }
-    waves.push(wave.map((entry) => entry.task.id));
+    waves.push(wave.map((task) => task.id));
   }
   return waves;
 }
@@ -623,21 +622,21 @@ function schedule(planned: PlannedTask[]): string[][] {
 // area a task already in the wave touches. A DESTRUCTIVE task takes the wave
 // ALONE — it mutates shared state, so nothing may verify against that state
 // concurrently (spec Decision 15).
-function nextWave(ready: PlannedTask[]): PlannedTask[] {
-  const wave: PlannedTask[] = [];
+function nextWave(ready: PlanTask[]): PlanTask[] {
+  const wave: PlanTask[] = [];
   const claimed = new Set<string>();
-  for (const entry of ready) {
-    if (entry.task.destructive) {
+  for (const task of ready) {
+    if (task.destructive) {
       if (wave.length === 0) {
-        return [entry];
+        return [task];
       }
       continue;
     }
-    const areas = entry.task.areas.map((area) => area.toLowerCase());
+    const areas = task.areas.map((area) => area.toLowerCase());
     if (areas.some((area) => claimed.has(area))) {
       continue;
     }
-    wave.push(entry);
+    wave.push(task);
     for (const area of areas) {
       claimed.add(area);
     }
@@ -649,8 +648,8 @@ function nextWave(ready: PlannedTask[]): PlannedTask[] {
 // Preconditions — what makes a spec unplannable
 // ---------------------------------------------------------------------------
 
-function judge(planned: PlannedTask[]): Preconditions {
-  const ids = new Set(planned.map((entry) => entry.task.id));
+function judge(planned: PlanTask[]): Preconditions {
+  const ids = new Set(planned.map((task) => task.id));
   const missing = missingFields(planned);
   const danglingDeps = danglingDependencies(planned, ids);
   const cycles = findCycles(planned, ids);
@@ -666,9 +665,9 @@ function judge(planned: PlannedTask[]): Preconditions {
 // The three cells a task cannot execute without: WHAT to build, WHERE it lands
 // (the wave grouping is computed from it), and HOW it is verified. A description
 // is NOT required — the title stands in for it.
-function missingFields(planned: PlannedTask[]): MissingField[] {
+function missingFields(planned: PlanTask[]): MissingField[] {
   const missing: MissingField[] = [];
-  for (const { task } of planned) {
+  for (const task of planned) {
     if (task.title.trim() === "") {
       missing.push({ field: "title", taskId: task.id });
     }
@@ -683,14 +682,14 @@ function missingFields(planned: PlannedTask[]): MissingField[] {
 }
 
 function danglingDependencies(
-  planned: PlannedTask[],
+  planned: PlanTask[],
   ids: Set<string>
 ): DanglingDep[] {
   const dangling: DanglingDep[] = [];
-  for (const entry of planned) {
-    for (const dep of entry.deps) {
+  for (const task of planned) {
+    for (const dep of task.dependsOn) {
       if (!ids.has(dep)) {
-        dangling.push({ dependsOn: dep, taskId: entry.task.id });
+        dangling.push({ dependsOn: dep, taskId: task.id });
       }
     }
   }
@@ -700,12 +699,12 @@ function danglingDependencies(
 // Every dependency cycle, as the ids on it. A depth-first walk over the KNOWN
 // edges only (a dangling dependency is its own finding, never a phantom cycle);
 // each cycle is reported once, keyed by its id set.
-function findCycles(planned: PlannedTask[], ids: Set<string>): string[][] {
+function findCycles(planned: PlanTask[], ids: Set<string>): string[][] {
   const edges = new Map<string, string[]>();
-  for (const entry of planned) {
+  for (const task of planned) {
     edges.set(
-      entry.task.id,
-      entry.deps.filter((dep) => ids.has(dep))
+      task.id,
+      task.dependsOn.filter((dep) => ids.has(dep))
     );
   }
   const cycles = new Map<string, string[]>();
