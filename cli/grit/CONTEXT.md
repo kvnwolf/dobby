@@ -18,8 +18,7 @@ the one rule DEMOTED out of tier (a) into this tier). Every file opens with
 - `c05-lazy-server-instance.grit` — a `??=` MEMOIZING an eager server instance inside a `.server` file (PARTIAL — see Invariants).
 - `c06-table-outside-schema-file.grit` — `pgTable`/`pgView`/`pgMaterializedView`/`pgEnum` outside `schema.ts`/`schema.gen.ts`.
 - `c07-db-instance-without-schema.grit` — `drizzle({ client })` in `db.server.ts` with no aggregated `schema:`.
-- `c09-collection-persistence-handlers.grit` — a collection carrying `onInsert`/`onUpdate`/`onDelete`.
-- `c10-collection-not-eager.grit` — a `createCollection(…)` that is not an `export const` initializer.
+- `c10-collection-not-eager.grit` — a `createCollection(…)` that is not an `export const` initializer (the sanctioned per-input factory suppresses by name — see Suppression).
 - `c13-live-query-prop-set.grit` — a `<LiveQuery>` missing `fallback`/`query`/`retry`, or self-closing (no children render).
 - `c14-retry-without-clear-error.grit` — a `<LiveQuery>` INLINE `retry` handler that never calls `.utils.clearError()` (PARTIAL — see Invariants).
 - `c15-raw-live-query-hooks.grit` — a raw `useLiveQuery`/`useLiveSuspenseQuery` CALL outside `src/shared` (the call-site twin of the tier-(a) import ban A4).
@@ -111,10 +110,40 @@ real gate over throwaway repos.
   `JsArrowFunctionExpression()` / `JsFunctionExpression()` / `JsObjectExpression()`
   / `JsSpread()` cover every form of their construct.
 
+## Suppression
+
+Per-site escape hatch for a deliberate exception — lab-verified against the
+bundled Biome 2.5.4:
+
+- **A grit rule**: `// biome-ignore lint/plugin/<grit-file-stem>: <reason>`
+  (e.g. `lint/plugin/c10-collection-not-eager`). The category is
+  `lint/plugin/<stem>` exactly — `plugin/<stem>` without the `lint/` prefix is a
+  parse error, and a bare `plugin` does not suppress.
+- **A native rule**: `// biome-ignore lint/<group>/<rule>: <reason>`.
+- **Blanket** `// biome-ignore lint: <reason>` suppresses EVERYTHING on the
+  line — a shotgun; avoid it.
+- **The tier-(b) scanner rules** (B1–B10, C2/C3/C12) are not biome's, so they
+  take `// dobby-allow <RULE-ID>: <non-empty reason>` instead — anywhere in the
+  judged file for a per-file rule, in the comment run directly above the chain
+  for C3, in the directory's CONTEXT.md for B4 (see `../src/conventions.ts`).
+
 ## What's intentionally NOT here
 
 Rules attempted and PARKED, with the evidence (the falsifying fact), so nobody
 re-litigates them from scratch:
+
+- **C9 — "collections are read-only" (RETIRED 2026-08-03).** Shipped in 0.7.0,
+  retired after the first consumer gate run. The rule's rationale ("a
+  persistence handler means writes bypass the server-function path") was
+  factually wrong for the house pattern: the shipped write-model IS
+  `onInsert`/`onUpdate`/`onDelete` handlers whose bodies CALL the module's
+  server fns — optimistic apply, rollback on throw, default post-handler
+  refetch reconciling synthetic ids (logikpeak/admin's write-through
+  collections, vonda's courts/facilities pilots — the reference apps the rule
+  flagged). The narrow variant (flag only a handler performing a DIRECT write —
+  a client-SDK/`fetch(` call instead of awaiting imported server fns) needs
+  cross-file import resolution a single-file pattern doesn't have. The
+  write-model lives in `/dobby:data-fetching`.
 
 - **C2 / C3 / C12 — cross-file.** GritQL plugins are single-file. C12 compares a
   collection's `.pick({…})` with the sibling `functions.ts` `.select({…})`; C2 must

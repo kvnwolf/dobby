@@ -95,14 +95,16 @@
         // `env` — without this entry the rule is unsatisfiable for every house app, since
         // the single blessed source of env would itself fail the gate. Both house locations
         // are listed (`@/shared/env` per module-conventions, `src/lib/env.ts` per
-        // onboard/migrate-config). Then the three blessed out-of-Vite files: the router
-        // (pre-Vite bootstrap), the drizzle-kit config (drizzle-kit's own process), and the
+        // onboard/migrate-config). Then the blessed out-of-Vite files: the router
+        // (pre-Vite bootstrap), the drizzle-kit config (drizzle-kit's own process), the
+        // nitro config (server-runtime config, loads before the app graph), and the
         // react-email templates (rendered by the email preview/CLI). Globs are
         // `**/`-prefixed like every other override glob here — see the routes rationale below.
         "**/src/shared/env.ts",
         "**/src/lib/env.ts",
         "**/src/router.tsx",
         "**/drizzle.config.ts",
+        "**/nitro.config.ts",
         "**/src/emails/**/*.tsx"
       ],
       "linter": {
