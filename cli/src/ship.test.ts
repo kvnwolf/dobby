@@ -52,6 +52,12 @@ useSpawnBudget();
 //    surface of the same CLI.
 //  - `configHash` is the sha256 of the fixture's `dobby.config.json` bytes,
 //    computed OUT OF BAND with `shasum -a 256` and pasted here as a literal.
+//  - The gate cache's `greenInputs` are read out of the cache FILE before ship
+//    runs — the bytes a previous `dobby check` left there — and compared to the
+//    bytes found afterwards; ship's own report is never the source.
+//  - `gateNote` is checked against the cache-skip line named in the spec ("gate
+//    skipped: inputs unchanged since last green"), plus the timestamp the cache
+//    file itself carries for the run that proved the inputs green.
 //  - The formatted text `export const sum = (a: number, b: number) => a + b;` is
 //    Biome's canonical formatting — the way the line is conventionally written.
 //  - `prUrl` is exactly what the stub `gh` printed: the assertion is that the
@@ -272,21 +278,32 @@ interface ShipOutcome {
 }
 
 interface ShipPayload {
+  cacheNote: string | null;
   cacheWritten: boolean;
   committed: boolean;
   gateExitCode: number;
+  gateNote: string | null;
   prUrl: string | null;
   pushed: boolean;
   pushNote: string | null;
   sha: string;
 }
 
-// The gate cache the pre-push backstop reads.
+// One input set a gate has already proven green, as the cache file records it.
+interface GreenInput {
+  at: string;
+  hash: string;
+}
+
+// The gate cache the pre-push backstop reads. The five FLAT fields are ship's
+// record; `greenInputs` is the per-check one that shares the same file — optional
+// because the two are written independently.
 interface GateCache {
   at: string;
   configHash: string | null;
   dobbyVersion: string;
   exitCode: number;
+  greenInputs?: GreenInput[];
   treeHash: string;
 }
 
@@ -657,6 +674,184 @@ describe("ship — the gate cache in a project with no dobby.config.json", () =>
 
   it("records a null config hash", () => {
     expect(cache?.configHash).toBe(null);
+  });
+});
+
+// ===========================================================================
+// Slice 4b — ONE cache file, TWO records. `.dobby/gate-cache.json` is shared:
+// ship writes the flat record the pre-push backstop reads, and the gate ship runs
+// in-process records the INPUT SETS it proved green. Neither writer may erase the
+// other — a ship that dropped the green inputs would silently un-cache every later
+// `dobby check`, and a ship that dropped the flat record would send the backstop
+// back to a full gate run on a tree it just gated.
+//
+// Both facts are observed from OUTSIDE ship: the cache file's own bytes, and the
+// `dobby check` command — a different public surface of the same CLI, which prints
+// the skip note when (and only when) the input set in front of it was already
+// proven green.
+// ===========================================================================
+
+// The line the gate prints when it was served from the cache instead of run. Its
+// wording is the contract; what follows it in parentheses (which input set, proven
+// when) varies per run and is asserted separately, from the cache file.
+const GATE_SKIPPED = "gate skipped: inputs unchanged since last green";
+
+// The plain `dobby check` command, as an independent observer of the shared cache.
+function checkIn(root: string): Promise<ShipOutcome> {
+  return run(["check"], root);
+}
+
+// Everything the cache file holds, or a hard failure naming the absent file: every
+// assertion below is about what is IN that file, so "no file at all" must not read
+// as "the field was undefined".
+function requireGateCache(root: string): GateCache {
+  const cache = readGateCache(root);
+  if (cache === null) {
+    throw new Error(`no .dobby/gate-cache.json under ${root}`);
+  }
+  return cache;
+}
+
+describe("ship — the green inputs its own gate recorded", () => {
+  // Pre-formatted, so the gate's `--fix` pass leaves the bytes alone and the input
+  // set ship's gate proves green is the one the NEXT check computes.
+  const NEW_REPORT = "export const answer = 42;\nexport const total = 7;\n";
+  let repo: ShipRepo;
+  let payload: ShipPayload;
+  let cache: GateCache;
+  let later: ShipOutcome;
+
+  beforeAll(async () => {
+    repo = makeShipRepo({
+      config: DOBBY_CONFIG,
+      pending: { "src/report.ts": NEW_REPORT },
+    });
+    payload = shipPayload(await shipIn(repo, ghNoPrDir, shipArgs(messageFile)));
+    cache = requireGateCache(repo.root);
+    // Nothing changed since the commit, so this check faces exactly the input set
+    // ship's gate cleared.
+    later = await checkIn(repo.root);
+  });
+
+  it("reports no cache-hit note when the gate really ran", () => {
+    expect(payload.gateNote).toBe(null);
+  });
+
+  it("keeps ship's flat record and the gate's green inputs in one file", () => {
+    // The gate ran once and passed, so exactly one input set was proven green —
+    // and the flat record still names the tree that was committed.
+    expect({
+      greenInputs: cache.greenInputs?.length ?? 0,
+      treeHash: cache.treeHash,
+    }).toEqual({ greenInputs: 1, treeHash: headTree(repo.root) });
+  });
+
+  it("serves a later check from the cache instead of re-running the gate", () => {
+    expect(
+      `${later.stdout}\n${later.stderr}`,
+      `check exited ${later.exitCode}`
+    ).toContain(GATE_SKIPPED);
+  });
+});
+
+describe("ship — a gate served from the cache", () => {
+  const NEW_REPORT = "export const answer = 42;\nexport const total = 7;\n";
+  let repo: ShipRepo;
+  let greenBefore: GreenInput[];
+  let payload: ShipPayload;
+  let cacheAfter: GateCache;
+
+  beforeAll(async () => {
+    repo = makeShipRepo({
+      config: DOBBY_CONFIG,
+      pending: { "src/report.ts": NEW_REPORT },
+    });
+    // A green gate over the very tree ship is about to ceremony — run BEFORE ship
+    // exists in the story, so the cache-hit ship then faces is genuinely somebody
+    // else's record.
+    await checkIn(repo.root);
+    greenBefore = requireGateCache(repo.root).greenInputs ?? [];
+    payload = shipPayload(await shipIn(repo, ghNoPrDir, shipArgs(messageFile)));
+    cacheAfter = requireGateCache(repo.root);
+  });
+
+  it("starts from inputs an earlier check had already proven green", () => {
+    // The fixture's premise, asserted rather than assumed: without a recorded
+    // green input set every assertion below would also pass against a full re-run.
+    expect(greenBefore.length).toBe(1);
+  });
+
+  it("says the gate was skipped because the inputs were unchanged", () => {
+    expect(payload.gateNote ?? "").toContain(GATE_SKIPPED);
+  });
+
+  it("names the moment those inputs were proven green", () => {
+    // Straight out of the cache file the earlier check wrote — a note that named
+    // any other time would be describing a run that never happened.
+    expect(payload.gateNote ?? "").toContain(greenBefore[0]?.at ?? "");
+  });
+
+  it("reports the gate as green", () => {
+    expect(payload.gateExitCode).toBe(0);
+  });
+
+  it("keeps the green inputs the earlier check recorded", () => {
+    expect(cacheAfter.greenInputs).toEqual(greenBefore);
+  });
+
+  it("still writes the flat record for the tree it committed", () => {
+    expect({
+      cacheWritten: payload.cacheWritten,
+      treeHash: cacheAfter.treeHash,
+    }).toEqual({ cacheWritten: true, treeHash: headTree(repo.root) });
+  });
+
+  it("says nothing about a cache-write failure", () => {
+    // `cacheNote` answers ONE question — why the flat record was not written —
+    // and a successful write has nothing to say. The skip note belongs to
+    // `gateNote`; conflating the two would make either unreadable.
+    expect(payload.cacheNote).toBe(null);
+  });
+
+  it("still commits the pending change", () => {
+    expect(gitIn(repo.root, ["show", "HEAD:src/report.ts"])).toBe(
+      NEW_REPORT.trim()
+    );
+  });
+});
+
+// The cache lives inside the tree ship stages WHOLESALE, so "invisible to git" is
+// not decoration: a committed cache file would enter the very input set it keys,
+// and no later run could ever match it again. The fixture below is a project that
+// does not ignore `.dobby/` YET — the state every repo is in the first time it
+// ships — and the ignore rule has to be in place BEFORE the staging sweep, not
+// after it.
+describe("ship — a project that does not ignore .dobby/ yet", () => {
+  // Overwrites the fixture's own `.gitignore`, which already carried the rule.
+  const WITHOUT_RULE = "node_modules/\n";
+  let repo: ShipRepo;
+
+  beforeAll(async () => {
+    repo = makeShipRepo({
+      config: DOBBY_CONFIG,
+      pending: {
+        ".gitignore": WITHOUT_RULE,
+        "src/report.ts": "export const answer = 54;\n",
+      },
+    });
+    await shipIn(repo, ghNoPrDir, shipArgs(messageFile));
+  });
+
+  it("keeps its own machine state out of the commit", () => {
+    expect(
+      gitIn(repo.root, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n")
+    ).not.toContain(".dobby/gate-cache.json");
+  });
+
+  it("leaves the tree clean, cache file and all", () => {
+    // The other half of the same guarantee: an un-ignored cache would show up as
+    // untracked work the ceremony forgot.
+    expect(porcelain(repo.root)).toBe("");
   });
 });
 

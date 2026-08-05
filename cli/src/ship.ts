@@ -1,15 +1,8 @@
-import { createHash } from "node:crypto";
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
-import { join, resolve } from "node:path";
-import pkg from "../package.json";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { type CheckGroup, type CheckNote, check } from "./check.ts";
 import type { CommandContext, CommandResult } from "./command.ts";
+import { ensureExcluded, writeShipRecord } from "./gate-cache.ts";
 import { type RunResult, requireWorkroot, runCapture } from "./runner.ts";
 
 // `dobby ship` — the commit ceremony, mechanized: refuse a detached HEAD →
@@ -17,12 +10,15 @@ import { type RunResult, requireWorkroot, runCapture } from "./runner.ts";
 // prints the FULL findings and commits NOTHING) → re-stage → `git commit -F
 // <message-file>` → push, always to ORIGIN by name (`-u origin HEAD` when there is
 // no upstream) → `gh pr create --body-file` off main only, and only when no PR
-// exists yet. Writes the gate cache the pre-push backstop reads
+// exists yet. Records the gated tree in the gate cache the pre-push backstop reads
 // (`.dobby/gate-cache.json`, keyed by the post-`git add -A` tree hash + the dobby
-// version + the config hash) and answers with the JSON payload
-// `{committed, sha, pushed, prUrl, gateExitCode, cacheWritten}` plus the three
-// notes (`cacheNote` / `prNote` / `pushNote`) that say why a step did NOT happen,
-// or did not happen the way the caller's git config would have had it.
+// version + the config hash) — through `gate-cache.ts`, the file's single owner,
+// which preserves the green INPUT SETS the same run's in-process gate recorded
+// there — and answers with the JSON payload
+// `{committed, sha, pushed, prUrl, gateExitCode, cacheWritten}` plus the four
+// notes (`cacheNote` / `gateNote` / `prNote` / `pushNote`) that say why a step did
+// NOT happen, did not need to happen, or did not happen the way the caller's git
+// config would have had it.
 //
 // THE EXIT CODE DECIDES. ship never interprets findings: it composes `check()`
 // IN-PROCESS (the same data path `dobby check --fix` takes — never a `dobby`
@@ -39,9 +35,14 @@ import { type RunResult, requireWorkroot, runCapture } from "./runner.ts";
 
 // The command's machine-readable answer (the `--json` payload): flat, alphabetized,
 // explicit nulls — the `EnvSnapshot` convention.
-//   - `cacheNote` — why the gate cache was NOT written, or null. The only case in
-//     practice is an unmerged index (`git write-tree` exits 128), where there is no
-//     single tree to key on.
+//   - `cacheNote` — why the gate cache was NOT written, or null. The commonest case
+//     is an unmerged index (`git write-tree` exits 128), where there is no single
+//     tree to key on; a `.dobby/` that could not be written names itself here too.
+//   - `gateNote` — why the gate did not RUN, or null: the cache's own skip line
+//     (`gate skipped: inputs unchanged since last green (…)`) when this ceremony's
+//     in-process gate was served from a previously proven-green input set. A
+//     SEPARATE question from `cacheNote`'s (which is about the WRITE that follows a
+//     green verdict), so neither note has to be read twice to be understood.
 //   - `prNote` — why a REQUESTED pull request has no URL, or null. Without it a gh
 //     that failed (absent, expired auth, an API error) would be byte-identical to
 //     "no PR was asked for": both `prUrl: null`. A caller must be able to tell
@@ -56,26 +57,12 @@ interface ShipPayload {
   cacheWritten: boolean;
   committed: boolean;
   gateExitCode: number;
+  gateNote: string | null;
   prNote: string | null;
   prUrl: string | null;
   pushed: boolean;
   pushNote: string | null;
   sha: string | null;
-}
-
-// The gate cache the pre-push backstop reads to skip a re-run: a COMPOSITE key
-// (spec Decision 8 / open question O2), because a tree hash alone would serve a
-// stale pass across a dobby upgrade or a `dobby.config.json` edit — both of which
-// change what the gate DOES to an unchanged tree.
-interface GateCache {
-  // When the gate ran (ISO 8601), so a backstop can bound how stale a pass may be.
-  at: string;
-  // sha256 of the project's `dobby.config.json` BYTES, or null when it has none.
-  configHash: string | null;
-  dobbyVersion: string;
-  // The gate's verdict for that tree. Only a green (0) verdict is ever cached.
-  exitCode: number;
-  treeHash: string;
 }
 
 // The branches a pull request has nowhere to go FROM: shipping on the trunk
@@ -188,6 +175,7 @@ function performShip(
         cacheWritten: false,
         committed: false,
         gateExitCode: 0,
+        gateNote: null,
         prNote: null,
         prUrl: null,
         pushed: false,
@@ -221,6 +209,10 @@ function performShip(
         cacheWritten: false,
         committed: false,
         gateExitCode: report.exitCode,
+        // A cache HIT can still end red: the skipped steps are the inferred ones,
+        // while the config `checks[]` extras always run and own the verdict. Saying
+        // the gate was skipped is then still the truth about what ran.
+        gateNote: report.gateCached,
         prNote: null,
         prUrl: null,
         pushed: false,
@@ -234,10 +226,15 @@ function performShip(
   }
 
   // 3. Re-stage: the gate's own `--fix` rewrites must land in the commit. The
-  // machine-state home is ensured gitignored FIRST — before the sweep, so a
-  // `.gitignore` this run had to write is itself committed and the tree is left
-  // clean, and before step 4 writes `.dobby/gate-cache.json` into it.
-  ensureGitignored(root);
+  // machine-state home is ensured EXCLUDED first — before the sweep, so the rule
+  // is in force while the whole tree is staged, and before step 4 records the
+  // gated tree in `.dobby/gate-cache.json` (which the gate above may already have
+  // written its green inputs into). The rule is `gate-cache.ts`'s to state, so it
+  // is IMPORTED, not restated here: ship's copy would be the one that drifts, and
+  // a `.dobby/` this file thought was ignored and that one did not is a cache file
+  // inside the commit. It lands in `.git/info/exclude` — unversioned, so this call
+  // adds nothing to the commit it is protecting.
+  ensureExcluded(root);
   stageAll(root);
 
   // 4. The gate cache, keyed on the tree that just passed.
@@ -252,6 +249,7 @@ function performShip(
         ...cache,
         committed: false,
         gateExitCode: 0,
+        gateNote: report.gateCached,
         prNote: null,
         prUrl: null,
         pushed: false,
@@ -271,6 +269,7 @@ function performShip(
       ...cache,
       committed: true,
       gateExitCode: 0,
+      gateNote: report.gateCached,
       prNote: published.prNote,
       prUrl: published.prUrl,
       pushed: published.pushed,
@@ -475,21 +474,27 @@ interface CacheOutcome {
   cacheWritten: boolean;
 }
 
-// Write `.dobby/gate-cache.json` for the tree that just passed.
+// Record the tree that just passed in `.dobby/gate-cache.json`.
 //
-// `git write-tree` MUST run AFTER `git add -A` (step 3): untracked-but-not-ignored
-// files are invisible to the tree otherwise, while biome/tsc/knip DO see them — a
-// key describing a different tree than the one the gate judged is cache POISONING.
-// Staged-first, the hash is byte-identical to the resulting commit's `HEAD^{tree}`.
+// ship OWNS the KEY and DELEGATES the BYTES. The key is the only half that is
+// ship's business — `git write-tree` MUST run AFTER `git add -A` (step 3):
+// untracked-but-not-ignored files are invisible to the tree otherwise, while
+// biome/tsc/knip DO see them, and a key describing a different tree than the one
+// the gate judged is cache POISONING. Staged-first, the hash is byte-identical to
+// the resulting commit's `HEAD^{tree}`. Everything after that — the version/config
+// stamp, the atomic write, and the GREEN INPUT SETS the in-process gate recorded in
+// the same file moments earlier — belongs to `gate-cache.ts`, the file's single
+// owner: a local writer here would serialize the flat record alone and silently
+// erase those inputs, un-caching every later `dobby check`.
 //
-// An unmerged index (exit 128) has no single tree: the cache is skipped and the
+// An unmerged index (exit 128) has no single tree: the record is skipped and the
 // reason travels in the payload, never as a failure — the commit is unaffected.
 //
-// The caller has already ensured `.dobby/` is gitignored (step 3, before the
-// sweep): the cache is written AFTER `git add -A`, so an un-ignored one would be
-// swept into the NEXT ship's commit — and the tree hash it keys on would then
-// include the cache file it is about to rewrite, a key that can never match again
-// (the very cache poisoning this step exists to prevent).
+// The caller has already ensured `.dobby/` is excluded (step 3, before the
+// sweep): the record is written AFTER `git add -A`, so an un-ignored cache file
+// would be swept into the NEXT ship's commit — and the tree hash it keys on would
+// then include the cache file it is about to rewrite, a key that can never match
+// again (the very cache poisoning this step exists to prevent).
 function writeGateCache(root: string): CacheOutcome {
   const tree = runCapture("git", ["write-tree"], { root });
   if (tree.status !== 0) {
@@ -501,68 +506,11 @@ function writeGateCache(root: string): CacheOutcome {
       cacheWritten: false,
     };
   }
-  const cache: GateCache = {
-    at: new Date().toISOString(),
-    configHash: configHash(root),
-    dobbyVersion: pkg.version,
-    exitCode: 0,
-    treeHash: tree.stdout.trim(),
-  };
-  try {
-    mkdirSync(join(root, ".dobby"), { recursive: true });
-    writeFileSync(
-      join(root, ".dobby", "gate-cache.json"),
-      `${JSON.stringify(cache, null, 2)}\n`
-    );
-  } catch (error) {
-    return {
-      cacheNote: `gate cache skipped: ${error instanceof Error ? error.message : String(error)}`,
-      cacheWritten: false,
-    };
-  }
-  return { cacheNote: null, cacheWritten: true };
-}
-
-// Keep the machine-state home out of the consumer's index — the same guarantee
-// `up` makes for its detached-run pidfile and `repro` for its records, repeated
-// here (rather than shared) because the commit ceremony must not depend on the run
-// lifecycle. Idempotent and best-effort: an unwritable `.gitignore` costs nothing —
-// the cache is a convenience, and the commit that follows is unaffected.
-function ensureGitignored(root: string): void {
-  const path = join(root, ".gitignore");
-  let raw = "";
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    // No .gitignore yet — appending below creates it.
-  }
-  const present = raw
-    .split("\n")
-    .some((line) => line.trim() === ".dobby/" || line.trim() === ".dobby");
-  if (present) {
-    return;
-  }
-  try {
-    const prefix = raw === "" || raw.endsWith("\n") ? "" : "\n";
-    appendFileSync(path, `${prefix}.dobby/\n`);
-  } catch {
-    // Best-effort: an unwritable .gitignore never fails the ceremony.
-  }
-}
-
-// sha256 of the project's `dobby.config.json` BYTES (never a re-serialization —
-// the file's own bytes are what a later run compares against), or null when the
-// project ships none.
-function configHash(root: string): string | null {
-  const path = join(root, "dobby.config.json");
-  if (!existsSync(path)) {
-    return null;
-  }
-  try {
-    return createHash("sha256").update(readFileSync(path)).digest("hex");
-  } catch {
-    return null;
-  }
+  // Only a GREEN gate ever reaches this step (a nonzero verdict ended the ceremony
+  // above), so the verdict stated here is 0 — said out loud rather than assumed by
+  // the writer, which records whatever it is told.
+  const note = writeShipRecord(root, tree.stdout.trim(), 0);
+  return { cacheNote: note, cacheWritten: note === null };
 }
 
 // --- git plumbing -----------------------------------------------------------
@@ -675,6 +623,11 @@ function formatShip(payload: ShipPayload): string {
     `pushed: ${payload.pushed ? "yes" : "no"}`,
     `pull request: ${payload.prUrl ?? "none"}`,
   ];
+  // The gate note first: it explains the run's most surprising property — a
+  // ceremony that finished in a second because nothing the gate reads had changed.
+  if (payload.gateNote !== null) {
+    lines.push(payload.gateNote);
+  }
   if (payload.pushNote !== null) {
     lines.push(payload.pushNote);
   }

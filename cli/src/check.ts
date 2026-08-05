@@ -12,6 +12,11 @@ import { loadConfig } from "./config.ts";
 import { type ConventionsReport, scanConventions } from "./conventions.ts";
 import { detectCapabilities, scanCapabilities } from "./detect.ts";
 import {
+  computeCodeHash,
+  consultGreenInputs,
+  recordGreenInput,
+} from "./gate-cache.ts";
+import {
   configArgs,
   type RunResult,
   resolveViteConfig,
@@ -87,17 +92,33 @@ export interface CheckNote {
 }
 
 // The outcome of a check run:
-//   - { ok: true, groups, notes, exitCode } — the pipeline ran. `groups` carries
-//     the findings tools' output (possibly empty), `notes` the single-line step
-//     notes (capability skips, build/test/extra failures — a findingless failure
-//     also carries the crashed tool's raw-output tail), and `exitCode` the
-//     aggregated FIRST failing exit code (0 = all selected steps passed). run.ts
-//     prints groups + notes and exits with `exitCode`.
+//   - { ok: true, groups, notes, exitCode, gateCached } — the pipeline ran.
+//     `groups` carries the findings tools' output (possibly empty), `notes` the
+//     single-line step notes (capability skips, build/test/extra failures — a
+//     findingless failure also carries the crashed tool's raw-output tail), and
+//     `exitCode` the aggregated FIRST failing exit code (0 = all selected steps
+//     passed). run.ts prints groups + notes and exits with `exitCode`.
+//     `gateCached` is the GATE-CACHE verdict as data: the skip-note line when this
+//     run was served from a previously proven-green input set, null when the gate
+//     genuinely ran. The SAME line also travels in `notes`, so `dobby check`
+//     renders it without run.ts knowing anything about the cache; the field exists
+//     for callers that COMPOSE check() (ship's payload) and need the verdict
+//     without string-matching the notes.
 //   - { ok: false, error } — a HARD error (not a git repo, or a BUNDLED tool
 //     could not be resolved/spawned): surfaced on stderr with a nonzero exit.
 type CheckReport =
-  | { ok: true; groups: CheckGroup[]; notes: CheckNote[]; exitCode: number }
+  | {
+      ok: true;
+      groups: CheckGroup[];
+      notes: CheckNote[];
+      exitCode: number;
+      gateCached: string | null;
+    }
   | { ok: false; error: string };
+
+// How much of the code hash the skip note shows — enough to tell two input sets
+// apart at a glance, short enough to stay one scannable line.
+const SHORT_HASH_LENGTH = 8;
 
 // Run the quality gate. `files` empty = project-wide (the composed pipeline);
 // non-empty = per-file fast path (biome over those files, plus — for a stack
@@ -107,14 +128,17 @@ type CheckReport =
 // place FIRST (project-wide `biome check --write .`, or over the named files) so
 // the pre-commit gate never fails on formatting the edit hook did not reach — then
 // the selected pipeline runs and reports whatever biome could NOT safely fix (the
-// UNSAFE rewrites, e.g. `==`→`===`, are never applied). `cwd` is the caller's
-// directory; the workroot is resolved from it and pinned as every child's cwd.
+// UNSAFE rewrites, e.g. `==`→`===`, are never applied). `noCache` bypasses the
+// gate cache's CONSULT (turbo `--force` semantics): every selected step really
+// runs, and a green FULL gate is still recorded. `cwd` is the caller's directory;
+// the workroot is resolved from it and pinned as every child's cwd.
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: enumeration, not tangled logic — a flat switch dispatching 7 independent gate-step handlers (biome/tsc/knip/conventions/build/test/extra), several of which fatal-return from check(); extracting them would thread shared accumulators + fatal-return plumbing through 7 helpers and regress a load-bearing, tested executor
 export function check(
   files: string[],
   cwd: string,
   flags: CheckFlags,
-  fix = false
+  fix = false,
+  noCache = false
 ): CheckReport {
   const root = resolveWorkroot(cwd);
   if (root === null) {
@@ -154,6 +178,10 @@ export function check(
   // and the remaining findings are reported; convention findings are never fixable.
   // (The `configs:` note is a project-wide-gate concern; the edit-adjacent path
   // stays note-free but still uses the default.)
+  // The GATE CACHE is deliberately absent from this path (and from `checkHook`):
+  // neither consulted (the caller asked about THESE files, and a whole-tree green
+  // verdict says nothing about the one in front of the model) nor recorded (no
+  // gate ran). `gateCached` is therefore always null here.
   if (files.length > 0) {
     const absolute = files.map((file) => resolve(cwd, file));
     const biome = runBiome(root, absolute, biomeBin, biomeCfg.args, fix);
@@ -165,7 +193,7 @@ export function check(
       groups.push(conventionsGroup(scanConventions(root, absolute)));
     }
     const exitCode = groups.some((group) => group.findings.length > 0) ? 1 : 0;
-    return { exitCode, groups, notes: [], ok: true };
+    return { exitCode, gateCached: null, groups, notes: [], ok: true };
   }
 
   // The tool spawns that used a dobby DEFAULT config (ADR-0015 observability):
@@ -216,7 +244,51 @@ export function check(
   // remaining extras are skipped (the tool steps above always all ran).
   let extrasStopped = false;
 
-  for (const step of plan) {
+  // THE GATE CACHE (gate-cache.ts owns every byte of it; this is only the wiring).
+  //
+  // WHEN the key is taken: HERE — once per run, AFTER the project-wide `--fix`
+  // pass (which rewrites the tree) and after the capability scan, so the hash names
+  // the bytes this gate is about to judge and the bytes the NEXT run will compare
+  // against. A key taken any earlier would record a tree that no longer exists and
+  // miss forever.
+  //
+  // Skipped entirely when neither a consult nor a record can follow (a SELECTIVE
+  // `--no-cache` run), so the two read-only git spawns are paid only where they can
+  // pay off. A null hash (not a git repo, an unenumerable tree) is not an error: the
+  // gate simply runs, records nothing, and says nothing about the cache.
+  // Selective = the caller asked for a SUBSET (`--lint`, `--types`, …). The twin of
+  // `checkPipeline`'s own `anyFlag`, restated here rather than imported because the
+  // cache stays OUT of the pure planner (`tasks.ts` must never learn about it); the
+  // two must be changed together if a new selective flag is ever added.
+  const selective = Boolean(
+    flags.lint || flags.types || flags.unused || flags.build || flags.test
+  );
+  const codeHash = noCache && selective ? null : computeCodeHash(root);
+
+  // The CONSULT. A hit means THIS input set already cleared a FULL gate under this
+  // dobby and this config — so it proves the full gate, and therefore any selective
+  // subset of it too. The note is the only trace: it carries the short hash and the
+  // timestamp of the run that PROVED the tree green (never refreshed on a re-serve —
+  // a moving timestamp would misreport when the tree was last actually gated).
+  let gateCached: string | null = null;
+  if (codeHash !== null && !noCache) {
+    const verdict = consultGreenInputs(root, codeHash);
+    if (verdict.hit) {
+      gateCached = `gate skipped: inputs unchanged since last green (${codeHash.slice(0, SHORT_HASH_LENGTH)} @ ${verdict.at})`;
+      notes.push({ raw: null, text: gateCached });
+    }
+  }
+
+  // On a hit the six INFERRED steps (biome/tsc/knip/build/conventions/test) are
+  // skipped — that is the whole saving — but the config `checks[]` extras still
+  // run: an extra is arbitrary consumer shell that may read files the code hash
+  // deliberately does not cover (this repo's own frontmatter check reads the plugin
+  // agents' markdown, which the inert set excludes), so a cached verdict can never
+  // stand in for it. Their verdict alone is then the run's exit code.
+  const steps =
+    gateCached === null ? plan : plan.filter((step) => step.kind === "extra");
+
+  for (const step of steps) {
     switch (step.kind) {
       case "biome": {
         const biome = runBiome(root, ["."], biomeBin, biomeCfg.args);
@@ -374,7 +446,29 @@ export function check(
     notes.push({ raw: null, text: `configs: ${configDefaults.join(" · ")}` });
   }
 
-  return { exitCode, groups, notes, ok: true };
+  // THE RECORD. Only a FULL gate that ACTUALLY RAN and came out green may vouch
+  // for an input set:
+  //   - SELECTIVE runs never record — a green `--lint` says nothing about tsc, and
+  //     recording it would hand the next full gate a verdict nobody earned;
+  //   - a HIT never re-records — it ran nothing, and rewriting the entry would only
+  //     move its `at` away from the run that actually proved the tree;
+  //   - `--no-cache` DOES record (turbo `--force`): it skipped the consult, not the
+  //     work, so its green is as real as any other.
+  // A write failure is a NOTE, never a verdict: dobby's bookkeeping must never be
+  // able to fail a green gate.
+  if (
+    codeHash !== null &&
+    !selective &&
+    gateCached === null &&
+    exitCode === 0
+  ) {
+    const failure = recordGreenInput(root, codeHash);
+    if (failure !== null) {
+      notes.push({ raw: null, text: failure });
+    }
+  }
+
+  return { exitCode, gateCached, groups, notes, ok: true };
 }
 
 // Reduce a conventions report to the gate's own findings shape — the adapter that
@@ -1208,10 +1302,36 @@ function parseVitestFailures(
     failures.push({
       file: relFile,
       frame: firstInRepoFrame(detail, root),
-      summary: firstLine(detail) || "test failed",
+      summary: summarize(detail),
     });
   }
   return failures.length > 0 ? failures : null;
+}
+
+// vitest's PLACEHOLDER error message. `STACK_TRACE_ERROR` is the pre-allocated
+// `Error` vitest keeps around to graft a usable stack onto an async failure, and a
+// test killed by its OWN TIMEOUT is reported wearing it — so the first line of the
+// failure message reads as an unexplained crash in a file that is, in fact, fine.
+const VITEST_TIMEOUT_PLACEHOLDER = "Error: STACK_TRACE_ERROR";
+
+// What that placeholder actually means, said plainly. The CEILING is deliberately
+// not quoted as a number: it comes from the `testTimeout` of whichever vitest
+// config the step ran under (the consumer's own, or dobby's shipped spawn-budget
+// preset), and `check` never parses either — a number invented here would be a
+// confident lie on half the runs. The second half is the field diagnosis: under
+// full-suite parallelism a spawn-heavy suite starves for a core long before its
+// code is at fault.
+const VITEST_TIMEOUT_SUMMARY =
+  "test timed out (over the spawn budget — the testTimeout of the vitest config this run used) — vitest reports timeouts under this STACK_TRACE_ERROR placeholder; usually machine contention, not a code defect";
+
+// The one-line summary of a failure message: its first line, unless that line is
+// vitest's timeout placeholder — which is translated rather than echoed.
+function summarize(detail: string): string {
+  const line = firstLine(detail);
+  if (line.startsWith(VITEST_TIMEOUT_PLACEHOLDER)) {
+    return VITEST_TIMEOUT_SUMMARY;
+  }
+  return line || "test failed";
 }
 
 // The first non-blank line of a message, whitespace-collapsed (token-lean — one
