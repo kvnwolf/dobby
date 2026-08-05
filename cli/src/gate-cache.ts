@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -56,7 +56,8 @@ import { runCapture } from "./runner.ts";
 // files, which the gate tools DO see.)
 //
 // EVERY DEGRADED STATE READS AS "NOTHING IS KNOWN": no git, no cache file, a
-// malformed one, a stale stamp — all answer with null / a miss, whose cost is one
+// malformed one, a stale stamp, a tree holding something the enumeration cannot
+// key (a submodule, a symlink) — all answer with null / a miss, whose cost is one
 // honest gate run. Write failures come back as a NOTE, never a throw: the gate's
 // verdict must never depend on dobby's bookkeeping succeeding.
 //
@@ -153,9 +154,12 @@ interface GreenInputVerdict {
  * the worktree is excluded from the pair set, so a deletion changes it too.
  *
  * Null when the tree cannot be enumerated at all (not a git repository, git
- * absent, an unreadable path list) — the caller reads that as "run everything".
- * Never throws, never stages, never writes: the git state is byte-identical after
- * this call.
+ * absent, an unreadable path list) OR when it holds an input git does not hand
+ * over as a plain file — a checked-out SUBMODULE, an embedded repository, a
+ * SYMLINK of any kind — whose contents the enumeration cannot reach and whose
+ * changes would therefore leave the key sitting still. The caller reads either as
+ * "run everything". Never throws, never stages, never writes: the git state is
+ * byte-identical after this call.
  *
  * @public — consumed by `check.ts` (the gate cache's key).
  */
@@ -320,14 +324,21 @@ function isInert(relPath: string): boolean {
 // output C-QUOTES unusual bytes; the raw form is both what the pair set must key
 // on and what the guards below can inspect).
 //
-// Paths are then dropped in three cases. The first only costs a file; the other two
-// are `--stdin-paths` LINE-FORMAT hazards that poison the whole key, so they answer
-// null — one honest gate run is always safe, a key computed from a misread path
-// list is not:
-//   - anything that is not a readable regular FILE right now — a tracked file
-//     deleted from the worktree (its absence is what changes the hash), a broken
-//     symlink, a submodule's gitlink. Left in, it would abort the whole batch and
-//     degrade an honest tree to "no key";
+// ONE path is simply DROPPED — a tracked file that is ABSENT from the worktree
+// right now, because its absence is exactly what changes the key (it leaves the
+// pair set, and a deletion moves the hash).
+//
+// Everything else that cannot be hashed VERBATIM answers null for the whole tree —
+// one honest gate run is always safe, a key computed from an input set that is
+// missing something is not:
+//   - an input that is NOT A REGULAR FILE (`inputKind`). git enumerates a
+//     checked-out submodule as its GITLINK path, an embedded repository as its
+//     directory, and a symlink as the link itself — never the files BENEATH or
+//     BEHIND them, which the gate tools nonetheless read. Dropped from the pair
+//     set (what this used to do), a change under a submodule or through a
+//     directory symlink would leave the key sitting still: a cache hit served over
+//     code the gate never saw. Refusing to key such a tree is the conservative
+//     answer — the cache is simply off there, silently;
 //   - a path containing a NEWLINE, which `--stdin-paths` (one path per line) cannot
 //     express at all;
 //   - a path whose first byte is a DOUBLE QUOTE, which `--stdin-paths` C-UNQUOTES:
@@ -337,6 +348,10 @@ function isInert(relPath: string): boolean {
 //     one: the pair would freeze against every edit to that file, and `check` would
 //     take a cache hit on a tree it never gated. (Only a LEADING quote unquotes —
 //     `a"b.ts` round-trips — so the guard is exactly that.)
+//
+// The INERT test comes FIRST, before any of those guards: an inert path is not an
+// input at all, so a symlink or a nested repository parked under `docs/` or
+// `.claude/` must not cost the whole tree its key.
 function enumerateInputs(root: string): string[] | null {
   const listed = runCapture(
     "git",
@@ -356,7 +371,11 @@ function enumerateInputs(root: string): string[] | null {
     if (path.includes("\n") || path.startsWith(C_QUOTE_PREFIX)) {
       return null;
     }
-    if (isReadableFile(root, path)) {
+    const kind = inputKind(root, path);
+    if (kind === "unkeyable") {
+      return null;
+    }
+    if (kind === "file") {
       paths.add(path);
     }
   }
@@ -387,17 +406,31 @@ function hashObjects(root: string, paths: string[]): string[] | null {
   return oids.length === paths.length ? oids : null;
 }
 
-// Whether `relPath` is something `git hash-object` can read right now: a regular
-// file (following symlinks, as hash-object does). Anything else — absent,
-// directory, unreadable — is excluded from the pair set.
-function isReadableFile(root: string, relPath: string): boolean {
+// What an enumerated path IS on disk right now, in the only three shapes the key
+// can distinguish: a REGULAR file (hash it), ABSENT (a tracked file deleted from
+// the worktree — its absence is the change), or UNKEYABLE (anything else).
+type InputKind = "absent" | "file" | "unkeyable";
+
+// Classify one enumerated path. `lstat` — never `stat` — is what makes the test a
+// single predicate: `isFile()` is true for a REGULAR FILE ONLY, so a symlink of
+// any kind (its own link bytes are what git tracks, and `stat` would have hidden
+// it behind its target), a checked-out submodule's gitlink directory, an embedded
+// repository, a fifo or a socket all answer the same way, with no target-kind
+// reasoning and no window between an `lstat` and a `stat` for the link to be
+// retargeted in.
+//
+// Anything `lstat` REFUSES (an unreadable parent directory, a symlink loop in the
+// path) is unkeyable too: a path that cannot be classified cannot be vouched for,
+// and `hash-object` would fail on it moments later anyway.
+function inputKind(root: string, relPath: string): InputKind {
   try {
-    return (
-      statSync(join(root, relPath), { throwIfNoEntry: false })?.isFile() ===
-      true
-    );
+    const entry = lstatSync(join(root, relPath), { throwIfNoEntry: false });
+    if (entry === undefined) {
+      return "absent";
+    }
+    return entry.isFile() ? "file" : "unkeyable";
   } catch {
-    return false;
+    return "unkeyable";
   }
 }
 
@@ -523,6 +556,14 @@ let writeCounter = 0;
 // A reader — this module, or the pre-push backstop's independent one — therefore
 // sees either the old file or the new one, never a half-written mixture, even when
 // a manual `check` and a `ship` write at the same moment in one worktree.
+//
+// CONCURRENT WRITERS ARE LAST-WRITE-WINS, BY DESIGN — there is no locking here.
+// Two processes that read-modify-write at once each rename their own complete
+// file over the target, so the loser's record is simply forgotten. That is the
+// ONLY failure mode available: every write states what its own run PROVED, so a
+// lost record costs one extra full gate run later and can never produce a false
+// green. A lock would trade that for a lock file to leak, a stale lock to break,
+// and a gate that can block on its own bookkeeping.
 //
 // Returns a note naming the failure instead of throwing, and takes the temp file
 // with it: `.dobby/` holds the cache and nothing else.

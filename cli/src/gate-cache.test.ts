@@ -2,12 +2,15 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -63,6 +66,10 @@ useSpawnBudget();
 //    literal arrays the spec dictates.
 //  - Ignored-ness of `.dobby/` is asked of `git check-ignore`, which is the tool
 //    that actually decides it.
+//  - A fixture holding a SUBMODULE or a SYMLINK is certified by git's own account
+//    of the entry (`git ls-files -s`: mode 160000 is a gitlink, 120000 a symlink),
+//    so those slices can never pass over a fixture that quietly became an
+//    ordinary file or an ordinary directory.
 //
 // MOCKED BOUNDARIES: none. git is REAL throughout (throwaway repos under a
 // pinned git env), the filesystem is real, and the clock is only ever asserted
@@ -157,6 +164,60 @@ function writeInRepo(root: string, relPath: string, content: string): void {
 function appendInRepo(root: string, relPath: string, extra: string): void {
   const path = join(root, relPath);
   writeInRepo(root, relPath, readFileSync(path, "utf8") + extra);
+}
+
+// --- Trees holding something other than plain files --------------------------
+
+// Check a SECOND repository out inside `root` as a real submodule at `relPath`.
+//
+// `protocol.file.allow=always` is what modern git requires before it will clone
+// over a local path, and it is passed with `-c` — it propagates to the clone git
+// runs for itself — rather than written into a config file the pinned scratch env
+// deliberately empties.
+function addSubmodule(root: string, relPath: string): void {
+  const inner = makeScratchRepo({
+    files: { "lib/inner.ts": "export const inner = 1;\n" },
+    prefix: "dobby-gatecache-sub-",
+    track: scratchDirs,
+  });
+  gitIn(root, [
+    "-c",
+    "protocol.file.allow=always",
+    "submodule",
+    "add",
+    "-q",
+    inner,
+    relPath,
+  ]);
+}
+
+// A TRACKED symlink at `relPath` pointing at `target` (relative to the link's own
+// directory, or absolute for a target outside the repository), committed — the
+// shape a repository's own symlinks have.
+function trackSymlink(root: string, relPath: string, target: string): void {
+  const path = join(root, relPath);
+  mkdirSync(dirname(path), { recursive: true });
+  symlinkSync(target, path);
+  gitIn(root, ["add", "-A"]);
+  gitIn(root, ["commit", "-q", "-m", "link"]);
+}
+
+const OUTSIDE_FILE = "lib/outside.ts";
+
+// A plain directory OUTSIDE any repository, holding one source file: what a
+// directory symlink can point at while git sees nothing but the link.
+function makeOutsideDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "dobby-gatecache-outside-"));
+  scratchDirs.push(dir);
+  mkdirSync(join(dir, "lib"), { recursive: true });
+  writeFileSync(join(dir, OUTSIDE_FILE), "export const outside = 1;\n");
+  return dir;
+}
+
+// git's OWN account of one index entry (`<mode> <oid> <stage>\t<path>`): mode
+// 160000 is a gitlink, 120000 a symlink, 100644 an ordinary file.
+function indexMode(root: string, relPath: string): string {
+  return gitIn(root, ["ls-files", "-s", relPath]).split(" ")[0] ?? "";
 }
 
 // --- Independent observers ---------------------------------------------------
@@ -612,6 +673,122 @@ describe("a tree holding a file whose name starts with a quote", () => {
     });
     writeInRepo(repo, QUOTED, "export const quoted = 2;\n");
     expect(computeCodeHash(repo)).toBeNull();
+  });
+});
+
+// ===========================================================================
+// Slice 4c — a tree holding something git does not hand over as a plain file.
+//
+// `git ls-files` enumerates a checked-out SUBMODULE as its gitlink path and a
+// SYMLINK as the link itself — never the files beneath or behind either, which
+// the gate tools nonetheless read straight through. A key built from the
+// survivors alone would therefore sit STILL while code under a submodule (or
+// behind a directory symlink) changed: a later `check` would take a hit on a tree
+// it never gated, which is the one failure this module exists to prevent.
+//
+// The only safe answer is NO KEY AT ALL — the same `null` the module already
+// gives for a tree it cannot enumerate, which every caller reads as "run
+// everything, record nothing". The cache is simply OFF in such a repository, and
+// says nothing about it.
+//
+// The rule is "every input is a REGULAR FILE", so a symlink to a FILE — whose
+// bytes `git hash-object` would in fact follow and hash — is unkeyable too:
+// deciding per target kind would mean re-deriving soundness for each of them
+// (dangling, looping, out-of-tree, retargeted between two questions about it),
+// and the price of the stricter rule is only a full gate run.
+// ===========================================================================
+
+const SUBMODULE_PATH = "vendor/inner";
+const LINKED_DIR = "vendor/linked";
+const LINKED_FILE = "src/alias.ts";
+
+describe("a tree holding a checked-out submodule", () => {
+  let repo: string;
+
+  beforeAll(() => {
+    repo = makeRepo();
+    // Anchor: this very fixture HAS a key while it is an ordinary tree, so every
+    // null below is the submodule speaking and not a module that stopped
+    // answering.
+    expectCodeHash(computeCodeHash(repo));
+    addSubmodule(repo, SUBMODULE_PATH);
+  });
+
+  it("really holds a gitlink", () => {
+    // git's own account of the entry: mode 160000 is a reference to another
+    // repository, not a directory of files the enumeration could have reached.
+    expect(indexMode(repo, SUBMODULE_PATH)).toBe("160000");
+  });
+
+  it("has no code hash", () => {
+    expect(computeCodeHash(repo)).toBeNull();
+  });
+
+  it("still has none once the code inside the submodule changes", () => {
+    // The stale green this refuses: the enumeration cannot see the submodule's
+    // own files, so a key that survived this edit would freeze against
+    // everything under here.
+    writeInRepo(
+      repo,
+      `${SUBMODULE_PATH}/lib/inner.ts`,
+      "export const inner = 2;\n"
+    );
+    expect(computeCodeHash(repo)).toBeNull();
+  });
+});
+
+describe("a tree holding a symlink to a directory", () => {
+  let repo: string;
+  let outside: string;
+
+  beforeAll(() => {
+    repo = makeRepo();
+    expectCodeHash(computeCodeHash(repo));
+    outside = makeOutsideDir();
+    trackSymlink(repo, LINKED_DIR, outside);
+  });
+
+  it("really holds a symlink", () => {
+    // Mode 120000 — git tracked the LINK, not a copy of what it points at.
+    expect(indexMode(repo, LINKED_DIR)).toBe("120000");
+  });
+
+  it("has no code hash", () => {
+    expect(computeCodeHash(repo)).toBeNull();
+  });
+
+  it("still has none once the code behind the link changes", () => {
+    writeFileSync(join(outside, OUTSIDE_FILE), "export const outside = 2;\n");
+    expect(computeCodeHash(repo)).toBeNull();
+  });
+});
+
+describe("a tree holding a symlink to a file", () => {
+  it("has no code hash either", () => {
+    // Control first: the same fixture without the link answers, so the null is
+    // the symlink and nothing else.
+    expectCodeHash(computeCodeHash(makeRepo()));
+    const repo = makeRepo();
+    trackSymlink(repo, LINKED_FILE, "app.ts");
+    expect(indexMode(repo, LINKED_FILE)).toBe("120000");
+    expect(computeCodeHash(repo)).toBeNull();
+  });
+});
+
+describe("a tree holding an ordinary nested directory of files", () => {
+  it("still has a code hash", () => {
+    // The anti-vacuity control for all of Slice 4c: the SAME paths, filled with
+    // plain files instead of a gitlink and a symlink, are keyed as usual — so
+    // what costs the key above is what git could not hand over, never depth, a
+    // vendor directory, or a module that gave up on nested trees.
+    const repo = makeRepo({
+      files: {
+        [`${LINKED_DIR}/lib/outside.ts`]: "export const outside = 1;\n",
+        [`${SUBMODULE_PATH}/lib/inner.ts`]: "export const inner = 1;\n",
+      },
+    });
+    expect(indexMode(repo, `${SUBMODULE_PATH}/lib/inner.ts`)).toBe("100644");
+    expectCodeHash(computeCodeHash(repo));
   });
 });
 
