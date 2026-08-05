@@ -1,4 +1,4 @@
-# 0020. Single build run per plan
+# 0021. Single build run per plan
 
 `/dobby:execute` used to launch one Workflow-tool run per wave, with the chat silent until the final table — N ceremonies per plan and no live signal. We decided the whole approved plan goes into ONE Workflow invocation (the **build run**): the verbatim script in `skills/execute/references/build-workflow.md` sequences the waves itself (`parallel()` inside each wave, preserving area-disjointness and destructive-task isolation), skips dependents of a `needs-human` task as `blocked` (transitively, zero agents spawned, via the `dependsOn` field `build-plan` now exposes), and narrates itself with `log()` — adaptive verbosity: one terminal line per task plus retry lines, escalating to full milestone detail only for a task that failed a review or verify.
 

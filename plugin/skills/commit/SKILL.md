@@ -84,7 +84,7 @@ It owns the polling (CI to terminal, then the review round, each phase on its ow
 
 | `verdict` | What it means | Do |
 |---|---|---|
-| `merge-ready` | CI green, review posted, no open threads | State plainly that the PR is merge-ready. **NEVER merge it yourself — merging is always the user's call.** |
+| `merge-ready` | CI green, review posted, no open threads | State plainly that the PR is merge-ready. **NEVER merge it yourself — merging is always the user's call.** The merge itself is offered, gated, inside `/dobby:finish` (the Next step below). |
 | `feedback-present` | Open review threads (`openThreads` > 0) | Invoke **`/dobby:address-review`** via the Skill tool. It owns triage (with its human gate), the fixes, thread resolution and the re-trigger — don't reimplement any of it here. |
 | `open-unreviewed` | Nothing posted before the deadline | Report the PR as open + unreviewed and end. Never poll again for a bot that may not exist. |
 | `ci-failed` | A check went red (`failing[]` names each one + its `link`) | Route those check names and links to a worker — **never** an inline edit. After the worker's fix, re-run step 5 (a fix is a commit) and then this step. |
@@ -99,8 +99,8 @@ A **nonzero exit** means gh could not report at all (auth, network, rate limit) 
 
 Reached only once the commit is **on the remote**: a red gate, a failed `git commit` and a failed push all end the run inside step 5, with what went wrong as the last word — no handoff, no next stage. Otherwise the commit landed, and — off `main` — the monitor has run to its verdict. Present the next stage as an **AskUserQuestion** — one question that restates where things landed (the PR is monitored and waiting on **your** merge; the skill never merges) — with the options below (recommended first, then Stop here). On the user's selection, invoke the chosen `/dobby:<skill>` via the Skill tool; "Stop here" ends the turn.
 
-- **`/dobby:finish`** *(Recommended, after you merge the PR)* — the kit created a worktree for this goal at `/dobby:scope`; tear down the worktree: close the dev server, remove the worktree + branch, and pull main up to date.
-- **Stop here** — the PR still needs your merge first (or is waiting on review); come back to `/dobby:finish` once it's merged.
+- **`/dobby:finish`** *(Recommended)* — merge the merge-ready PR (gated inside finish — the merge is your explicit selection there, never automatic) and tear down the worktree the kit created for this goal at `/dobby:scope`: close the dev server, remove the worktree + branch, and pull main up to date.
+- **Stop here** — nothing is merged or torn down; come back to `/dobby:finish` whenever you want the merge and the cleanup (or merge it yourself first — finish handles a merged PR just the same).
 
 ## Acceptance checklist
 
