@@ -22,7 +22,7 @@ Before interrogating, dispatch a `researcher` agent (Agent tool, `subagent_type:
 
 ## Step 4: Interview — frontier rounds
 
-The interview is a **design tree**: every open decision hangs off the answers it depends on. The **frontier** is every open decision whose prerequisites are already settled — everything you could ask RIGHT NOW without guessing. Each turn asks the WHOLE frontier as one **round**, then waits. The answers reshape the tree; recompute the frontier and ask the next round.
+The interview is a **design tree**: every open decision hangs off the answers it depends on. The **frontier** is every open decision whose prerequisites are already settled — everything you could ask RIGHT NOW without guessing. A **round** is the batch of frontier questions ONE turn carries — one vehicle, popup capped at 4 — asked, then waited on. A frontier that fits one vehicle and that cap is asked in a single round; one that mixes vehicles or runs wider DRAINS across consecutive rounds — popup round(s) first, then the text round, per the rules below. Answers reshape the tree after every round: recompute the frontier and continue.
 
 A question whose premise depends on an answer still open is NOT on the frontier — it belongs to a later round. When every remaining question hangs off the last answer, the frontier is one question wide and the round IS a single question: the old one-at-a-time interview is the degenerate case of this mechanism, not a separate mode.
 
@@ -113,7 +113,7 @@ Interview in the user's language. Write the Decisions summary (and anything pers
 - [ ] Domain glossary read (if present) and used; conflicts challenged
 - [ ] Code explored via a `researcher` (findings held in your context) to ask informed, specific questions
 - [ ] Every ambiguity, entity state, role, route, and edge case resolved — the frontier is empty
-- [ ] Each round asked the WHOLE frontier (independent questions together, dependent ones deferred to a later round), homogeneous by vehicle: popup round of ≤4 first, open-ended ❓/➡️ text round after
+- [ ] Each turn asked ONE round, homogeneous by vehicle (popup round of ≤4 first, open-ended ❓/➡️ text round after), with consecutive rounds until the frontier drained — independent questions together, dependent ones deferred to a later round
 - [ ] Every question was self-contained (its own context restated INSIDE the question, single topic) — no bundled/general multi-decision questions
 - [ ] Any answer orphaned by a same-round sibling was discarded out loud and re-asked next round with the corrected premise
 - [ ] Mid-interview facts went to a `researcher` without stalling the interview — only downstream questions waited
