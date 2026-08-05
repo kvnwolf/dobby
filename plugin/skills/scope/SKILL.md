@@ -44,7 +44,7 @@ Before anything else touches the codebase, put the session in its own worktree s
 Settle the slug first — the worktree dir and the branch are named after it, so it has to read like the goal (no prompt, no confirmation either way):
 
 - **Free-text goal** — take `slug` from Step 1 as-is; it is already a few kebab-case words off the goal text.
-- **Issue goal** — Step 1's `slug` is only a STARTING point (github returns `issue-42`, linear `von-123`). Derive the real one from the issue TITLE you fetched in Step 1 — a few kebab-case words capturing it, e.g. `add-csv-export` — and fall back to the parse's `issue-<n>` / `von-123` only when no title was readable.
+- **Issue goal** — compose it: Step 1's `slug` LITERALLY as the PREFIX, then up to FOUR kebab-case words off the issue TITLE you fetched in Step 1 — `issue-42-add-csv-export` (github), `von-123-fix-stale-session-cache` (linear). The id leads because it is the part that must survive clipping in tab and pane titles; never rebuild it from `id`/`source` (no `gh-42`, no `#42`, no `VON-123`) — the CLI is the only authority on an issue's slug stem. A title that was unreadable, or that slugifies to nothing (emoji-, CJK- or punctuation-only), degrades to the prefix alone — never a trailing `-`.
 
 Then ask what that slug would take:
 
@@ -145,7 +145,7 @@ Interact with the user in their language. Write what you persist — `STATE.md` 
 - [ ] Goal normalized via `bunx dobby goal parse "<arg>" --json` (never by reading `dobby.config.json#tracker` or matching issue patterns by hand); asked in plain text if the input was empty
 - [ ] `hardStop` honored: non-null → stage STOPPED and reported (D8); a free-text goal always continues
 - [ ] If `source` is an issue: fetched per **view goal — the exception** in `../backlog/references/trackers.md`, then claimed with `bunx dobby claim <id> --json` — github when `claimed: true`; linear by executing the returned `{delegate:"mcp", op:"claim"}` descriptor through the ToolSearch-resolved tool (the kit's ONLY Linear-MCP write point; In Review / Done stay Linear-native), stage STOPPED if the MCP cannot read it
-- [ ] Slug settled before the preflight: taken as-is from `goal parse` for a free-text goal; derived from the fetched issue TITLE for an issue goal (the parse's `issue-<n>` / `von-123` only as the fallback when no title was readable)
+- [ ] Slug settled before the preflight: taken as-is from `goal parse` for a free-text goal; for an issue goal, the parse's `slug` used literally as the PREFIX plus up to four kebab-case words off the fetched TITLE (`issue-42-add-csv-export`, `von-123-fix-stale-session-cache`), degraded to the prefix alone when no usable title was readable
 - [ ] `bunx dobby scope preflight --slug <slug> --json` run before touching the tree; `nested.insideWorktree` → soft-STOP ("open a new pane"), collision → retried with `suggestedSlug`, `existingWorktrees` treated as informational (parallel goals never refused)
 - [ ] Worktree created + entered via the `EnterWorktree` tool with the collision-free slug (branch `worktree-<slug>`, `.claude/worktrees/<slug>/`)
 - [ ] `bunx dobby up --json` run (blocking) when `configPresent`; `ok:true` reported with `devUrl`/`phase` (no-app = clean success); `ok:false` → `reason` + stderr reported, then the two-option AskUserQuestion — **(a) abort (default/recommended)** `ExitWorktree(remove)` → stopped, or **(b) continue degraded** only on the explicit selection, naming `degradedCommand` when non-null
