@@ -1,11 +1,11 @@
 ---
 name: finish
-description: Post-merge worktree teardown — use when the PR of the current goal's worktree is merged and you want to clean up and return to main.
+description: Closes the goal end-to-end — merges the goal's PR when it is still open (gated, on your explicit selection), then tears its worktree down. Use when the current goal's PR is merged OR merge-ready and you want to clean up and return to main.
 ---
 
-The end of a work session. Once the goal's PR is merged, tear down its worktree: run `bunx dobby down` to close the kit-opened cmux panes (killing the dev server) and run the project's cleanup, then delete the branch and pull the main checkout up to date — closing the goal so the tree is ready for the next one.
+The end of a work session, closed end-to-end. If the goal's PR is still OPEN, `/dobby:finish` offers to **merge it first** — always as an explicit selection at the gate in Step 1, never automatically. Once it is merged, tear down its worktree: run `bunx dobby down` to close the kit-opened cmux panes (killing the dev server) and run the project's cleanup, then delete the branch and pull the main checkout up to date — closing the goal so the tree is ready for the next one.
 
-**One session per goal.** Each goal gets its own worktree; parallel goals run in parallel worktrees (one per cmux pane/session — legitimate and encouraged). `/dobby:finish` tears down THIS goal's worktree after its PR merges — it does not touch other goals' worktrees. Run it (typed, manually) after the PR merges.
+**One session per goal.** Each goal gets its own worktree; parallel goals run in parallel worktrees (one per cmux pane/session — legitimate and encouraged). `/dobby:finish` tears down THIS goal's worktree once its PR is merged — it does not touch other goals' worktrees. Run it (typed, manually) when the PR is merged, or when it is merge-ready and you want finish to merge it.
 
 **The verdict is the CLI's; every destructive gate is yours.** `bunx dobby finish --preflight` computes what the teardown would destroy and whether it is safe; nothing about it removes anything. You branch on the verdict, ask the user at every gate, and perform the removal.
 
@@ -22,10 +22,31 @@ One call resolves the target (`slug`, plus the kit's naming for it — `branch` 
 - **`blocked` with `dobbyInstalled: false`** — `dobby down` is the mandatory pre-removal teardown and has no fallback. **STOP** and point the user at `/dobby:onboard` (or `/dobby:migrate-config` for a repo moving off an old contract).
 - **`safe`** — a MERGED PR and a clean tree. Proceed to Step 2 without a prompt.
 - **`confirm-required`** — this is a destructive-action gate. **Show the exact state**: every entry of `reasons[]` (an open/closed/absent PR, uncommitted changes), the PR state + `pr.url`, and the `dirty.files` list. Then require **explicit user confirmation** with an `AskUserQuestion` — an in-stage destructive-action gate, NOT a stage handoff:
-  - **Cancel — don't destroy** *(Recommended)* — stop; nothing is removed. (The user finishes/merges the PR or handles the uncommitted work first.)
+  - **Merge & finish** *(Recommended when the PR is open and its checks are green)* — merge the goal's PR right here, then finish (see "Merging inside the gate" below). Offer this option **only** when the PR is OPEN (`pr.state: "OPEN"`) and the tree is otherwise clean — the open PR is the only entry in `reasons[]` and `dirty.count` is `0`. A closed/absent PR or a dirty tree gets the two options below and nothing else.
+  - **Cancel — don't destroy** *(Recommended when the PR has open feedback or the tree is dirty)* — stop; nothing is merged and nothing is removed. (The user takes the PR through `/dobby:address-review`, or handles the uncommitted work, then re-runs `/dobby:finish`.)
   - **Destroy anyway** — the user accepts losing an unmerged branch and any uncommitted changes; carry that acceptance forward (it authorizes `discard_changes` / `--force` / the branch force-delete in Step 3). Only pick this on the user's explicit say-so.
 
-Do not proceed to teardown on anything but `safe` or an explicit "destroy anyway".
+**Merging inside the gate.** The selection of "Merge & finish" IS the user's merge decision — the kit never merges without it, and there is no path here that merges on the preflight's word alone:
+
+1. Confirm the PR is actually merge-ready:
+
+   ```bash
+   bunx dobby pr watch --await-review --deadline 60 --json
+   ```
+
+   Run it where the goal's PR resolves: same-session, the worktree's own branch answers for it; in `orphan` mode name the PR explicitly (`--pr <the number ending pr.url>`), because the main checkout's branch has no PR of its own. Merge on verdict **`merge-ready`** and on nothing else. On any other verdict, report it and do NOT merge: `feedback-present` → invoke **`/dobby:address-review`** via the Skill tool (it owns triage, the fixes, thread resolution and the re-trigger); `ci-failed` / `ci-pending` / `open-unreviewed` / `skipped` → report the verdict as it is and stop, worktree intact. A nonzero exit means gh could not report at all — surface its stderr and stop; an unreadable pipeline is never a merge.
+
+2. Merge it **squashed** — the kit's convention, and the reason `branchDeleteSafe` / `-D` exist in Step 3:
+
+   ```bash
+   gh pr merge <pr.url> --squash
+   ```
+
+   If gh refuses (branch protection, a merge conflict, missing permissions), report its words and stop — nothing is torn down.
+
+3. Re-run the preflight exactly as you ran it above (same `--slug`, same cwd). It now reads the PR as MERGED and answers `safe`: continue to Step 2 with no further prompts. If it answers anything else, show what it says and stop.
+
+Do not proceed to teardown on anything but `safe` — either read straight from the preflight, or re-read after the gated merge — or an explicit "destroy anyway".
 
 ## Step 2: Tear down the run — `bunx dobby down`
 
@@ -79,7 +100,10 @@ Interact with the user in their language. Write any note you persist in English;
 
 - [ ] `bunx dobby finish --preflight --json` run FIRST (with `--slug` when finishing an orphan from the main checkout); no fact re-derived by hand (no separate `gh pr view`, `git status`, or install probe)
 - [ ] `blocked` handled by cause: `slug: null` → target confirmed with the user from `candidates[]` and the preflight re-run with `--slug`; `dobbyInstalled: false` → STOPPED pointing at `/dobby:onboard` / `/dobby:migrate-config`
-- [ ] `safe` proceeded without a prompt; `confirm-required` showed the exact state (`reasons[]`, PR state + url, `dirty.files`) and got explicit confirmation via AskUserQuestion (Cancel recommended / Destroy anyway) before anything was destroyed
+- [ ] `safe` proceeded without a prompt; `confirm-required` showed the exact state (`reasons[]`, PR state + url, `dirty.files`) and got explicit confirmation via AskUserQuestion (Merge & finish only when offered / Cancel / Destroy anyway) before anything was merged or destroyed
+- [ ] The **Merge & finish** option offered ONLY on an OPEN PR with an otherwise-clean tree (open PR the only `reasons[]` entry, `dirty.count: 0`) — never on a closed/absent PR or a dirty tree
+- [ ] The PR merged ONLY on the user's explicit "Merge & finish" selection, and only after `bunx dobby pr watch --await-review --deadline 60 --json` answered `merge-ready` (any other verdict reported and NOT merged; `feedback-present` routed to `/dobby:address-review`); merged as a squash (`gh pr merge <pr.url> --squash`)
+- [ ] After the merge, the preflight re-run (same `--slug`/cwd) and read as MERGED / `safe` before Step 2 — never assumed
 - [ ] `bunx dobby down` run before removal — inside the worktree same-session, with `worktreePath` as cwd for an orphan; closes the kit cmux panes / kills the detached run, deletes the Neon branch, runs `teardown[]` extras; a no-app project no-ops cleanly; a reported failure surfaced for the user's call, not auto-forced
 - [ ] Worktree + branch removed by `removeMechanism`: `ExitWorktree(remove)` same-session (cwd restored to main; `discard_changes` only after the explicit Step 1 confirmation) / raw `git worktree remove <worktreePath>` + `git branch -D <branch>` for `raw-git`, run from `mainRoot` — `-D` because `branchDeleteSafe` (gh MERGED), not git ancestry, is the safe-to-delete signal
 - [ ] `git pull` on the main checkout; on conflict/divergence reported and stopped — never forced

@@ -48,7 +48,7 @@ dobby runs in a plain `claude` session — your terminal, including over ssh, an
 
 - `/dobby:scope` creates and enters a per-goal git worktree and brings it up with `bunx dobby up` (installs deps, materializes the env files a fresh worktree needs, then starts the app).
 - `/dobby:execute` re-runs `bunx dobby up` — idempotent and liveness-first, so a re-run never double-starts.
-- `/dobby:finish` tears it all down with `bunx dobby down` after your PR merges.
+- `/dobby:finish` merges the goal's PR when it's still open (gated — your explicit call), then tears it all down with `bunx dobby down`.
 
 When it detects **cmux** (`CMUX_WORKSPACE_ID` is set in every cmux pane), `dobby up` enriches the run: the dev server gets its own named pane, a browser pane opens at the app URL once the app reports live (never on a booting 404), and the verifier drives the UI through cmux's browser CLI. A plain ssh/tmux session (no cmux) degrades gracefully — the app runs as a detached background job, no panes.
 
@@ -82,10 +82,10 @@ A work session moves through six stages. Each stage ends by asking which command
 /dobby:commit       docs synced, message + PR body authored, then `dobby ship`
       │             (gate → commit → push → PR) and the watch to a verdict
       │
-/dobby:finish       (after the PR merges) tear down the worktree
+/dobby:finish       merge the PR (your call), tear down the worktree
 ```
 
-`/dobby:finish` is the post-merge closing step: once your PR is merged, `bunx dobby down` runs the config's teardown, closes the cmux panes it opened (or kills the background run), and deletes the per-worktree Neon branch; then it removes the per-goal worktree + branch and pulls the main checkout. It's gated like every other stage: `/dobby:commit`'s handoff question offers it once the PR is merged, and nothing runs until you pick it.
+`/dobby:finish` is the closing step: if the PR is still open, it offers to **merge** it first — your explicit selection at its gate, squash-merged, and only once `dobby pr watch` says merge-ready — and then `bunx dobby down` runs the config's teardown, closes the cmux panes it opened (or kills the background run), and deletes the per-worktree Neon branch; finally it removes the per-goal worktree + branch and pulls the main checkout. It's gated like every other stage: `/dobby:commit`'s handoff question offers it once the PR is merge-ready, and nothing — the merge included — runs until you pick it.
 
 **The push is guarded twice.** `/dobby:commit` never runs the gate by hand — `dobby ship` composes it in-process, and a red gate commits nothing — and the **pre-push backstop** (the git hook `dobby up` installs) re-runs it on `git push`, so a red tree can't reach the remote even when the commit happened outside the kit. The mechanized half of the convention rules rides the same path: they fire on every Edit/Write through the edit hook and again at push, so conformance no longer depends on a skill having been read.
 
@@ -181,13 +181,13 @@ Then comes `/dobby:commit`: it syncs the docs and authors the conventional-commi
 /dobby:finish
 ```
 
-The whole session ran inside a per-goal worktree that `/dobby:scope` created — so after your PR merges on GitHub, one more step retires it:
+The whole session ran inside a per-goal worktree that `/dobby:scope` created — so once your PR is merge-ready, one more step merges it and retires the worktree:
 
 ```
-/dobby:scope … → interview → research → spec → execute → wrap → commit → (merge on GitHub) → /dobby:finish
+/dobby:scope … → interview → research → spec → execute → wrap → commit → /dobby:finish (merges, then tears down)
 ```
 
-`/dobby:finish` confirms the PR is actually **merged** (if it's still open, closed, or the tree is dirty, it shows the state and asks before destroying anything), then runs `bunx dobby down` (teardown extras, closes the cmux panes it opened or kills the background run, deletes the Neon branch), removes the worktree and its branch, and pulls your main checkout. If the original session died and left an **orphaned** worktree behind, run `/dobby:finish` anyway — it falls back to a raw-git cleanup after verifying the branch was merged and confirming with you.
+`/dobby:finish` confirms the PR is actually **merged** (if it's still open, closed, or the tree is dirty, it shows the state and asks before merging or destroying anything — on an open PR with a clean tree, "Merge & finish" is one of the options: it squash-merges once `dobby pr watch` reports merge-ready, then re-checks and continues), then runs `bunx dobby down` (teardown extras, closes the cmux panes it opened or kills the background run, deletes the Neon branch), removes the worktree and its branch, and pulls your main checkout. If the original session died and left an **orphaned** worktree behind, run `/dobby:finish` anyway — it falls back to a raw-git cleanup after verifying the branch was merged and confirming with you.
 
 ## When to use what
 
@@ -209,7 +209,7 @@ The whole session ran inside a per-goal worktree that `/dobby:scope` created —
 | A brand-new empty repo | `/dobby:onboard` — scaffolds it and picks the issue tracker (GitHub Issues by default, or Linear / local `BACKLOG.md`) |
 | A repo on an older dobby — or still on vite-plus / the legacy `.claude/commit.config.yml` | `/dobby:upgrade` — bumps to the latest and walks the per-version upgrade notes; a legacy repo is routed through `/dobby:migrate-config` (the one-time move onto `@kvnwolf/dobby` + `dobby.config.json`) |
 | Work is done, ship it | `/dobby:commit` |
-| The PR merged and the worktree needs retiring | `/dobby:finish` |
+| The PR is merge-ready (or already merged) and the worktree needs retiring | `/dobby:finish` — it offers the merge, then cleans up |
 | A merged version ready to publish | `/dobby:release` — from the main checkout; npm or a Homebrew cask, per `dobby.config.json`'s `release` key |
 | A review bot or reviewer left comments on your PR | `/dobby:address-review` |
 | Structuring or refactoring a module's files | `/dobby:module-conventions` (auto-activates) |
@@ -273,7 +273,7 @@ These couple to Claude Code's session storage (`~/.claude/projects`) on purpose 
 | A hook blocked my `git push` | The pre-push backstop found a red gate on the tree being pushed | Read the findings it printed (they're the whole list, not a sample) and fix them — or, when you're pushing a WIP branch on purpose, `git push --no-verify` as a conscious bypass |
 | Execute re-authored the workflow and lost the loop logic | The build-loop script must be used verbatim | Re-run `/dobby:execute`; the skill's `references/build-workflow.md` is the canonical script |
 | `portless` prompts for sudo / fails to bind `:443` on first run | First-time CA install + privileged port | Run `portless trust` once (surfaced by `/dobby:onboard`); it's a one-time setup, later runs don't need it |
-| An old session died and left a worktree in `.claude/worktrees/` | The session couldn't run `/dobby:finish` before exiting | Run `/dobby:finish` anyway — it detects the orphan, verifies the branch merged, confirms with you, and cleans up via raw git |
+| An old session died and left a worktree in `.claude/worktrees/` | The session couldn't run `/dobby:finish` before exiting | Run `/dobby:finish` anyway — it detects the orphan, checks the PR (offering the merge if it's still open), confirms with you, and cleans up via raw git |
 | `/dobby:scope` stops ("open a new pane") | Nesting — THIS session is already inside a worktree, and the native tool can't nest (parallel worktrees from OTHER sessions are fine and don't trigger this) | Open a new cmux pane / `claude` session for the new goal and run `/dobby:scope <goal>` there — one goal per pane, no nesting |
 
 ## Recovery quick reference
