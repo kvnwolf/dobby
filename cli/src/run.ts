@@ -83,6 +83,7 @@ const OPTION_LINES = [
   "  --fix           check: apply biome's safe fixes first, then report what remains",
   "  --hook          check: edit-time PostToolUse mode (payload on stdin)",
   "  --pre-push      check: git pre-push backstop mode (ref lines on stdin)",
+  "  --no-cache      check: ignore the gate cache — run every step (a green full gate is still recorded)",
   "  --dry-run       dev / build / db:* / up / down: print the resolved action plan without executing it",
   "  -v, --version   Print the dobby version and exit",
 ];
@@ -189,6 +190,9 @@ const COMMANDS: Readonly<Record<string, CommandEntry>> = {
       // The git pre-push backstop mode: git's ref lines arrive on stdin (the bin
       // drains it for `--pre-push` exactly as it does for `--hook`).
       "pre-push",
+      // Bypass the gate cache's CONSULT (turbo `--force` semantics): every step
+      // runs, and a green FULL gate is still recorded for the next run.
+      "no-cache",
     ],
   },
   claim: { flags: ["json", "issue"], handler: runClaim },
@@ -488,6 +492,7 @@ export async function run(
         label: { type: "string" },
         lint: { type: "boolean" },
         "message-file": { type: "string" },
+        "no-cache": { type: "boolean" },
         "notes-file": { type: "string" },
         plan: { type: "string" },
         pr: { type: "string" },
@@ -609,10 +614,18 @@ export async function run(
     // project-wide gate (subset by the selective flags). `--fix` applies biome's
     // SAFE fixes first (project-wide, or over the named files) so the pre-commit
     // gate never fails on formatting the edit hook did not reach, THEN reports what
-    // remains. A hard error (not a git repo / a bundled tool missing) reports on
-    // stderr with exit 1; otherwise the report's aggregated exit code (first failing
-    // step, 0 if all passed) is used.
-    const report = check(positionals.slice(1), cwd, checkFlags, Boolean(fix));
+    // remains. `--no-cache` bypasses the gate cache's consult so every selected
+    // step really runs (a green full gate is still recorded). A hard error (not a
+    // git repo / a bundled tool missing) reports on stderr with exit 1; otherwise
+    // the report's aggregated exit code (first failing step, 0 if all passed) is
+    // used.
+    const report = check(
+      positionals.slice(1),
+      cwd,
+      checkFlags,
+      Boolean(fix),
+      options["no-cache"] === true
+    );
     if (!report.ok) {
       return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
     }

@@ -190,6 +190,7 @@ dobby check --unused           # knip only
 dobby check --build --test     # only the build + test steps
 dobby check src/app.tsx        # biome-only fast path over one file
 dobby check src/app.tsx --fix  # fix just that file, then report
+dobby check --no-cache         # ignore the gate cache — run every step
 dobby check --hook             # edit-time PostToolUse mode (payload on stdin)
 dobby check --pre-push         # git pre-push backstop mode (ref lines on stdin)
 ```
@@ -197,6 +198,18 @@ dobby check --pre-push         # git pre-push backstop mode (ref lines on stdin)
 `--fix` applies biome's **safe** fixes across the whole tree first (`biome check --write` — never the unsafe rewrites), then runs the selected pipeline and reports whatever remains. It composes with the selective flags (`--fix --lint` = fix then lint-report) and, with file arguments, fixes just those files.
 
 **`dobby check --fix` IS the pre-commit gate**, and [`dobby ship`](#dobby-ship) is the ceremony that runs it for you — in-process, between staging and the commit, so nothing red is ever committed. A human or a script that commits outside `ship` runs `bunx dobby check --fix` before committing; [`check --pre-push`](#dobby-check-file) is the backstop that catches whoever didn't.
+
+**Re-running the gate on an unchanged tree is free.** A project-wide run keys the working tree's non-inert files and, when that exact input set already cleared a full green gate under this dobby version and this `dobby.config.json`, prints
+
+```
+gate skipped: inputs unchanged since last green (a1b2c3d4 @ 2026-08-03T09:41:12.004Z)
+```
+
+and skips biome/tsc/knip/build/conventions/test — your `checks[]` extras still run (they are arbitrary shell and may read anything), and their verdict is the exit code.
+
+The key is **one content hash over the whole working tree minus a fixed inert set** — tracked plus untracked-but-unignored files, each path paired with its content, taken after `--fix` has rewritten what it is going to rewrite. The inert set is prose and host state only, the files no gate step ever reads: `**/*.md` outside fixture directories, `docs/`, and `.claude/`. Editing one of those never invalidates a green entry; every other file does, `package.json` / lockfile / `.gitignore` included, as do a dobby upgrade and any edit to `dobby.config.json`. Recording is **all or nothing**: only a full gate that actually ran and came out green is remembered (a green `--lint` proves nothing about tsc), and the **last five** green input sets are kept — so flipping between two branches, or reverting an experiment, still hits. A selective flag run is served by a full-green entry but never records one, the per-file fast path and `--hook` never consult it, and **`--no-cache`** ignores an entry and runs everything (a green full gate is still recorded). The cache lives in `.dobby/gate-cache.json`, which dobby keeps out of git for you — through `.git/info/exclude`, your repository's own private ignore file, so a check never edits (or creates) a `.gitignore` you would then have to commit. Running the gate leaves your working tree byte for byte as it found it.
+
+**Known limitation:** the key only sees what git can enumerate, so **gitignored env files are invisible to it** — editing `.env.local` (or any other ignored file your build or tests read) does not invalidate a green entry. Re-run with `dobby check --no-cache` after changing one.
 
 `--hook` reads a PostToolUse payload from stdin, applies biome's safe auto-fixes to the edited file in place, and surfaces only unfixable findings (exit 2, findings on stderr). This is what the plugin's edit hook invokes.
 
@@ -305,9 +318,9 @@ dobby ship --message-file /tmp/msg.txt --pr-body-file /tmp/pr.md --json
 
 **The exit code decides.** A red gate prints every finding whole and ends the ceremony with the gate's own exit code — nothing committed, nothing pushed, no cache written for a tree that never passed. Write the message and PR-body files **outside the repository**: ship stages the whole tree, so a message file inside it would land in the commit it describes.
 
-A green gate writes the **gate cache** at `.dobby/gate-cache.json` — the staged tree hash, the dobby version, the hash of `dobby.config.json`, and the verdict — which is what lets `check --pre-push` skip re-running a gate that already passed on exactly this tree, and only on this tree.
+A green gate writes the **gate cache** at `.dobby/gate-cache.json` — the staged tree hash, the dobby version, the hash of `dobby.config.json`, and the verdict — which is what lets `check --pre-push` skip re-running a gate that already passed on exactly this tree, and only on this tree. It shares that file with the per-check cache above: ship records its tree without disturbing the green input sets `check` remembers there, and its own in-process gate is served from them like any other run — a ship over a tree you just checked skips straight to the commit.
 
-`--json` answers `{cacheNote, cacheWritten, committed, gateExitCode, prNote, prUrl, pushNote, pushed, sha}`. The three notes exist so a caller can tell "skipped by policy" from "could not be done": `cacheNote` says why no cache entry was written, `prNote` why a requested PR has no URL (gh absent, expired auth, an API error), `pushNote` that the push went to origin instead of the branch's non-origin upstream. Ship refuses a detached HEAD before touching anything — the ceremony needs a named branch.
+`--json` answers `{cacheNote, cacheWritten, committed, gateExitCode, gateNote, prNote, prUrl, pushNote, pushed, sha}`. The four notes exist so a caller can tell "skipped by policy" from "could not be done": `cacheNote` says why no cache entry was written, `gateNote` carries the `gate skipped: inputs unchanged since last green (…)` line when the ceremony's gate was served from the cache (null when it really ran), `prNote` why a requested PR has no URL (gh absent, expired auth, an API error), `pushNote` that the push went to origin instead of the branch's non-origin upstream. Ship refuses a detached HEAD before touching anything — the ceremony needs a named branch.
 
 ### `dobby release`
 

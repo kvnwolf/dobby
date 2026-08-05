@@ -2250,6 +2250,47 @@ describe("run() — check test step (A2 hermeticity / missing-keys advisory)", (
       rmSync(repo, { force: true, recursive: true });
     }
   });
+
+  it("reads vitest's STACK_TRACE_ERROR placeholder as the TIMEOUT it stands for", async () => {
+    // A test killed by its own timeout is reported by vitest wearing the message
+    // of its pre-allocated stack-trace placeholder (`Error: STACK_TRACE_ERROR`),
+    // which, echoed verbatim, reads as an unexplained crash in a file that is
+    // fine. The stub emits exactly that shape — an assertion-level failure whose
+    // first failureMessage is the placeholder — so the summary line is asserted on
+    // its meaning, not on the placeholder's bytes.
+    const repo = makeVitestStubRepo({
+      exitCode: 1,
+      stdout: (dir) => {
+        const suite = join(dir, "src", "clean.ts");
+        return JSON.stringify({
+          testResults: [
+            {
+              assertionResults: [
+                {
+                  failureMessages: [
+                    `Error: STACK_TRACE_ERROR\n    at run (${suite}:1:1)`,
+                  ],
+                  status: "failed",
+                },
+              ],
+              name: suite,
+              status: "failed",
+            },
+          ],
+        });
+      },
+    });
+    try {
+      const result = await run(["check", "--test"], repo);
+      expect(result.exitCode).toBe(1);
+      // The failure line names the file and says TIMEOUT — plus why it is usually
+      // not a code defect.
+      expect(combined(result)).toMatch(/src\/clean\.ts — test timed out/);
+      expect(combined(result)).toMatch(/machine contention/);
+    } finally {
+      rmSync(repo, { force: true, recursive: true });
+    }
+  });
 });
 
 // --- Slice 5 (review-added): knip's finding-PRESENT path fails the gate --------
