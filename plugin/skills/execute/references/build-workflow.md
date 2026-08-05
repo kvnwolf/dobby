@@ -15,7 +15,7 @@ The leading test-author step is **gated** (see below): it runs ONLY when the rep
 Encoded rules:
 - **Use the script below VERBATIM.** Fill in ONLY the `args` (`waves` — or `tasks` for a single ad-hoc fix — `devUrl`, `hasTestSuite`, `workRoot`) — do NOT paraphrase, rename, or "simplify" the wave loop, the blocked-dependent skip, the `log()` lines, the loop logic, the null guards, the defensive `args` parse, the test-step gate, the worktree preamble, or the scoped re-review. Paraphrasing silently drops these fixes (it has before — a re-authored script reverted the review loop to the thrashing version).
 - **ONE build run per plan.** The whole plan goes into a SINGLE Workflow invocation; the script walks the waves in order. Do NOT launch one workflow per wave, and do NOT merge waves into one flat list — the wave boundaries ARE the safety (area-disjoint parallelism, destructive tasks alone) and the script preserves them exactly as they arrive.
-- **`args.waves` carries FULL task objects, never ids.** `bunx dobby build-plan --json` emits `waves[][]` as id arrays NEXT to `tasks[]`; the coordinator zips them so each wave entry is the whole task object (`{id, title, spec, decisions, constraints, areas, verifyRecipe, testFirst, dependsOn}`). The script reads `t.dependsOn` off those objects to skip blocked tasks; a wave of bare ids makes the run throw immediately instead of building the wrong thing.
+- **`args.waves` carries FULL task objects, never ids.** `bunx dobby build-plan --json` emits `waves[][]` as id arrays NEXT to `tasks[]`; the coordinator zips them so each wave entry is the whole task object (`{id, title, spec, decisions, constraints, areas, verifyRecipe, testFirst, dependsOn}`). The script reads `t.dependsOn` off those objects to skip blocked tasks; a wave of bare ids makes the run throw immediately instead of building the wrong thing — as does a task id repeated across the waves (ids key the run's outcome map, so they must be unique).
 - **Compute `workRoot` ONCE before launching, and pass it in `args`.** Before running the Workflow, resolve the absolute worktree root — `WORKROOT="$(git rev-parse --show-toplevel)"` — and hand it in as `args.workRoot`. The script PREPENDS a mandatory worktree preamble to every agent's `ctx` when `workRoot` is present (see the `WORKTREE` note below for why this is load-bearing — the session's worktree is nested under the main checkout).
 - Test-author, implement, review, verify = four separate agents (`agentType: 'dobby:test-author' | 'dobby:implementor' | 'dobby:reviewer' | 'dobby:verifier'`) — never one agent in two roles. Their role instructions live in the agent definitions, NOT in this script.
 - Order: (test-author, if gated in) → implement → review (loop until pass) → verify → (fail → restart implement→review→verify).
@@ -70,6 +70,17 @@ const WAVES = a.waves ?? [a.tasks]
 // each entry here is the FULL task object (this script reads t.dependsOn / t.spec off it).
 if (WAVES.some((w) => !Array.isArray(w) || w.some((t) => !t || typeof t !== 'object'))) {
   throw new Error('build run: every wave must be an array of FULL task objects — `build-plan` reports `waves` as id arrays, so zip them against `tasks[]` before launching')
+}
+// UNIQUE IDS. A task id KEYS the outcome map every later wave reads back, so a repeated id
+// would overwrite a sibling's terminal status and let a dependent build on a task that failed
+// (or block on one that passed). Neither build-plan nor an ad-hoc tasks[] enforces uniqueness —
+// so check it here, before a single agent burns tokens.
+const seenIds = new Set()
+for (const w of WAVES) {
+  for (const t of w) {
+    if (seenIds.has(t.id)) throw new Error(`build run: duplicate task id \`${t.id}\` across the waves — ids key the run's outcome map, so every task must have its own`)
+    seenIds.add(t.id)
+  }
 }
 const HAS_SUITE = a.hasTestSuite === true   // repo-level gate: only true when the project actually has a runnable test suite (lib/prose/plugin repos → false → classic 3-step, test-author never runs)
 const WORK_ROOT = a.workRoot        // absolute worktree root (git rev-parse --show-toplevel), computed ONCE by the coordinator. Load-bearing: the session's worktree is nested under the main checkout, so every agent must be pinned to it.
@@ -189,7 +200,7 @@ async function runTask(t, phaseName) {
 // THE WAVE LOOP — the whole plan in one run. Waves go one after another (a later wave may
 // depend on an earlier one); the tasks INSIDE a wave go at once, which is safe because the
 // plan already made each wave area-disjoint and put every destructive task alone in its own.
-const outcome = {}                           // id → terminal status, the ONLY thing a later wave reads back
+const outcome = Object.create(null)          // id → terminal status, the ONLY thing a later wave reads back. Null-prototype: a task id like `__proto__` / `constructor` must never resolve to an INHERITED property and fake a status no wave ever set.
 const results = []
 for (let i = 0; i < WAVES.length; i++) {
   const wave = WAVES[i]

@@ -469,6 +469,50 @@ describe("the build run — the args contract", () => {
     expect(harness.calls).toEqual([]);
   });
 
+  it("refuses waves repeating a task id, before any agent", async () => {
+    // A task id KEYS the outcome map every later wave reads back, so a repeat
+    // would overwrite a sibling's terminal status — and a dependent would build
+    // on a task that failed. BY HAND: T1 appears in wave 1 and again in wave 2.
+    const harness = makeHarness();
+
+    const failure = await runBuildRun(
+      harness,
+      waveArgs([[task("T1")], [task("T2"), task("T1")]])
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toMatch(/duplicate/i);
+    expect(String(failure)).toContain("T1");
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("reads a task id naming an inherited property as that task alone", async () => {
+    // BY HAND: wave 1 holds a task whose id is `__proto__` and whose verifier
+    // never passes, so it ends needs-human; wave 2's dependent must see THAT
+    // status — never a value inherited from `Object.prototype` — and therefore
+    // be skipped as blocked without spawning a single agent. The logged status
+    // of the blocker is what tells the two apart: an inherited read would name
+    // an object here, not the terminal status the wave actually recorded.
+    const harness = makeHarness({
+      always: { "verify:__proto__": VERIFY_FAILS },
+    });
+
+    const returned = await runBuildRun(
+      harness,
+      waveArgs([[task("__proto__")], [task("T2", ["__proto__"])]])
+    );
+
+    expect(resultFor(returned, "__proto__").status).toBe("needs-human");
+    expect(resultFor(returned, "T2")).toMatchObject({
+      blockedBy: "__proto__",
+      status: "blocked",
+    });
+    expect(labelsFor(harness, "T2")).toEqual([]);
+    expect(harness.lines).toContain(
+      "T2 ⊘ blocked — depends on __proto__ (needs-human)"
+    );
+  });
+
   it("parses args delivered as a JSON string", async () => {
     const harness = makeHarness();
 
