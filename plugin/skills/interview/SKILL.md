@@ -16,17 +16,34 @@ If the project has a domain glossary — `CONTEXT.md` at the repo root, or where
 
 ## Step 3: Explore before asking — via a researcher
 
-Before interrogating, dispatch a `researcher` agent (Agent tool, `subagent_type: "dobby:researcher"`) to map the code the task touches — how the relevant pieces actually work, what's already there. It returns findings that YOU hold: the reading is offloaded so your context stays clean, but the findings stay in YOUR context so you can ask informed, specific questions (never generic ones), drive the interview, and follow up. Mid-interview, when a specific claim needs checking against the code, dispatch a quick `researcher` for anything substantial — a one-line peek you can do yourself, so you don't stall the back-and-forth.
+Before interrogating, dispatch a `researcher` agent (Agent tool, `subagent_type: "dobby:researcher"`) to map the code the task touches — how the relevant pieces actually work, what's already there. It returns findings that YOU hold: the reading is offloaded so your context stays clean, but the findings stay in YOUR context so you can ask informed, specific questions (never generic ones), drive the interview, and follow up.
 
-## Step 4: Interview — one question at a time
+**Facts are YOUR job, never the user's — and fact-finding never blocks the interview.** Mid-interview, when a claim needs checking against the code, delegate it: anything substantial goes to a `researcher`, never to the user — the codebase can answer it, and the reading stays off your context. Then keep going: a pending dispatch is just an unsettled prerequisite in the design tree, so ONLY the questions downstream of that fact wait for the report — the rest of the frontier is asked right now (Step 4). Fold the findings in when they land, and open the questions they unblock in the next round.
 
-Walk down every branch of the design tree, resolving dependencies between decisions one by one.
+## Step 4: Interview — frontier rounds
 
-- Use AskUserQuestion for questions with anticipatable options; plain text when the answers are too open-ended.
-- ONE focused question at a time. For each, offer your recommended answer.
-- **Self-contained questions** — EVERY question restates its own context (1–3 lines: what we're deciding and why it's on the table now) BEFORE the options, and covers a SINGLE topic. Never bundle multiple skills, files, or decisions into one general "how should X work overall?" question. The user context-switches across many projects and can lose the thread between turns; a question that assumes they still hold the prior three answers in their head will get a guessed answer. Each question must stand on its own so a reader dropping in cold could answer it. (This rule is itself a dogfood outcome of the session that authored it.)
-- Let each answer guide the next; pursue every follow-up it raises before changing topic.
+The interview is a **design tree**: every open decision hangs off the answers it depends on. The **frontier** is every open decision whose prerequisites are already settled — everything you could ask RIGHT NOW without guessing. A **round** is the batch of frontier questions ONE turn carries — one vehicle, popup capped at 4 — asked, then waited on. A frontier that fits one vehicle and that cap is asked in a single round; one that mixes vehicles or runs wider DRAINS across consecutive rounds — popup round(s) first, then the text round, per the rules below. Answers reshape the tree after every round: recompute the frontier and continue.
+
+A question whose premise depends on an answer still open is NOT on the frontier — it belongs to a later round. When every remaining question hangs off the last answer, the frontier is one question wide and the round IS a single question: the old one-at-a-time interview is the degenerate case of this mechanism, not a separate mode.
+
+**Rounds are homogeneous by vehicle.** Never mix a popup and text questions in the same turn: the AskUserQuestion popup renders OVER the turn's message text and hides it, so text questions asked alongside a popup are simply never read.
+
+- **Popup round — first.** Questions with anticipatable options go in ONE AskUserQuestion call, AT MOST 4 per call (the tool's hard cap). Order them most load-bearing first; a frontier wider than 4 splits into consecutive popup rounds of ≤4, and the first tranche's answers may refine the ones still to come.
+- **Text round — after.** Questions too open-ended for options form their own plain-text round, numbered so the user can answer several in one typed message:
+
+  ```
+  ❓ **Q1** - **<question title>**: <question body>
+
+  ➡️ <your recommended answer>
+  ```
+
+- Every question carries your recommended answer — as the marked option in the popup, as the `➡️` line in text.
+- **Self-contained questions** — EVERY question in a round restates its own context (1–3 lines: what we're deciding and why it's on the table now) INSIDE the question itself — inside the AskUserQuestion `question` field, NEVER in the surrounding turn text, which the popup covers — and covers a SINGLE topic. Batching independent questions never bundles topics into one question: a round of four is four self-contained questions, never one general "how should X work overall?". Never bundle multiple skills, files, or decisions into a single question. The user context-switches across many projects and can lose the thread between turns; a question that assumes they still hold the prior three answers in their head will get a guessed answer. Each question must stand on its own so a reader dropping in cold could answer it. (This rule is itself a dogfood outcome of the session that authored it.)
+- Let each round's answers guide the next; pursue every follow-up they raise before changing topic.
 - When an answer changes a previous decision, immediately explore the implications.
+- **Intra-round invalidation — discard and re-ask.** When one answer in a round invalidates the premise of another question answered in that SAME round, the second answer is orphaned. Say so explicitly, DISCARD it, and re-ask the question in the next round with the corrected premise. Never record a decision whose premise changed underneath it.
+
+Rounds govern the interviewing in this step only: the closing gate (Step 6) and the Next-step handoff stay SINGLE-question — they are handoffs, not interviews.
 
 Cover every dimension: behavior, edge cases, error/empty/loading states, entity states (created / active / inactive / deleted), roles and permissions, routes (authed / unauthed / authorized / unauthorized), validation rules, data shape, interactions with existing code, constraints, trade-offs, and how new pieces connect to existing UI.
 
@@ -44,11 +61,11 @@ If a decision genuinely can't be resolved verbally ("how does this state machine
 
 ## Step 6: Stop condition + handoff
 
-Stop only when every ambiguity is resolved, all states / edge cases / roles / routes are considered, and you could implement without guessing. THEN present a final all-clear **AskUserQuestion** gate — is everything clear, or does the user want to keep going? Three options:
+Stop only when **the frontier is empty** — no open decision left whose prerequisites are settled, every ambiguity resolved, all states / edge cases / roles / routes considered, and you could implement without guessing. THEN present a final all-clear **AskUserQuestion** gate — is everything clear, or does the user want to keep going? Three options:
 
 - **"Todo claro — cerrar la entrevista"** — proceed to the domain-term offer and handoff below.
-- **"Tengo más que aclarar / sigue preguntando"** — loop back into one-question-at-a-time interviewing (Steps 4–5) and re-run this gate afterward.
-- **"Auto-audita la cobertura antes de cerrar"** — don't take "it's clear" at face value: run a rigorous **completeness self-audit** before deciding. Actively re-scan for anything still uncovered — every edge case, the happy path, entity states (created / active / inactive / deleted), roles / permissions, routes (authed / unauthed / authorized / unauthorized), error / empty / loading states, validation rules, and any decision still resting on an unverified shared-primitive assumption. This option ACTIVATES the closing litmus test and the infra-assumption gate below on demand. If the audit surfaces ANY gap or unasked question, the interview does NOT close — resume one-question-at-a-time interviewing (Steps 4–5) on those gaps, then return to this gate. Only when the audit genuinely finds nothing left to ask do you proceed to the domain-term offer and handoff.
+- **"Tengo más que aclarar / sigue preguntando"** — loop back into frontier-round interviewing (Steps 4–5) and re-run this gate afterward.
+- **"Auto-audita la cobertura antes de cerrar"** — don't take "it's clear" at face value: run a rigorous **completeness self-audit** before deciding. Actively re-scan for anything still uncovered — every edge case, the happy path, entity states (created / active / inactive / deleted), roles / permissions, routes (authed / unauthed / authorized / unauthorized), error / empty / loading states, validation rules, and any decision still resting on an unverified shared-primitive assumption. This option ACTIVATES the closing litmus test and the infra-assumption gate below on demand. If the audit surfaces ANY gap or unasked question, the interview does NOT close — the gaps it finds ARE a new frontier: resume frontier-round interviewing (Steps 4–5) on them, then return to this gate. Only when the audit genuinely finds nothing left to ask do you proceed to the domain-term offer and handoff.
 
 This is a gate, not an escape hatch — reach it only after the litmus test and infra-assumption gate below pass.
 
@@ -70,7 +87,8 @@ bunx dobby state set 'Findings (interview)' --file <scratch-file>
 
 ## Anti-patterns
 
-- Never batch questions (5 questions = 5 turns, not one message).
+- Never batch DEPENDENT questions — a question whose premise depends on an answer still open belongs to a LATER round, not this one. (Independent questions travelling together is the point of a round; questions that hang off each other are not.)
+- Never mix vehicles in one round: an AskUserQuestion popup hides the same turn's text, so ❓/➡️ questions go in their own turn after it — and a popup round never exceeds 4 questions.
 - Never stop early because the user seems impatient — thoroughness now prevents rework later.
 - Never present a recap and ask "shall I proceed?" if you can think of ONE more question.
 - Never demote a genuine question to a side-note, recap line, or "micro-note in passing" ("I can also clean up X, unless…"). A side-note in your closing message is an unresolved branch — ask it as its own question instead. (Real failure: an interview closed with an alias cleanup as a "micro-nota de pasada"; it turned out to be a full decision requiring research.)
@@ -94,8 +112,11 @@ Interview in the user's language. Write the Decisions summary (and anything pers
 - [ ] Task framed (asked in plain text if `$ARGUMENTS` was empty)
 - [ ] Domain glossary read (if present) and used; conflicts challenged
 - [ ] Code explored via a `researcher` (findings held in your context) to ask informed, specific questions
-- [ ] Every ambiguity, entity state, role, route, and edge case resolved
-- [ ] Every question was self-contained (restated its own context, single topic) — no bundled/general multi-decision questions
+- [ ] Every ambiguity, entity state, role, route, and edge case resolved — the frontier is empty
+- [ ] Each turn asked ONE round, homogeneous by vehicle (popup round of ≤4 first, open-ended ❓/➡️ text round after), with consecutive rounds until the frontier drained — independent questions together, dependent ones deferred to a later round
+- [ ] Every question was self-contained (its own context restated INSIDE the question, single topic) — no bundled/general multi-decision questions
+- [ ] Any answer orphaned by a same-round sibling was discarded out loud and re-asked next round with the corrected premise
+- [ ] Mid-interview facts went to a `researcher` without stalling the interview — only downstream questions waited
 - [ ] Every decision resting on a shared-primitive behavior verified against code before close (proactively, not user-forced)
 - [ ] Resolved domain terms offered as `CONTEXT.md` candidates at handoff (offer-then-approve); approved ones flagged in the Decisions summary
 - [ ] Decisions summary produced, with new-term / ADR-candidate flags
@@ -103,3 +124,6 @@ Interview in the user's language. Write the Decisions summary (and anything pers
 - [ ] No files modified mid-interview — the `state set` handoff above is the only write
 - [ ] Closing gate offered all three options, including the completeness self-audit that activates the litmus test + infra-assumption gate on demand and resumes interviewing on any gap it surfaces
 - [ ] Next step handed off via an AskUserQuestion gate (recommended command marked; chosen skill invoked via the Skill tool)
+
+---
+*Adapted from [mattpocock/skills](https://github.com/mattpocock/skills) `productivity/grilling` (partial port: AskUserQuestion remains the vehicle for anticipatable options and dobby's closing machinery is kept).*

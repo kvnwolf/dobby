@@ -41,7 +41,7 @@ Each type routes to a dobby worker or stage:
 |------|---------------------|----------|
 | **Research** | Needs knowledge outside the working tree — docs, third-party APIs, a knowledge base. Produces a linked markdown summary. | A `dobby:researcher` agent (Agent tool, `subagent_type: "dobby:researcher"`) — the same worker `/dobby:research` orchestrates. |
 | **Prototype** | "How should it look / behave?" — answerable only by building throwaway code. | `/dobby:prototype` (state the ONE question; the prototype's captured answer is the asset). |
-| **Grilling** | A decision resolvable by conversation. The default case. | `/dobby:interview` (dobby's grilling + domain-modeling), one question at a time. |
+| **Grilling** | A decision resolvable by conversation. The default case. | `/dobby:interview` (dobby's grilling + domain-modeling), asked in frontier rounds. |
 
 ## Fog of war
 
@@ -53,7 +53,7 @@ Pick by the argument. Either branch **ends with a Handoff.**
 
 ### Build the map (invoked with a loose idea)
 
-1. Run a `/dobby:interview` pass to surface the open decisions (one question at a time). You may also dispatch a `dobby:researcher` for a quick lay-of-the-land if the idea leans on unfamiliar tech.
+1. Run a `/dobby:interview` pass to surface the open decisions (in frontier rounds — each turn asks every question whose prerequisites are already settled; dependent ones wait for a later round). You may also dispatch a `dobby:researcher` for a quick lay-of-the-land if the idea leans on unfamiliar tech.
 2. Write a new map at `docs/maps/<effort-slug>.md` — mostly fog: identify the frontier, add the tickets you can see with their `Blocked by` edges and `Type`, and resolve inline only the entries that are trivially decidable now.
 3. Handoff. Building the map is one cycle's work — **do NOT also resolve tickets.**
 
