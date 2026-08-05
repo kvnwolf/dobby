@@ -26,9 +26,14 @@ useSpawnBudget();
 //    areas, verify recipes) — never a value recomputed the way the parser
 //    computes it.
 //  - The `args` key names (`tasks[{id,title,spec,decisions,constraints,areas,
-//    verifyRecipe,testFirst}]`, `hasTestSuite`, `workRoot`) are the literal
-//    contract of `plugin/skills/execute/references/build-workflow.md`, which
-//    consumes this payload verbatim.
+//    verifyRecipe,testFirst,dependsOn}]`, `hasTestSuite`, `workRoot`) are the
+//    literal contract of `plugin/skills/execute/references/build-workflow.md`,
+//    which consumes this payload verbatim.
+//  - `dependsOn` is the literal content of a row's `Depends on` cell — the ids
+//    exactly as the spec writer typed them, and none at all for `—`/empty. The
+//    build run looks a dependency up BY IDENTITY against the ids in `waves`
+//    (to skip a task whose dependency ended needs-human), so the expected
+//    values are those same id STRINGS, never numbers or re-derived keys.
 //  - The column layout (`# | Task | Description | Depends on | Affected areas |
 //    Test-first | Destructive | Verify recipe`), the `—` "no dependency" cell,
 //    and the `Manual verify setup:` field are the kit's own spec-writing
@@ -60,6 +65,7 @@ interface PlanTask {
   areas: string[];
   constraints: string;
   decisions: string;
+  dependsOn: string[];
   destructive: boolean;
   id: string;
   spec: string;
@@ -298,6 +304,34 @@ describe("build-plan — the spec's task table as build-workflow args", () => {
       true,
       false,
       true,
+    ]);
+  });
+
+  it("carries each task's dependencies as the ids of its `Depends on` cell", async () => {
+    const built = await plan(repo);
+    // The cells above: task 1 depends on nothing (`—`), tasks 2 and 3 both on 1.
+    expect(built.tasks.map((task) => task.dependsOn)).toEqual([
+      [],
+      ["1"],
+      ["1"],
+    ]);
+  });
+
+  it("carries `dependsOn` alongside the payload's other task fields and nothing else", async () => {
+    const built = await plan(repo);
+    // The build run reads these fields by name; `dependsOn` is ADDITIVE — no
+    // existing field is renamed, dropped, or joined by a second newcomer.
+    expect(Object.keys(firstTask(built)).sort()).toEqual([
+      "areas",
+      "constraints",
+      "decisions",
+      "dependsOn",
+      "destructive",
+      "id",
+      "spec",
+      "testFirst",
+      "title",
+      "verifyRecipe",
     ]);
   });
 
@@ -734,6 +768,8 @@ describe("build-plan — a single ad-hoc task (dispatch)", () => {
       areas: ["export drawer"],
       constraints: "",
       decisions: "",
+      // A lone ad-hoc task has no table and so waits for nobody.
+      dependsOn: [],
       destructive: false,
       id: "1",
       spec: "The export button reads 'Exprot'. Fix the label and its aria-label.",
@@ -870,5 +906,77 @@ describe("build-plan — an emphasized `Manual verify setup` field", () => {
     expect(built.manualVerifySetup).toEqual([
       "Log in as the `owner` test user before verifying.",
     ]);
+  });
+});
+
+// ===========================================================================
+// Slice 8 — each task's declared dependencies.
+//
+// The waves say WHEN a task runs; `dependsOn` says WHO it waits for, which is a
+// different question and the one the build run asks: a task whose dependency
+// ended `needs-human` is skipped (`blocked`) instead of built, and it can only
+// recognize that dependency if the id it reads is the same id the waves carry.
+// So each expectation below is the literal `Depends on` cell of the row it
+// names, as strings — never a set re-derived from the schedule.
+// ===========================================================================
+
+// The `Depends on` cell left EMPTY rather than dashed — the other spelling of
+// "no dependency", and the one that must not read as a dependency named "".
+const SPEC_BLANK_DEPENDS = `### Tasks
+
+| # | Task | Depends on | Affected areas | Verify recipe |
+|---|------|------------|----------------|---------------|
+| 1 | Add the health endpoint |  | health module | curl /health → a 200 comes back |
+| 2 | Log the health checks | 1 | logging module | curl /health → a log line appears |
+`;
+
+describe("build-plan — each task's declared dependencies", () => {
+  let multiDepRepo: string;
+
+  beforeAll(() => {
+    multiDepRepo = makePlanRepo({
+      prefix: "dobby-plan-depends-",
+      spec: SPEC_MULTI_DEP,
+    });
+  });
+
+  it("lists every id when a task depends on more than one task", async () => {
+    const built = await plan(multiDepRepo);
+    // The cells: 1 and 2 depend on nothing, 3 on `1, 2` — both blockers named,
+    // in the order written, with the separator's spacing gone.
+    expect(built.tasks.map((task) => task.dependsOn)).toEqual([
+      [],
+      [],
+      ["1", "2"],
+    ]);
+  });
+
+  it("names dependencies with the same ids the waves schedule those tasks under", async () => {
+    const built = await plan(multiDepRepo);
+    // `done[dep]` is an identity lookup: a number, a padded string or a title
+    // here would silently never match a scheduled id, and every dependent would
+    // build as if its blocker had passed.
+    expect(built.tasks.flatMap((task) => task.dependsOn)).toEqual(["1", "2"]);
+    expect(built.waves.flat()).toEqual(["1", "2", "3"]);
+  });
+
+  it("reads an empty `Depends on` cell as no dependency at all", async () => {
+    const repo = makePlanRepo({
+      prefix: "dobby-plan-blankdeps-",
+      spec: SPEC_BLANK_DEPENDS,
+    });
+    const built = await plan(repo);
+    expect(built.tasks.map((task) => task.dependsOn)).toEqual([[], ["1"]]);
+  });
+
+  it("reports a dependency the table does not contain, exactly as written", async () => {
+    const repo = makePlanRepo({
+      prefix: "dobby-plan-danglingdeps-",
+      spec: SPEC_DANGLING_DEP,
+    });
+    const built = await blockedPlan(repo);
+    // Task 2's cell says `7`. Calling that out is the preconditions verdict's
+    // job; the field itself mirrors what the spec writer typed.
+    expect(built.tasks.map((task) => task.dependsOn)).toEqual([[], ["7"]]);
   });
 });

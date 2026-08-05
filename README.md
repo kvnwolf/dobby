@@ -75,7 +75,7 @@ A work session moves through six stages. Each stage ends by asking which command
       │
 /dobby:spec         the build plan, printed in full — you approve it
       │
-/dobby:execute      waves of (test →) implement → review → verify (the build loop)
+/dobby:execute      one build run: waves of (test →) implement → review → verify
       │
 /dobby:wrap         human smoke test, docs/ADRs, STATE.md disposed
       │
@@ -155,15 +155,15 @@ The architect turns decisions + research into a build plan and **prints it in fu
 /dobby:execute
 ```
 
-The coordinator makes sure the app is up — `/dobby:execute` runs `bunx dobby up` (in a named cmux pane, or a detached background job; idempotent, so a re-run never double-starts) — reads the dev URL from `bunx dobby env`, confirms it's live, then launches the build loop. Per task, **separate agents** run a state machine:
+The coordinator makes sure the app is up — `/dobby:execute` runs `bunx dobby up --json` (in a named cmux pane, or a detached background job; idempotent and liveness-first, so a re-run never double-starts), and that single call is also what reports the live dev URL the verifiers will share — then launches **one build run**: a single workflow carrying the whole approved plan, which walks the waves in order and runs the tasks inside each wave at once. Per task, **separate agents** run a state machine:
 
 ```
 (test-author) → implement → code review → (findings? fix → re-review) → verify → (fail? restart) → done
 ```
 
-The implementor never reviews itself; the reviewer never implements; the verifier checks the *running app* against the task's verify recipe. The leading test step is conditional: when the repo has a test suite and the spec marked a task test-first, a `dobby:test-author` writes the failing tests before the implementor touches the code; repos without a suite degrade to the classic three-step loop. Independent tasks run in parallel waves. A task that exhausts its retries is flagged `needs-human` instead of thrashing forever.
+The implementor never reviews itself; the reviewer never implements; the verifier checks the *running app* against the task's verify recipe. The leading test step is conditional: when the repo has a test suite and the spec marked a task test-first, a `dobby:test-author` writes the failing tests before the implementor touches the code; repos without a suite degrade to the classic three-step loop. Independent tasks run in parallel waves — the run sequences them exactly as the plan cut them (area-disjoint, a destructive task alone in its wave), never regrouped. A task that exhausts its retries is flagged `needs-human` instead of thrashing forever, and every task that depended on it is skipped as `blocked` — no agents spawned, the blocker named in its row.
 
-**You'll see:** live workflow progress, then a status table per task, and the work log appended to `STATE.md`.
+**You'll see:** the build run narrating itself live as it works — a line when each wave opens, one line per task the moment it lands (`✓ verified`, `✗ needs-human`, `⊘ blocked`), a line per review or verify retry, a summary line per wave, and extra detail for a task in trouble (once it fails a review or a verify, every later step of *that* task is narrated). That narration lives in the run's progress widget, so the coordinator also echoes each task's outcome into the chat as it lands — you can follow the whole run without opening the widget. When the run returns, you get the status table per task, and the work log appended to `STATE.md`.
 
 ### 6. Wrap
 
@@ -271,7 +271,7 @@ These couple to Claude Code's session storage (`~/.claude/projects`) on purpose 
 | Skill edits not picked up (local dev) | Only `SKILL.md` hot-reloads | `/reload-plugins` for agents/hooks changes |
 | Post-edit check hook never fires | By design outside dobby projects | Needs `dobby.config.json` at the project root **and** a local `@kvnwolf/dobby` bin (run `/dobby:onboard`) |
 | A hook blocked my `git push` | The pre-push backstop found a red gate on the tree being pushed | Read the findings it printed (they're the whole list, not a sample) and fix them — or, when you're pushing a WIP branch on purpose, `git push --no-verify` as a conscious bypass |
-| Execute re-authored the workflow and lost the loop logic | The build-loop script must be used verbatim | Re-run `/dobby:execute`; the skill's `references/build-workflow.md` is the canonical script |
+| Execute re-authored the build run and lost the loop logic | The build run's script must be used verbatim — one run per plan, the waves sequenced inside it | Re-run `/dobby:execute`; the skill's `references/build-workflow.md` is the canonical script |
 | `portless` prompts for sudo / fails to bind `:443` on first run | First-time CA install + privileged port | Run `portless trust` once (surfaced by `/dobby:onboard`); it's a one-time setup, later runs don't need it |
 | An old session died and left a worktree in `.claude/worktrees/` | The session couldn't run `/dobby:finish` before exiting | Run `/dobby:finish` anyway — it detects the orphan, verifies the branch merged, confirms with you, and cleans up via raw git |
 | `/dobby:scope` stops ("open a new pane") | Nesting — THIS session is already inside a worktree, and the native tool can't nest (parallel worktrees from OTHER sessions are fine and don't trigger this) | Open a new cmux pane / `claude` session for the new goal and run `/dobby:scope <goal>` there — one goal per pane, no nesting |
@@ -280,7 +280,9 @@ These couple to Claude Code's session storage (`~/.claude/projects`) on purpose 
 
 - **Session interrupted mid-stage?** `STATE.md` is the source of truth. Re-invoke the stage you were in — it reads the doc and continues.
 - **Want to revisit a decision?** Re-run `/dobby:interview`; it updates `## Findings` and downstream stages pick up the change.
-- **A task came back `needs-human`?** That's the workflow refusing to thrash. Read the reason in the status table, then `/dobby:diagnose` or `/dobby:dispatch` the fix.
+- **A task came back `needs-human`?** That's the build run refusing to thrash. Read the reason in the status table, then `/dobby:diagnose` or `/dobby:dispatch` the fix.
+- **A task came back `blocked`?** Nothing ran for it — one of its dependencies didn't pass, and the run skips a task rather than build on a broken base. The status table names the blocker; fix that one first (`/dobby:diagnose` / `/dobby:dispatch`), and the blocked tasks become buildable again.
+- **The build run died mid-plan?** The remedy is to resume it by its run id — a crash, a kill, and a lost session all recover the same way, and a fresh session can do it too: every task that already finished comes back from cache, so only the unfinished ones are worked again. Without that id there is nothing to resume, and re-running `/dobby:execute` starts a brand-new run that re-does every task from the top.
 - **Abandon a session?** Delete `STATE.md`. Nothing else was written outside the code changes themselves.
 
 ## Local development
