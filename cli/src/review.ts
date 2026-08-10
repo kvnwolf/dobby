@@ -34,7 +34,8 @@ import { type RunResult, requireWorkroot, runCapture } from "./runner.ts";
 // makes — is this finding valid, what is the fix brief, may we merge — stays in
 // `/dobby:address-review`. The CLI's job is to make the mechanics unmissable.
 //
-// FOUR gh INCOMPATIBILITIES are baked in here (researched against gh 2.95.0 +
+// FIVE external-system incompatibilities are baked in here (researched against
+// gh 2.95.0 +
 // cli/cli source); each is the difference between working and silently wrong:
 //
 //  1. `gh api graphql --paginate` REQUIRES the cursor variable to be named
@@ -57,6 +58,12 @@ import { type RunResult, requireWorkroot, runCapture } from "./runner.ts";
 //     sides. (The predecessor bug: `test("greptile-apps[bot]")` treats `[bot]` as a
 //     regex character class, never matches the literal login, and detection
 //     silently falls through to `human_or_unknown`.)
+//  5. A bot summary is not commit-scoped evidence. Greptile EDITS one summary, so
+//     its named current-commit check must pass AND its documented `Last reviewed
+//     commit` footer SHA must equal `headRefOid`. CodeRabbit has no footer SHA in
+//     this adapter, so its named current-commit check is mandatory. `pr watch`
+//     re-reads HEAD around both phases and restarts on drift; stale/unproven
+//     summaries are UNREVIEWED, never merge-ready.
 //
 // Every gh call goes out as an ARGV ARRAY through `runner.runCapture` with the cwd
 // pinned to the workroot — no shell string is ever built, so a reply body carrying
@@ -73,11 +80,15 @@ import { type RunResult, requireWorkroot, runCapture } from "./runner.ts";
 // The ONE tool-specific surface in the whole review path: adding a review tool is
 // ONE entry here and nothing else (the skills' `references/adapters.md` is the
 // same table in prose). `botLogins` are BARE slugs — the `[bot]` suffix is
-// stripped at comparison time, never stored.
+// stripped at comparison time, never stored. `checkName` and `reviewEvidence`
+// make the current-HEAD gate adapter-owned rather than hidden in branch logic.
 // ---------------------------------------------------------------------------
 
 interface AdapterSpec {
   botLogins: readonly string[];
+  // A case-insensitive fragment identifying the adapter's commit-scoped review
+  // check in `gh pr checks`; null means this adapter exposes no such signal.
+  checkName: string | null;
   // How the tool reports a numeric confidence: `dashboard-only` (Greptile keeps
   // the 0–5 threshold off the check payload) or `none`.
   confidence: string;
@@ -86,22 +97,28 @@ interface AdapterSpec {
   intentionalReply: string;
   // The comment body that re-runs the review; null = nothing to trigger.
   reTrigger: string | null;
+  // The evidence required before a clean summary can belong to the current HEAD.
+  reviewEvidence: "check" | "footer-and-check" | "none";
 }
 
 const ADAPTERS: readonly AdapterSpec[] = [
   {
     botLogins: ["greptile-apps", "greptile-apps-staging"],
+    checkName: "greptile",
     confidence: "dashboard-only",
     id: "greptile",
     intentionalReply: "@greptileai <reason>",
     reTrigger: "@greptileai review",
+    reviewEvidence: "footer-and-check",
   },
   {
     botLogins: ["coderabbitai"],
+    checkName: "coderabbit",
     confidence: "none",
     id: "coderabbit",
     intentionalReply: "@coderabbitai <reason>",
     reTrigger: "@coderabbitai review",
+    reviewEvidence: "check",
   },
 ];
 
@@ -110,11 +127,19 @@ const ADAPTERS: readonly AdapterSpec[] = [
 // re-trigger is impossible, which is exactly what `reTrigger: null` says.
 const HUMAN_ADAPTER: AdapterSpec = {
   botLogins: [],
+  checkName: null,
   confidence: "none",
   id: "human_or_unknown",
   intentionalReply: "@<reviewer> <reason>",
   reTrigger: null,
+  reviewEvidence: "none",
 };
+
+const ALL_ADAPTERS: readonly AdapterSpec[] = [...ADAPTERS, HUMAN_ADAPTER];
+
+function adapterSpec(id: string): AdapterSpec | null {
+  return ALL_ADAPTERS.find((candidate) => candidate.id === id) ?? null;
+}
 
 // ---------------------------------------------------------------------------
 // The payload vocabulary (flat, explicit nulls — the `EnvSnapshot` convention).
@@ -164,6 +189,7 @@ interface Summary {
   author: string;
   body: string;
   confidence: number | null;
+  reviewedHeadOid: string | null;
   updatedAt: string | null;
 }
 
@@ -282,11 +308,18 @@ function readPullRequest(
       ok: false,
     };
   }
+  const headRefOid = asString(data.headRefOid);
+  if (headRefOid === "") {
+    return {
+      error: "gh pr view: no pull request head commit in the answer",
+      ok: false,
+    };
+  }
   return {
     ok: true,
     value: {
       headRefName: asString(data.headRefName),
-      headRefOid: asString(data.headRefOid),
+      headRefOid,
       number: data.number,
       url: asString(data.url),
     },
@@ -492,20 +525,32 @@ function toIssueComment(node: unknown): IssueComment | null {
 // header wording is dashboard-configurable and no format is guaranteed.
 const CONFIDENCE_RE = /(\d)\s*\/\s*5/;
 
+// Since March 2026 Greptile's documented review footer names the last reviewed
+// commit and links to the canonical GitHub `/commit/<full sha>` URL. Anchor the
+// extraction to that label: an unrelated commit link in the generated summary
+// must not become evidence that the current HEAD was reviewed. Requiring all 40
+// hex digits keeps the merge gate fail-closed if the footer format changes.
+const GREPTILE_REVIEWED_HEAD_RE =
+  /last\s+reviewed\s+commit\s*:?\s*[\s\S]{0,500}?\/commit\/([0-9a-f]{40})(?=[/?#)"'\s]|$)/i;
+
+function greptileReviewedHead(body: string): string | null {
+  return GREPTILE_REVIEWED_HEAD_RE.exec(body)?.[1]?.toLowerCase() ?? null;
+}
+
 // The FRESHEST summary the detected tool posted: bot-authored comments only
-// (matched on the bare slug, which substring-matches the REST `…[bot]` login),
+// (matched by exact bare slug after stripping REST's trailing `[bot]` suffix),
 // sorted by `updated_at`, last one wins. Null when the tool posted none — which
 // is what `pr watch --await-review` reads as "the review has not landed yet".
 function pickSummary(
   comments: IssueComment[],
-  adapter: Adapter
+  spec: AdapterSpec
 ): Summary | null {
-  if (adapter.matchedLogins.length === 0) {
+  if (spec.botLogins.length === 0) {
     return null;
   }
   const mine = comments.filter((comment) =>
-    adapter.matchedLogins.some((slug) =>
-      comment.author.toLowerCase().includes(slug)
+    spec.botLogins.some(
+      (login) => bareLogin(comment.author) === bareLogin(login)
     )
   );
   const newest = [...mine]
@@ -519,6 +564,8 @@ function pickSummary(
     author: newest.author,
     body: newest.body,
     confidence: score === undefined ? null : Number(score),
+    reviewedHeadOid:
+      spec.id === "greptile" ? greptileReviewedHead(newest.body) : null,
     updatedAt: newest.updatedAt === "" ? null : newest.updatedAt,
   };
 }
@@ -601,7 +648,8 @@ function detectAdapters(
 function collectReview(
   root: string,
   repo: RepoIdentity,
-  pr: PullRequest
+  pr: PullRequest,
+  selected: AdapterSpec | null = null
 ): Reading<ReviewSnapshot> {
   const threads = readThreads(root, repo, pr.number);
   if (!threads.ok) {
@@ -616,7 +664,12 @@ function collectReview(
   }
   const matched = detectAdapters(threads.value, comments.value);
   const [first] = matched;
-  const adapter = first ?? toAdapter(HUMAN_ADAPTER, []);
+  const adapter =
+    (selected === null
+      ? first
+      : matched.find((candidate) => candidate.id === selected.id)) ??
+    toAdapter(selected ?? HUMAN_ADAPTER, []);
+  const spec = selected ?? adapterSpec(adapter.id) ?? HUMAN_ADAPTER;
   return {
     ok: true,
     value: {
@@ -626,10 +679,32 @@ function collectReview(
       // depends on the answer.
       candidates: matched.length > 1 ? matched : null,
       pr,
-      summary: pickSummary(comments.value, adapter),
-      threads: threads.value,
+      summary: pickSummary(comments.value, spec),
+      threads: threadsForAdapter(threads.value, spec),
     },
   };
+}
+
+function threadsForAdapter(
+  threads: ReviewThread[],
+  spec: AdapterSpec
+): ReviewThread[] {
+  return threads.filter((thread) => {
+    const authors = thread.comments.map((comment) => bareLogin(comment.author));
+    const known = ADAPTERS.some((candidate) =>
+      candidate.botLogins.some((login) => authors.includes(bareLogin(login)))
+    );
+    if (spec.id === HUMAN_ADAPTER.id) {
+      return !known;
+    }
+    return spec.botLogins.some((login) => authors.includes(bareLogin(login)));
+  });
+}
+
+function adapterChoiceError(candidates: Adapter[]): string {
+  return `multiple review adapters matched (${candidates
+    .map((candidate) => candidate.id)
+    .join(", ")}) — re-run with --adapter <id>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +735,10 @@ export function runReview(context: CommandContext): CommandResult {
 
 function fetchReview(context: CommandContext, root: string): CommandResult {
   const label = "review fetch";
+  const selected = readAdapterOption(context);
+  if (!selected.ok) {
+    return failure(label, selected.error);
+  }
   const prNumber = readPrOption(context);
   if (!prNumber.ok) {
     return failure(label, prNumber.error);
@@ -672,7 +751,7 @@ function fetchReview(context: CommandContext, root: string): CommandResult {
   if (!repo.ok) {
     return failure(label, repo.error);
   }
-  const snapshot = collectReview(root, repo.value, pr.value);
+  const snapshot = collectReview(root, repo.value, pr.value, selected.value);
   if (!snapshot.ok) {
     return failure(label, snapshot.error);
   }
@@ -747,6 +826,10 @@ interface ExecContext {
 
 function applyReview(context: CommandContext, root: string): CommandResult {
   const label = "review apply";
+  const selected = readAdapterOption(context);
+  if (!selected.ok) {
+    return failure(label, selected.error);
+  }
   const plan = readPlan(context);
   if (!plan.ok) {
     return failure(label, plan.error);
@@ -765,9 +848,12 @@ function applyReview(context: CommandContext, root: string): CommandResult {
   if (!repo.ok) {
     return failure(label, repo.error);
   }
-  const snapshot = collectReview(root, repo.value, pr.value);
+  const snapshot = collectReview(root, repo.value, pr.value, selected.value);
   if (!snapshot.ok) {
     return failure(label, snapshot.error);
+  }
+  if (selected.value === null && snapshot.value.candidates !== null) {
+    return failure(label, adapterChoiceError(snapshot.value.candidates));
   }
   const dryRun = context.options["dry-run"] === true;
   const outcome = executePlan(
@@ -1134,6 +1220,7 @@ interface WatchPayload {
   openThreads: number | null;
   pr: PullRequest | null;
   reason: string | null;
+  reviewFresh: boolean | null;
   summary: Summary | null;
   verdict: Verdict;
 }
@@ -1188,6 +1275,10 @@ export function runPr(context: CommandContext): CommandResult {
 
 function watchPr(context: CommandContext, root: string): CommandResult {
   const label = "pr watch";
+  const selected = readAdapterOption(context);
+  if (!selected.ok) {
+    return failure(label, selected.error);
+  }
   const prOption = readPrOption(context);
   if (!prOption.ok) {
     return failure(label, prOption.error);
@@ -1205,6 +1296,7 @@ function watchPr(context: CommandContext, root: string): CommandResult {
     openThreads: null,
     pr: null,
     reason: null,
+    reviewFresh: null,
     summary: null,
     verdict: "skipped",
   };
@@ -1217,38 +1309,107 @@ function watchPr(context: CommandContext, root: string): CommandResult {
     return render(context, { ...base, reason: pr.error });
   }
 
-  // The budget is PER PHASE, each phase starting its own clock: a single ceiling
-  // shared with the CI wait is what would let a ~300s CI run eat the whole
-  // `--deadline 300` and leave the review poll one attempt (see the module
-  // header). A gh call that FAILED is never turned into a verdict here — the read
-  // errors out and `pr watch` fails with it.
+  // The budget is PER PHASE, each phase starting its own clock. A HEAD change
+  // invalidates BOTH phases: checks and review evidence must describe the same
+  // immutable commit, so restart from CI with the newly observed PR snapshot.
   const budgetMs = deadlineSec.value * MS_PER_SEC;
-  const ci = watchChecks(root, pr.value.number, Date.now() + budgetMs);
+  let repo: RepoIdentity | null = null;
+  if (awaitedReview) {
+    const reading = readRepo(root);
+    if (!reading.ok) {
+      return failure(label, reading.error);
+    }
+    repo = reading.value;
+  }
+  let current = pr.value;
+  for (;;) {
+    const cycle = watchHeadCycle(
+      context,
+      root,
+      base,
+      current,
+      repo,
+      selected.value,
+      budgetMs
+    );
+    if (cycle.next !== null) {
+      current = cycle.next;
+      continue;
+    }
+    return cycle.result;
+  }
+}
+
+type HeadCycleOutcome =
+  | { next: PullRequest; result: null }
+  | { next: null; result: CommandResult };
+
+function watchHeadCycle(
+  context: CommandContext,
+  root: string,
+  base: WatchPayload,
+  current: PullRequest,
+  repo: RepoIdentity | null,
+  selected: AdapterSpec | null,
+  budgetMs: number
+): HeadCycleOutcome {
+  const label = "pr watch";
+  const ci = watchChecks(root, current.number, Date.now() + budgetMs);
   if (!ci.ok) {
-    return failure(label, ci.error);
+    return { next: null, result: failure(label, ci.error) };
+  }
+  const afterChecks = readPullRequest(root, current.number);
+  if (!afterChecks.ok) {
+    return { next: null, result: failure(label, afterChecks.error) };
+  }
+  if (!sameHead(current, afterChecks.value)) {
+    return { next: afterChecks.value, result: null };
   }
   const afterCi: WatchPayload = {
     ...base,
     checks: ci.value.checks,
     failing: ci.value.failing,
-    pr: pr.value,
+    pr: current,
     verdict: ci.value.verdict,
   };
-  // A red (or still-running) build is TERMINAL: waiting for a review of code that
-  // does not build wastes the deadline and the reviewer's cycle.
-  if (!awaitedReview || ci.value.verdict !== "ci-green") {
-    return render(context, afterCi);
+  // A red (or still-running) build is terminal only for the HEAD whose checks we
+  // just observed. The re-read above prevents an old failure/pass from leaking
+  // across a concurrent push.
+  if (!base.awaitedReview || ci.value.verdict !== "ci-green") {
+    return { next: null, result: render(context, afterCi) };
+  }
+  if (repo === null) {
+    return {
+      next: null,
+      result: failure(
+        label,
+        "repository identity was not resolved for review polling"
+      ),
+    };
   }
 
-  const repo = readRepo(root);
-  if (!repo.ok) {
-    return failure(label, repo.error);
-  }
-  const review = watchReview(root, repo.value, pr.value, Date.now() + budgetMs);
+  const review = watchReview(
+    root,
+    repo,
+    current,
+    ci.value.checks,
+    selected,
+    Date.now() + budgetMs
+  );
   if (!review.ok) {
-    return failure(label, review.error);
+    return { next: null, result: failure(label, review.error) };
   }
-  return render(context, { ...afterCi, ...review.value });
+  if (review.value.headChanged !== null) {
+    return { next: review.value.headChanged, result: null };
+  }
+  return {
+    next: null,
+    result: render(context, { ...afterCi, ...review.value.payload }),
+  };
+}
+
+function sameHead(left: PullRequest, right: PullRequest): boolean {
+  return left.number === right.number && left.headRefOid === right.headRefOid;
 }
 
 interface CiOutcome {
@@ -1344,36 +1505,139 @@ function toCheckRun(node: unknown): CheckRun {
   };
 }
 
-// Poll the review itself until the tool posts SOMETHING (a summary, or open
-// threads) or the deadline passes. Open threads outrank a clean summary: the
-// summary lags the threads, so feedback on the table wins.
+interface ReviewFreshness {
+  reason: string | null;
+  reviewFresh: boolean | null;
+}
+
+const PASSING_BUCKET = "pass";
+
+// A bot-authored summary alone is never current-HEAD evidence. Greptile requires
+// BOTH its commit-scoped check and the footer SHA; CodeRabbit currently exposes no
+// footer SHA, so its commit-scoped check is the evidence. Unknown/human reviewers
+// have no mechanical freshness contract and remain `null` / fail-closed.
+function reviewFreshness(
+  snapshot: ReviewSnapshot,
+  checks: CheckRun[]
+): ReviewFreshness {
+  const spec = adapterSpec(snapshot.adapter.id) ?? HUMAN_ADAPTER;
+  const { checkName } = spec;
+  if (spec.reviewEvidence === "none" || checkName === null) {
+    return { reason: null, reviewFresh: null };
+  }
+  const reviewChecks = checks.filter((check) =>
+    check.name.toLowerCase().includes(checkName)
+  );
+  const passing = reviewChecks.some(
+    (check) => check.bucket.toLowerCase() === PASSING_BUCKET
+  );
+  if (!passing) {
+    const observed =
+      reviewChecks.length === 0
+        ? checks.map((check) => check.name).filter((name) => name !== "")
+        : reviewChecks.map(
+            (check) =>
+              `${check.name}=${check.bucket || check.state || "unknown"}`
+          );
+    return {
+      reason: `${snapshot.adapter.id} review check is not present and passing on current HEAD ${snapshot.pr.headRefOid}; observed checks: ${observed.length === 0 ? "none" : observed.join(", ")}`,
+      reviewFresh: false,
+    };
+  }
+  if (spec.reviewEvidence === "check") {
+    return { reason: null, reviewFresh: true };
+  }
+  const reviewed = snapshot.summary?.reviewedHeadOid ?? null;
+  if (reviewed === null) {
+    return {
+      reason: `Greptile summary does not identify its last reviewed commit; current HEAD is ${snapshot.pr.headRefOid}`,
+      reviewFresh: false,
+    };
+  }
+  if (reviewed !== snapshot.pr.headRefOid.toLowerCase()) {
+    return {
+      reason: `Greptile last reviewed ${reviewed}; current HEAD is ${snapshot.pr.headRefOid}`,
+      reviewFresh: false,
+    };
+  }
+  return { reason: null, reviewFresh: true };
+}
+
+type ReviewDecision = Pick<
+  WatchPayload,
+  "openThreads" | "reason" | "reviewFresh" | "summary" | "verdict"
+>;
+
+type ReviewPollOutcome =
+  | { headChanged: PullRequest; payload: null }
+  | { headChanged: null; payload: ReviewDecision };
+
+// Poll the review itself until the tool posts SOMETHING current (a summary, or
+// open threads) or the deadline passes. Open threads outrank a clean summary:
+// the summary lags the threads, so feedback on the table wins. A Greptile
+// summary for an older commit is treated exactly like a review that has not
+// landed yet and remains visible in the timeout payload for diagnosis.
 function watchReview(
   root: string,
   repo: RepoIdentity,
   pr: PullRequest,
+  checks: CheckRun[],
+  selected: AdapterSpec | null,
   deadlineAt: number
-): Reading<Pick<WatchPayload, "openThreads" | "summary" | "verdict">> {
+): Reading<ReviewPollOutcome> {
   const interval = pollIntervalMs();
   for (;;) {
-    const snapshot = collectReview(root, repo, pr);
+    const snapshot = collectReview(root, repo, pr, selected);
     if (!snapshot.ok) {
       return snapshot;
     }
+    if (selected === null && snapshot.value.candidates !== null) {
+      return {
+        error: adapterChoiceError(snapshot.value.candidates),
+        ok: false,
+      };
+    }
+    // Bind the just-collected threads/comments to the immutable HEAD we checked.
+    // If a push landed at any point during the reads, the caller discards BOTH the
+    // CI and review snapshots and restarts from checks for the new commit.
+    const afterReview = readPullRequest(root, pr.number);
+    if (!afterReview.ok) {
+      return afterReview;
+    }
+    if (!sameHead(pr, afterReview.value)) {
+      return {
+        ok: true,
+        value: { headChanged: afterReview.value, payload: null },
+      };
+    }
     const { summary, threads } = snapshot.value;
+    const freshness = reviewFreshness(snapshot.value, checks);
     if (threads.length > 0) {
       return {
         ok: true,
         value: {
-          openThreads: threads.length,
-          summary,
-          verdict: "feedback-present",
+          headChanged: null,
+          payload: {
+            openThreads: threads.length,
+            ...freshness,
+            summary,
+            verdict: "feedback-present",
+          },
         },
       };
     }
-    if (summary !== null) {
+    if (summary !== null && freshness.reviewFresh === true) {
       return {
         ok: true,
-        value: { openThreads: 0, summary, verdict: "merge-ready" },
+        value: {
+          headChanged: null,
+          payload: {
+            openThreads: 0,
+            ...freshness,
+            summary,
+            verdict: "merge-ready",
+          },
+        },
       };
     }
     if (Date.now() >= deadlineAt) {
@@ -1381,7 +1645,18 @@ function watchReview(
       // is a different answer from "reviewed and clean" and must never read as one.
       return {
         ok: true,
-        value: { openThreads: 0, summary: null, verdict: "open-unreviewed" },
+        value: {
+          headChanged: null,
+          payload: {
+            openThreads: 0,
+            reason:
+              freshness.reason ??
+              `${snapshot.value.adapter.id} has no commit-scoped review evidence for current HEAD ${pr.headRefOid}`,
+            reviewFresh: freshness.reviewFresh,
+            summary,
+            verdict: "open-unreviewed",
+          },
+        },
       };
     }
     sleepSync(interval);
@@ -1411,6 +1686,23 @@ function stringOption(
 ): string | undefined {
   const value = context.options[name];
   return typeof value === "string" ? value : undefined;
+}
+
+function readAdapterOption(
+  context: CommandContext
+): Reading<AdapterSpec | null> {
+  const raw = stringOption(context, "adapter");
+  if (raw === undefined) {
+    return { ok: true, value: null };
+  }
+  const selected = adapterSpec(raw.trim().toLowerCase());
+  if (selected === null) {
+    return {
+      error: `unknown adapter \`${raw}\` — expected one of: ${ALL_ADAPTERS.map((candidate) => candidate.id).join(", ")}`,
+      ok: false,
+    };
+  }
+  return { ok: true, value: selected };
 }
 
 // `--pr N` — validated HERE so a typo is a dobby error naming the flag, never an
@@ -1514,6 +1806,11 @@ function formatWatch(payload: WatchPayload): string {
   }
   if (payload.openThreads !== null) {
     lines.push(`threads:  ${String(payload.openThreads)} open`);
+  }
+  if (payload.reviewFresh !== null) {
+    lines.push(
+      `review:   ${payload.reviewFresh ? "current HEAD" : "stale or unproven"}`
+    );
   }
   if (payload.summary !== null) {
     lines.push(

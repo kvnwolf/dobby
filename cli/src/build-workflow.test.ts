@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { WORKFLOW_RECIPE } from "./workflow-recipe.ts";
 
 // ===========================================================================
 // THE BUILD RUN — the workflow script `/dobby:execute` launches ONCE per plan.
@@ -27,16 +28,17 @@ import { describe, expect, it } from "vitest";
 // WHERE EVERY EXPECTED VALUE COMES FROM (all INDEPENDENT of the script):
 //  - The status vocabulary (`done` / `needs-human` / `blocked`), the result
 //    fields (`id`, `status`, `workLog`, `evidence`, `reason`, `blockedBy`,
-//    `loops`) and the `{ results }` wrapper are the task spec's own literals.
+//    `loops`) and the `{ results, telemetry }` wrapper are the task spec's own
+//    literals.
 //  - Every log line asserted is the spec's literal template with this file's
 //    fixture ids substituted: `"<id> ⊘ blocked — depends on <blocker>
-//    (<blocker status>)"`, `"Wave 1/3 done: 2 ✓ · 1 needs-human · 0 ⊘"`,
-//    `"T4: review ✗ (findings) — retry 1/3"`, `"T4: verify ✗ — outer loop
-//    2/3"`, `"T4 ✓ verified — … (2 loops)"`, `"T5 ✗ needs-human — <reason>"`.
+//    (<blocker status>)"`, `"Wave 1/2 done: 2 ✓ · 1 needs-human · 0 ⊘"`,
+//    `"T4: verify ✗ (findings) — outer loop 2/2"`, `"T4 ✓ verified —
+//    … (2 loops)"`, `"T5 ✗ needs-human — <reason>"`.
 //  - The `phase()` title format `Wave <n>/<total>` is the spec's decision 2.
-//  - The two `needs-human` reasons (`code review never passed`, `verify never
-//    passed within retries`) and the caps (MAX_OUTER 3, MAX_REVIEW 3) are the
-//    CURRENT script's literals, which the spec freezes byte-for-byte.
+//  - The `needs-human` reasons (`verifier returned an invalid failure verdict`,
+//    `verify never passed within retries`) and MAX_OUTER 2 are the policy's
+//    literals, which the spec freezes byte-for-byte.
 //  - Every agent answer is a canned literal this file writes (`pass: false`
 //    with a findings string, a `workLog` string, an `evidence` string), so
 //    "which loop ran" and "what came back" are facts of data we authored —
@@ -60,6 +62,7 @@ const REFERENCE = resolve(
   REPO_ROOT,
   "plugin/skills/execute/references/build-workflow.md"
 );
+const EXECUTE_SKILL = resolve(REPO_ROOT, "plugin/skills/execute/SKILL.md");
 
 // --- extracting the script from the reference ------------------------------
 
@@ -96,6 +99,17 @@ function readBuildRunScript(): string {
 
 const SCRIPT = readBuildRunScript();
 
+describe("the execute coordinator — live status", () => {
+  it("leaves live reporting to the Workflow run without a monitor relay", () => {
+    const skill = readFileSync(EXECUTE_SKILL, "utf8");
+
+    expect(skill).toContain("the ONLY live-status surface");
+    expect(skill).toContain("Do NOT invoke `Monitor`");
+    expect(skill).not.toContain("Set up ONE quiet background watcher");
+    expect(skill).not.toContain("Relay the run in BATCHES");
+  });
+});
+
 // The workflow runtime's globals, in the order the evaluator binds them.
 const RUNTIME_GLOBALS = [
   "agent",
@@ -113,17 +127,22 @@ type AgentResult = Record<string, unknown> | null;
 
 interface AgentOptions {
   agentType: string;
+  effort?: string;
   label: string;
+  model?: string;
   phase?: string;
   schema?: unknown;
 }
 
 interface AgentCall {
   agentType: string;
+  effort: string | undefined;
   label: string;
+  model: string | undefined;
   /** the phase group the runtime files this agent under */
   phase: string | undefined;
   prompt: string;
+  schema: unknown;
 }
 
 interface AgentPlan {
@@ -133,6 +152,8 @@ interface AgentPlan {
   gate?: Record<string, Promise<void>>;
   /** label -> canned answers in order; the default answer resumes after */
   queue?: Record<string, AgentResult[]>;
+  /** labels whose agent invocation throws instead of returning structured output */
+  throws?: string[];
 }
 
 interface Runtime {
@@ -155,26 +176,41 @@ interface TaskResult {
   blockedBy?: string;
   evidence?: string;
   id: string;
+  limitExhausted?: boolean;
   loops?: number;
   reason?: string;
+  retries?: number;
   status: string;
+  verification?: string;
   workLog?: string;
 }
 
-// A worker answers in the shape its schema declares: the reviewer/verifier a
-// VERDICT, everyone else a work-log entry.
+interface WorkflowTelemetry {
+  events: Record<string, unknown>[];
+  summary: Record<string, unknown>;
+}
+
+// A worker answers in the shape its schema declares: the verifier (and the
+// exceptional safety reviewer) a VERDICT, everyone else a work-log entry.
 function defaultResult(role: string, id: string): AgentResult {
   if (role === "review") {
-    return { evidence: "", findings: "", pass: true, testFindings: "" };
+    return { findings: "", pass: true, testFindings: "" };
   }
   if (role === "verify") {
     return {
       evidence: `${id} behaves as its verify recipe describes`,
+      failureKind: "none",
       findings: "",
       pass: true,
+      testFindings: "",
+      verificationKind: "mechanically-proven",
     };
   }
-  return { workLog: `${role} log for ${id}` };
+  return {
+    blocker: "",
+    status: "completed",
+    workLog: `${role} log for ${id}`,
+  };
 }
 
 function makeHarness(plan: AgentPlan = {}): Harness {
@@ -189,13 +225,19 @@ function makeHarness(plan: AgentPlan = {}): Harness {
     const label = options?.label ?? "";
     calls.push({
       agentType: options?.agentType ?? "",
+      effort: options?.effort,
       label,
+      model: options?.model,
       phase: options?.phase,
       prompt,
+      schema: options?.schema,
     });
     const gate = plan.gate?.[label];
     if (gate) {
       await gate;
+    }
+    if (plan.throws?.includes(label)) {
+      throw new Error(`agent runtime failed for ${label}`);
     }
     const queued = plan.queue?.[label];
     if (queued && queued.length > 0) {
@@ -281,6 +323,21 @@ function resultFor(returned: unknown, id: string): TaskResult {
     );
   }
   return found;
+}
+
+function telemetryOf(returned: unknown): WorkflowTelemetry {
+  const telemetry = (returned as { telemetry?: unknown })?.telemetry;
+  if (
+    typeof telemetry !== "object" ||
+    telemetry === null ||
+    !Array.isArray((telemetry as WorkflowTelemetry).events) ||
+    typeof (telemetry as WorkflowTelemetry).summary !== "object"
+  ) {
+    throw new Error(
+      `the build run must return telemetry — got ${JSON.stringify(returned)}`
+    );
+  }
+  return telemetry as WorkflowTelemetry;
 }
 
 function labelsFor(harness: Harness, id: string): string[] {
@@ -371,6 +428,7 @@ function waveArgs(
     devUrl: DEV_URL,
     hasTestSuite: false,
     waves,
+    workflowRecipe: WORKFLOW_RECIPE,
     workRoot: WORK_ROOT,
     ...extra,
   };
@@ -378,9 +436,12 @@ function waveArgs(
 
 // A verdict that never passes — the only way to force a terminal `needs-human`.
 const VERIFY_FAILS = {
-  evidence: "",
+  evidence: "saved value was absent after the prescribed interaction",
+  failureKind: "code",
   findings: "the saved value never appears",
   pass: false,
+  testFindings: "",
+  verificationKind: "model-judged",
 };
 
 describe("the build run — the args contract", () => {
@@ -412,6 +473,7 @@ describe("the build run — the args contract", () => {
       devUrl: DEV_URL,
       hasTestSuite: false,
       tasks: [task("T1")],
+      workflowRecipe: WORKFLOW_RECIPE,
       workRoot: WORK_ROOT,
     });
 
@@ -434,6 +496,158 @@ describe("the build run — the args contract", () => {
     expect(failure).toBeInstanceOf(Error);
     expect(String(failure)).toMatch(/waves/i);
     expect(String(failure)).toMatch(/tasks/i);
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("refuses a missing recipe before any agent", async () => {
+    const harness = makeHarness();
+
+    const failure = await runBuildRun(harness, {
+      devUrl: DEV_URL,
+      hasTestSuite: false,
+      waves: [[task("T1")]],
+      workRoot: WORK_ROOT,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toMatch(/workflowRecipe/i);
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("refuses a missing workRoot before any agent", async () => {
+    const harness = makeHarness();
+    const input = {
+      devUrl: DEV_URL,
+      hasTestSuite: false,
+      waves: [[task("T1")]],
+      workflowRecipe: WORKFLOW_RECIPE,
+    };
+
+    const failure = await runBuildRun(harness, input).catch(
+      (error: unknown) => error
+    );
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toMatch(/workRoot.*absolute/i);
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("refuses a relative workRoot before any agent", async () => {
+    const harness = makeHarness();
+
+    const failure = await runBuildRun(
+      harness,
+      waveArgs([[task("T1")]], { workRoot: ".claude/worktrees/T1" })
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toMatch(/workRoot.*absolute/i);
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("refuses a missing hasTestSuite verdict before any agent", async () => {
+    const harness = makeHarness();
+    const input = {
+      devUrl: DEV_URL,
+      waves: [[task("T1")]],
+      workflowRecipe: WORKFLOW_RECIPE,
+      workRoot: WORK_ROOT,
+    };
+
+    const failure = await runBuildRun(harness, input).catch(
+      (error: unknown) => error
+    );
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toMatch(/hasTestSuite.*boolean/i);
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("refuses a non-boolean hasTestSuite verdict before any agent", async () => {
+    const harness = makeHarness();
+
+    const failure = await runBuildRun(
+      harness,
+      waveArgs([[task("T1")]], { hasTestSuite: "false" })
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toMatch(/hasTestSuite.*boolean/i);
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("refuses a recipe identity other than baseline-v1 before any agent", async () => {
+    const harness = makeHarness();
+
+    const failure = await runBuildRun(
+      harness,
+      waveArgs([[task("T1")]], {
+        workflowRecipe: { ...WORKFLOW_RECIPE, id: "critical" },
+      })
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toMatch(/workflowRecipe/i);
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("refuses an incorrect baseline-v1 fingerprint before any agent", async () => {
+    const harness = makeHarness();
+
+    const failure = await runBuildRun(
+      harness,
+      waveArgs([[task("T1")]], {
+        workflowRecipe: {
+          ...WORKFLOW_RECIPE,
+          fingerprint: "fnv1a32:00000000",
+        },
+      })
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toMatch(/fingerprint/i);
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("refuses role-policy drift under a stale fingerprint before any agent", async () => {
+    const harness = makeHarness();
+
+    const failure = await runBuildRun(
+      harness,
+      waveArgs([[task("T1")]], {
+        workflowRecipe: {
+          ...WORKFLOW_RECIPE,
+          roles: {
+            ...WORKFLOW_RECIPE.roles,
+            reviewer: {
+              ...WORKFLOW_RECIPE.roles.reviewer,
+              model: "claude-sonnet-5",
+            },
+          },
+        },
+      })
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toMatch(/fingerprint/i);
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("refuses recipe-limit drift under a stale fingerprint before any agent", async () => {
+    const harness = makeHarness();
+
+    const failure = await runBuildRun(
+      harness,
+      waveArgs([[task("T1")]], {
+        workflowRecipe: {
+          ...WORKFLOW_RECIPE,
+          limits: { ...WORKFLOW_RECIPE.limits, maxOuter: 3 },
+        },
+      })
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toMatch(/fingerprint/i);
     expect(harness.calls).toEqual([]);
   });
 
@@ -658,6 +872,29 @@ describe("the build run — wave sequencing", () => {
     expect(startedAlongside).toContain("impl:T2");
   });
 
+  it("never starts more tasks than maxConcurrency inside one wave", async () => {
+    const first = deferred();
+    const second = deferred();
+    const harness = makeHarness({
+      gate: { "impl:T1": first.promise, "impl:T2": second.promise },
+    });
+
+    const running = startBuildRun(
+      harness,
+      waveArgs([[task("T1"), task("T2"), task("T3")]])
+    );
+    await flush();
+    const firstBatch = harness.calls.map((call) => call.label);
+    first.release();
+    second.release();
+    await running;
+
+    expect(firstBatch).toContain("impl:T1");
+    expect(firstBatch).toContain("impl:T2");
+    expect(firstBatch).not.toContain("impl:T3");
+    expect(labelsFor(harness, "T3")).toContain("impl:T3");
+  });
+
   it("groups each wave under its own phase", async () => {
     const harness = makeHarness();
 
@@ -727,36 +964,29 @@ describe("the build run — the narrator log", () => {
 });
 
 describe("the build run — retries and adaptive verbosity", () => {
-  // T1's first review comes back with findings, then passes; T2 sails through.
-  const reviewFailsOnce = () => ({
-    queue: {
-      "review:T1": [
-        {
-          evidence: "",
-          findings: "the null guard is missing",
-          pass: false,
-          testFindings: "",
-        },
-      ],
-    },
+  // T1's first verification comes back with actionable findings, then passes;
+  // T2 sails through. This is the only normal correction loop.
+  const verifyFailsOnce = () => ({
+    queue: { "verify:T1": [VERIFY_FAILS] },
   });
 
-  it("logs a retry line when a review comes back with findings", async () => {
-    const harness = makeHarness(reviewFailsOnce());
+  it("logs a retry line when verification returns actionable findings", async () => {
+    const harness = makeHarness(verifyFailsOnce());
 
     await runBuildRun(harness, waveArgs([[task("T1")]]));
 
-    expect(lineWith(harness, "T1: review ✗")).toContain("retry 1/3");
+    expect(lineWith(harness, "T1: verify ✗")).toContain("outer loop 2/2");
   });
 
-  it("narrates the later milestones of a task that failed a review while its wave sibling stays terse", async () => {
-    const harness = makeHarness(reviewFailsOnce());
+  it("narrates later milestones only for the task that failed verification", async () => {
+    const harness = makeHarness(verifyFailsOnce());
 
     await runBuildRun(harness, waveArgs([[task("T1"), task("T2")]]));
 
     // T2 never failed: its only line is its terminal one.
     expect(linesFor(harness, "T2")).toHaveLength(1);
-    // T1 escalated: the retry line, the milestones after it, the terminal line.
+    // T1 escalated: retry, second implementation milestone, verify milestone,
+    // and terminal line. The first implementation happened before it was loud.
     expect(linesFor(harness, "T1").length).toBeGreaterThanOrEqual(4);
   });
 
@@ -765,7 +995,7 @@ describe("the build run — retries and adaptive verbosity", () => {
 
     const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
 
-    expect(lineWith(harness, "T1: verify ✗")).toContain("outer loop 2/3");
+    expect(lineWith(harness, "T1: verify ✗")).toContain("outer loop 2/2");
     expect(resultFor(returned, "T1")).toMatchObject({
       loops: 2,
       status: "done",
@@ -778,30 +1008,256 @@ describe("the build run — retries and adaptive verbosity", () => {
     const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
 
     expect(resultFor(returned, "T1")).toMatchObject({
-      loops: 3,
+      loops: 2,
       reason: "verify never passed within retries",
       status: "needs-human",
     });
   });
 
-  it("flags a task needs-human when the review never passes", async () => {
+  it("does not re-implement when a verifier returns an invalid failure verdict", async () => {
     const harness = makeHarness({
       always: {
-        "review:T1": {
-          evidence: "",
-          findings: "the handler still swallows the error",
+        "verify:T1": {
+          evidence: "the verifier could not classify an observed result",
+          failureKind: "none",
+          findings: "",
           pass: false,
           testFindings: "",
+          verificationKind: "not-available",
         },
       },
     });
 
     const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
 
+    expect(labelsFor(harness, "T1")).toEqual(["impl:T1", "verify:T1"]);
     expect(resultFor(returned, "T1")).toMatchObject({
-      reason: "code review never passed",
+      limitExhausted: false,
+      loops: 1,
+      reason: "verifier returned an invalid failure verdict",
       status: "needs-human",
     });
+  });
+
+  it.each([
+    {
+      evidence: "",
+      findings: "",
+      label: "empty evidence",
+      verificationKind: "mechanically-proven",
+    },
+    {
+      evidence: "the required proof surface was unavailable",
+      findings: "",
+      label: "unavailable proof",
+      verificationKind: "not-available",
+    },
+    {
+      evidence: "the recipe passed but exposed a contradictory defect",
+      findings: "the observed output still violates the spec",
+      label: "a non-empty finding",
+      verificationKind: "mechanically-proven",
+    },
+  ])("rejects a passing verifier verdict with $label", async (verdict) => {
+    const harness = makeHarness({
+      always: {
+        "verify:T1": {
+          evidence: verdict.evidence,
+          failureKind: "none",
+          findings: verdict.findings,
+          pass: true,
+          testFindings: "",
+          verificationKind: verdict.verificationKind,
+        },
+      },
+    });
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(labelsFor(harness, "T1")).toEqual(["impl:T1", "verify:T1"]);
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      reason: "verifier returned an incoherent pass verdict",
+      status: "needs-human",
+    });
+  });
+
+  it("does not dispatch a writer for an environment verification failure", async () => {
+    const harness = makeHarness({
+      always: {
+        "verify:T1": {
+          evidence: "the prepared browser session showed an expired login",
+          failureKind: "environment",
+          findings: "authenticate the prepared browser surface again",
+          pass: false,
+          testFindings: "",
+          verificationKind: "not-available",
+        },
+      },
+    });
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(labelsFor(harness, "T1")).toEqual(["impl:T1", "verify:T1"]);
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      reason:
+        "verification blocked by environment: authenticate the prepared browser surface again",
+      status: "needs-human",
+    });
+  });
+
+  it("does not dispatch a writer when verification requires human judgment", async () => {
+    const harness = makeHarness({
+      always: {
+        "verify:T1": {
+          evidence: "the task asks whether the interaction feels delightful",
+          failureKind: "needs-human",
+          findings: "a human must judge the subjective interaction quality",
+          pass: false,
+          testFindings: "",
+          verificationKind: "not-available",
+        },
+      },
+    });
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(labelsFor(harness, "T1")).toEqual(["impl:T1", "verify:T1"]);
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      reason:
+        "verification requires human judgment: a human must judge the subjective interaction quality",
+      status: "needs-human",
+    });
+  });
+
+  it("allows one correction and mandatory re-verification, never a terminal fix", async () => {
+    const harness = makeHarness({ always: { "verify:T1": VERIFY_FAILS } });
+
+    await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    const labels = labelsFor(harness, "T1");
+    expect(labels).toEqual(["impl:T1", "verify:T1", "impl:T1", "verify:T1"]);
+    expect(labels.at(-1)).toBe("verify:T1");
+  });
+
+  it("routes verifier test findings to the test-author, propagates the extension, then re-verifies", async () => {
+    const testFirst = { ...task("T1"), testFirst: true };
+    const verificationFailure = {
+      evidence: "the empty-case exercise exposed both gaps",
+      failureKind: "test-contract",
+      findings: "the implementation misses the empty case",
+      pass: false,
+      testFindings: "add coverage for the empty case",
+      verificationKind: "model-judged",
+    };
+    const harness = makeHarness({
+      queue: { "verify:T1": [verificationFailure] },
+    });
+
+    await runBuildRun(
+      harness,
+      waveArgs([[testFirst]], {
+        hasTestSuite: true,
+      })
+    );
+
+    const labels = labelsFor(harness, "T1");
+    expect(labels).toEqual([
+      "test:T1",
+      "impl:T1",
+      "verify:T1",
+      "test-fix:T1",
+      "impl:T1",
+      "verify:T1",
+    ]);
+    const implementors = harness.calls.filter(
+      (call) => call.label === "impl:T1"
+    );
+    expect(implementors[1]?.prompt).toContain(
+      "Verifier-requested test-contract extension"
+    );
+    expect(implementors[1]?.prompt).toContain("test-fix log for T1");
+    expect(implementors[1]?.prompt).toContain(
+      "add coverage for the empty case"
+    );
+    expect(labels.at(-1)).toBe("verify:T1");
+  });
+
+  it("never extends the test contract after the final verifier failure", async () => {
+    const testFirst = { ...task("T1"), testFirst: true };
+    const harness = makeHarness({
+      always: {
+        "verify:T1": {
+          evidence:
+            "the empty case still fails after the second implementation",
+          failureKind: "test-contract",
+          findings: "implementation still misses the empty case",
+          pass: false,
+          testFindings: "add empty-case coverage",
+          verificationKind: "mechanically-proven",
+        },
+      },
+    });
+
+    const returned = await runBuildRun(
+      harness,
+      waveArgs([[testFirst]], { hasTestSuite: true })
+    );
+
+    const labels = labelsFor(harness, "T1");
+    expect(labels.filter((label) => label === "test-fix:T1")).toHaveLength(1);
+    expect(labels.at(-1)).toBe("verify:T1");
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: true,
+      status: "needs-human",
+    });
+  });
+
+  it("routes test findings to the implementor when no authored contract exists", async () => {
+    const harness = makeHarness({
+      queue: {
+        "verify:T1": [
+          {
+            evidence:
+              "the regression suite has no assertion for the empty case",
+            failureKind: "test-contract",
+            findings: "",
+            pass: false,
+            testFindings: "add a regression test for the empty case",
+            verificationKind: "mechanically-proven",
+          },
+        ],
+      },
+    });
+
+    await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(labelsFor(harness, "T1")).toEqual([
+      "impl:T1",
+      "verify:T1",
+      "impl:T1",
+      "verify:T1",
+    ]);
+    expect(
+      harness.calls.filter((call) => call.label === "impl:T1")[1]?.prompt
+    ).toContain("add a regression test for the empty case");
+    expect(labelsFor(harness, "T1")).not.toContain("test-fix:T1");
+  });
+
+  it("stops outer retries at baseline-v1's maxOuter", async () => {
+    const harness = makeHarness({ always: { "verify:T1": VERIFY_FAILS } });
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(resultFor(returned, "T1")).toMatchObject({
+      loops: 2,
+      status: "needs-human",
+    });
+    expect(
+      labelsFor(harness, "T1").filter((label) => label === "impl:T1")
+    ).toHaveLength(2);
   });
 
   it("keeps the wave alive when an agent returns no result at all", async () => {
@@ -817,16 +1273,329 @@ describe("the build run — retries and adaptive verbosity", () => {
     expect(resultFor(returned, "T1").status).toBe("needs-human");
     expect(resultFor(returned, "T2").status).toBe("done");
   });
+
+  it("safety-reviews the scoped diff when the test-author returns no work log", async () => {
+    const harness = makeHarness({ always: { "test:T1": null } });
+    const testFirst = { ...task("T1"), testFirst: true };
+
+    const returned = await runBuildRun(
+      harness,
+      waveArgs([[testFirst]], { hasTestSuite: true })
+    );
+
+    expect(labelsFor(harness, "T1")).toEqual(["test:T1", "review:T1"]);
+    expect(harness.calls.at(-1)?.prompt).toContain("SAFETY REVIEW ONLY");
+    expect(telemetryOf(returned).events.map((event) => event.stage)).toEqual([
+      "test-author",
+      "safety-review",
+    ]);
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      loops: 0,
+      reason:
+        "test-author returned no valid writer result; safety review passed",
+      status: "needs-human",
+    });
+  });
+
+  it("stops before implementation when the test-author reports a coherent blocker", async () => {
+    const harness = makeHarness({
+      always: {
+        "test:T1": {
+          blocker: "the spec does not define the public seam",
+          status: "blocked",
+          workLog: "No files changed; the interface is undefined.",
+        },
+      },
+    });
+    const testFirst = { ...task("T1"), testFirst: true };
+
+    const returned = await runBuildRun(
+      harness,
+      waveArgs([[testFirst]], { hasTestSuite: true })
+    );
+
+    expect(labelsFor(harness, "T1")).toEqual(["test:T1"]);
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      loops: 0,
+      reason: "test-author blocked: the spec does not define the public seam",
+      status: "needs-human",
+      workLog: "No files changed; the interface is undefined.",
+    });
+  });
+
+  it("safety-reviews the scoped diff when the implementor returns no work log", async () => {
+    const harness = makeHarness({ always: { "impl:T1": null } });
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(labelsFor(harness, "T1")).toEqual(["impl:T1", "review:T1"]);
+    expect(harness.calls.at(-1)?.prompt).toContain("SAFETY REVIEW ONLY");
+    expect(telemetryOf(returned).events.map((event) => event.stage)).toEqual([
+      "implement",
+      "safety-review",
+    ]);
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      loops: 1,
+      reason:
+        "implementor returned no valid writer result; safety review passed",
+      status: "needs-human",
+    });
+  });
+
+  it("stops before verification when the implementor reports a coherent blocker", async () => {
+    const harness = makeHarness({
+      always: {
+        "impl:T1": {
+          blocker: "the required generated client cannot be produced offline",
+          status: "blocked",
+          workLog: "No files changed; generation could not start.",
+        },
+      },
+    });
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(labelsFor(harness, "T1")).toEqual(["impl:T1"]);
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      loops: 1,
+      reason:
+        "implementor blocked: the required generated client cannot be produced offline",
+      status: "needs-human",
+      workLog: "No files changed; generation could not start.",
+    });
+    expect(telemetryOf(returned).events).toMatchObject([
+      { outcome: "blocked", stage: "implement" },
+    ]);
+  });
+
+  it("safety-reviews the scoped diff when a test-contract fix returns no work log", async () => {
+    const harness = makeHarness({
+      always: {
+        "test-fix:T1": null,
+      },
+      queue: {
+        "verify:T1": [
+          {
+            evidence: "the empty-case exercise exposed both gaps",
+            failureKind: "test-contract",
+            findings: "implementation misses the empty case",
+            pass: false,
+            testFindings: "add empty-case coverage",
+            verificationKind: "mechanically-proven",
+          },
+        ],
+      },
+    });
+    const testFirst = { ...task("T1"), testFirst: true };
+
+    const returned = await runBuildRun(
+      harness,
+      waveArgs([[testFirst]], { hasTestSuite: true })
+    );
+
+    expect(labelsFor(harness, "T1")).toEqual([
+      "test:T1",
+      "impl:T1",
+      "verify:T1",
+      "test-fix:T1",
+      "review:T1",
+    ]);
+    expect(harness.calls.at(-1)?.prompt).toContain("SAFETY REVIEW ONLY");
+    expect(telemetryOf(returned).events.at(-1)?.stage).toBe("safety-review");
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      reason:
+        "test-author fix returned no valid writer result; safety review passed",
+      status: "needs-human",
+    });
+  });
+
+  it("safety-reviews the scoped diff when a code fix returns no work log", async () => {
+    const harness = makeHarness({
+      queue: {
+        "impl:T1": [
+          {
+            blocker: "",
+            status: "completed",
+            workLog: "initial implementation",
+          },
+          null,
+        ],
+        "verify:T1": [VERIFY_FAILS],
+      },
+    });
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(labelsFor(harness, "T1")).toEqual([
+      "impl:T1",
+      "verify:T1",
+      "impl:T1",
+      "review:T1",
+    ]);
+    expect(harness.calls.at(-1)?.prompt).toContain("SAFETY REVIEW ONLY");
+    expect(telemetryOf(returned).events.at(-1)?.stage).toBe("safety-review");
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      reason:
+        "implementor returned no valid writer result; safety review passed",
+      status: "needs-human",
+    });
+  });
+
+  it("normalizes a thrown test-author call into a safety review and needs-human", async () => {
+    const harness = makeHarness({ throws: ["test:T1"] });
+    const testFirst = { ...task("T1"), testFirst: true };
+
+    const returned = await runBuildRun(
+      harness,
+      waveArgs([[testFirst]], { hasTestSuite: true })
+    );
+
+    expect(labelsFor(harness, "T1")).toEqual(["test:T1", "review:T1"]);
+    expect(telemetryOf(returned).events).toMatchObject([
+      { outcome: "error", stage: "test-author" },
+      { outcome: "passed", stage: "safety-review" },
+    ]);
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      reason:
+        "test-author returned no valid writer result; safety review passed",
+      status: "needs-human",
+    });
+  });
+
+  it("normalizes a thrown implementor call into a safety review and needs-human", async () => {
+    const harness = makeHarness({ throws: ["impl:T1"] });
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(labelsFor(harness, "T1")).toEqual(["impl:T1", "review:T1"]);
+    expect(telemetryOf(returned).events).toMatchObject([
+      { outcome: "error", stage: "implement" },
+      { outcome: "passed", stage: "safety-review" },
+    ]);
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      reason:
+        "implementor returned no valid writer result; safety review passed",
+      status: "needs-human",
+    });
+  });
+
+  it("normalizes a thrown test-contract fixer into a safety review and needs-human", async () => {
+    const harness = makeHarness({
+      queue: {
+        "verify:T1": [
+          {
+            evidence: "the empty-case exercise exposed both gaps",
+            failureKind: "test-contract",
+            findings: "implementation misses the empty case",
+            pass: false,
+            testFindings: "add empty-case coverage",
+            verificationKind: "mechanically-proven",
+          },
+        ],
+      },
+      throws: ["test-fix:T1"],
+    });
+    const testFirst = { ...task("T1"), testFirst: true };
+
+    const returned = await runBuildRun(
+      harness,
+      waveArgs([[testFirst]], { hasTestSuite: true })
+    );
+
+    expect(labelsFor(harness, "T1")).toEqual([
+      "test:T1",
+      "impl:T1",
+      "verify:T1",
+      "test-fix:T1",
+      "review:T1",
+    ]);
+    expect(telemetryOf(returned).events.slice(-2)).toMatchObject([
+      { outcome: "error", stage: "test-fix" },
+      { outcome: "passed", stage: "safety-review" },
+    ]);
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      reason:
+        "test-author fix returned no valid writer result; safety review passed",
+      status: "needs-human",
+    });
+  });
+
+  it("keeps needs-human when the safety reviewer itself returns no result", async () => {
+    const harness = makeHarness({
+      always: {
+        "impl:T1": null,
+        "review:T1": null,
+      },
+    });
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(labelsFor(harness, "T1")).toEqual(["impl:T1", "review:T1"]);
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      reason:
+        "implementor returned no valid writer result; safety review returned no result",
+      status: "needs-human",
+    });
+  });
+
+  /*
+   * A write-capable agent can mutate the worktree before losing structured
+   * output. The slices above freeze the fail-closed contract: every writer null
+   * or throw gets one exceptional read-only reviewer call, and no fixer follows.
+   */
 });
 
 describe("the build run — the per-task state machine it wraps", () => {
+  it("receives model policy through workflowRecipe without a second model table", () => {
+    expect(SCRIPT).not.toMatch(/claude-(?:fable|opus|sonnet)-5/);
+    expect(SCRIPT).not.toContain("STANDARD_ROLES");
+  });
+
+  it("passes baseline-v1 model and effort to each native Workflow agent call", async () => {
+    const harness = makeHarness();
+
+    await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(
+      harness.calls.find((call) => call.label === "impl:T1")
+    ).toMatchObject({ effort: "high", model: "claude-sonnet-5" });
+    expect(
+      harness.calls.find((call) => call.label === "verify:T1")
+    ).toMatchObject({ effort: "medium", model: "claude-sonnet-5" });
+  });
+
+  it("runs a normal successful task as implement then verify, with no reviewer", async () => {
+    const harness = makeHarness();
+
+    await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(labelsFor(harness, "T1")).toEqual(["impl:T1", "verify:T1"]);
+    expect(
+      harness.calls.some((call) => call.agentType === "dobby:reviewer")
+    ).toBe(false);
+  });
+
   it("dispatches the test-author first when the repo has a suite and the task is test-first", async () => {
     const harness = makeHarness();
     const testFirst = { ...task("T1"), testFirst: true };
 
     await runBuildRun(harness, waveArgs([[testFirst]], { hasTestSuite: true }));
 
-    expect(labelsFor(harness, "T1")).toContain("test:T1");
+    expect(labelsFor(harness, "T1")).toEqual([
+      "test:T1",
+      "impl:T1",
+      "verify:T1",
+    ]);
     expect(harness.calls[0]?.agentType).toBe("dobby:test-author");
   });
 
@@ -836,7 +1605,7 @@ describe("the build run — the per-task state machine it wraps", () => {
 
     await runBuildRun(harness, waveArgs([[testFirst]]));
 
-    expect(labelsFor(harness, "T1")).not.toContain("test:T1");
+    expect(labelsFor(harness, "T1")).toEqual(["impl:T1", "verify:T1"]);
   });
 
   it("pins every agent to the worktree root", async () => {
@@ -848,6 +1617,21 @@ describe("the build run — the per-task state machine it wraps", () => {
       .filter((call) => !call.prompt.includes(WORK_ROOT))
       .map((call) => call.label);
     expect(unpinned).toEqual([]);
+  });
+
+  it("shell-quotes a worktree root containing spaces and an apostrophe", async () => {
+    const harness = makeHarness();
+    const trickyRoot = "/private/tmp/dobby's build run/work tree";
+    const safeCd = "cd -- '/private/tmp/dobby'\"'\"'s build run/work tree'";
+
+    await runBuildRun(
+      harness,
+      waveArgs([[task("T1")]], { workRoot: trickyRoot })
+    );
+
+    expect(harness.calls.every((call) => call.prompt.includes(safeCd))).toBe(
+      true
+    );
   });
 
   it("tells the verifier where the app is already running", async () => {
@@ -866,6 +1650,143 @@ describe("the build run — the per-task state machine it wraps", () => {
 
     const verify = harness.calls.find((call) => call.label === "verify:T1");
     expect(verify?.prompt).toContain("no dev server");
+  });
+
+  it("passes suite and fixed-contract facts explicitly to a UI verifier", async () => {
+    const harness = makeHarness();
+    const testFirst = { ...task("T1"), testFirst: true };
+
+    await runBuildRun(harness, waveArgs([[testFirst]], { hasTestSuite: true }));
+
+    const verify = harness.calls.find((call) => call.label === "verify:T1");
+    expect(verify?.prompt).toContain("hasTestSuite: true");
+    expect(verify?.prompt).toContain("testContractAuthored: true");
+    expect(verify?.prompt).toContain(
+      "Run the project test suite for EVERY task type, including UI-facing tasks"
+    );
+  });
+
+  it("requires the complete fail-closed verifier and writer schemas", async () => {
+    const harness = makeHarness();
+
+    await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    const implementorSchema = harness.calls.find(
+      (call) => call.label === "impl:T1"
+    )?.schema as { required?: string[] };
+    const verifierSchema = harness.calls.find(
+      (call) => call.label === "verify:T1"
+    )?.schema as { required?: string[] };
+    expect(implementorSchema.required).toEqual([
+      "status",
+      "workLog",
+      "blocker",
+    ]);
+    expect(verifierSchema.required).toEqual([
+      "pass",
+      "failureKind",
+      "findings",
+      "testFindings",
+      "evidence",
+      "verificationKind",
+    ]);
+  });
+});
+
+describe("the build run — honest native telemetry", () => {
+  it("returns one event per native agent call with unavailable runtime data explicit", async () => {
+    const harness = makeHarness();
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+    const telemetry = telemetryOf(returned);
+
+    expect(telemetry.events).toHaveLength(harness.calls.length);
+    expect(telemetry.events.map((event) => event.role)).toEqual([
+      "implementor",
+      "verifier",
+    ]);
+    for (const event of telemetry.events) {
+      expect(event).toMatchObject({
+        cachedInputTokens: "unknown",
+        duration: "unknown",
+        host: "claude-code",
+        inputTokens: "unknown",
+        model: "unknown",
+        outputTokens: "unknown",
+        provider: "unknown",
+        recipe: "baseline-v1",
+        recipeFingerprint: WORKFLOW_RECIPE.fingerprint,
+        requestedModel: "claude-sonnet-5",
+        runId: "unknown",
+        taskId: "T1",
+      });
+    }
+  });
+
+  it("summarizes first-attempt success and mechanical proof", async () => {
+    const harness = makeHarness();
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: false,
+      retries: 0,
+      verification: "mechanically-proven",
+    });
+    expect(telemetryOf(returned).summary).toMatchObject({
+      attempts: 2,
+      firstAttemptSuccess: 1,
+      firstAttemptSuccessRate: 1,
+      limitExhaustions: 0,
+      retries: 0,
+      tasksAttempted: 1,
+      verification: {
+        "mechanically-proven": 1,
+        "model-judged": 0,
+        "not-available": 0,
+      },
+    });
+  });
+
+  it("counts same-role correction calls as retries", async () => {
+    const harness = makeHarness({
+      queue: { "verify:T1": [VERIFY_FAILS] },
+    });
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(resultFor(returned, "T1")).toMatchObject({ retries: 2 });
+    expect(telemetryOf(returned).summary).toMatchObject({
+      attempts: 4,
+      firstAttemptSuccess: 0,
+      retries: 2,
+    });
+  });
+
+  it("records no dynamic escalation under the fixed recipe", async () => {
+    const harness = makeHarness();
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+    const telemetry = telemetryOf(returned);
+
+    expect(
+      telemetry.events.every((event) => event.escalationReason === null)
+    ).toBe(true);
+  });
+
+  it("reports verification-cap exhaustion without manufacturing proof", async () => {
+    const harness = makeHarness({ always: { "verify:T1": VERIFY_FAILS } });
+
+    const returned = await runBuildRun(harness, waveArgs([[task("T1")]]));
+
+    expect(resultFor(returned, "T1")).toMatchObject({
+      limitExhausted: true,
+      verification: "not-available",
+    });
+    expect(telemetryOf(returned).summary).toMatchObject({
+      limitExhaustions: 1,
+      verification: { "not-available": 1 },
+    });
   });
 });
 

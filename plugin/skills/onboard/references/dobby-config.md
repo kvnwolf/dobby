@@ -2,7 +2,7 @@
 
 Creates `dobby.config.json` at the **consumer repo root** (JSON — NOT in `.dobby/`, NOT in `.claude/`). This is the single kit-owned contract, and its **presence** is the marker that a repo is a "dobby project" (the edit-time hook and the work skills guard on it). Since `dobby` infers most tasks from the project's detected capabilities (zero-config à la Vercel), the config shrank to one required section plus optional overrides.
 
-**Format is JSON.** Readers: `/dobby:commit` (`files`, doc-sync), plus `dobby` itself (`setup` / `teardown` / `checks` extras, layered onto the inferred defaults); the optional `tracker` key is read by the backlog skills — `/dobby:backlog`, `/dobby:scope`, `/dobby:commit`, `/dobby:triage`, `/dobby:resolve-conflicts`. Writer: `/dobby:onboard`.
+**Format is JSON.** Readers: `/dobby:commit` (`files`, doc-sync), plus `dobby` itself (`setup` / `teardown` / `checks` extras); the optional `tracker` key is read by the backlog skills — `/dobby:backlog`, `/dobby:scope`, `/dobby:commit`, `/dobby:triage`, `/dobby:resolve-conflicts`. Writer: `/dobby:onboard`.
 
 ## The sections
 
@@ -13,7 +13,7 @@ Creates `dobby.config.json` at the **consumer repo root** (JSON — NOT in `.dob
 | `teardown` | array of commands (optional) | `dobby down` | EXTRA cleanup commands, run during teardown |
 | `checks` | array of `{ name, run }` (optional) | `dobby check` | EXTRA checks, run IN ADDITION to the inferred gate (biome, tsc, knip, build, vitest-if-capability) |
 
-`files` is the only always-present section. `setup` / `teardown` / `checks` are OPTIONAL overrides — omit them entirely for a repo whose capabilities `dobby` already infers correctly (the common case). There is **no `run` key** — the dev/up/down lifecycle is inferred from the detected capabilities, never configured here.
+`files` is the only always-present section. `setup` / `teardown` / `checks` are OPTIONAL overrides — omit them entirely for a repo whose inferred mechanics are correct (the common case). There is **no `run` key** — the dev/up/down lifecycle is inferred from the detected capabilities, never configured here. The native Workflow recipe does not belong here either: Dobby ships the fixed `baseline-v1` experiment and exposes it through `dobby env`; there are no profile, model, effort, retry, or concurrency keys to add to project config.
 
 ## The optional `tracker` key
 

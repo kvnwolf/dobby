@@ -172,12 +172,28 @@ export { default } from "@kvnwolf/dobby/drizzle";
 
 ### `dobby env`
 
-Print a snapshot of the working environment — worktree root, branch, cmux workspace, detected capabilities, config presence, the inferred `db:*` task names (`dbTasks`), dev URL, and kit pane refs. Every fact is resolved locally (no network) and `env` never fails.
+Print a snapshot of the working environment — worktree root, branch, cmux workspace, detected capabilities, config presence, inferred `db:*` task names (`dbTasks`), dev URL, kit pane refs, and the fixed **Claude-native Workflow recipe**. Every fact is resolved locally (no network), and `env` always exits 0.
 
 ```sh
 dobby env             # key: value text
 dobby env --json      # the same facts as one JSON object
 ```
+
+`workflowRecipe` is always `baseline-v1`. It carries the deterministic fingerprint `fnv1a32:32afa935`, derived from the id, the five worker role policies in canonical order, both limits, and verification mode. The fingerprint is a compact drift detector, not a security hash; consumers can reject a recipe whose content no longer matches the known baseline without maintaining a second role table. The main-thread Architect uses the interactive session's manually selected model/effort and is deliberately outside this worker recipe. There is no profile picker and no project/global config, environment variable, session override, or CLI flag for models or limits during this seven-day experiment:
+
+| Role | Model | Reasoning |
+| --- | --- | --- |
+| researcher | `claude-sonnet-5` | `medium` |
+| test-author | `claude-opus-5` | `high` |
+| implementor | `claude-sonnet-5` | `high` |
+| reviewer | `claude-opus-5` | `high` |
+| verifier | `claude-sonnet-5` | `medium` |
+
+The fixed limits are `maxOuter: 2` and `maxConcurrency: 2`; verification is `mechanical-first`. `/dobby:execute` passes the complete `workflowRecipe` object unchanged to one native Workflow. Normal execute is optional test-author → implementor → verifier. A first verification failure may dispatch one implementor fix because a second verifier attempt remains; no fix may run after that final slot. There is no `maxReview`: the reviewer role remains in the recipe for direct dispatch and missing-work-log safety review, while holistic static review happens at the external PR boundary and must cover the current HEAD.
+
+The recipe also reports runtime capabilities. Native Workflow can apply model/effort while retaining `agentType`; build-role thread reuse remains unavailable and is not emulated with `claude -p`.
+
+Review the experiment after seven days of real use using Workflow telemetry: attempts, retries, first-attempt success, cap exhaustion, outcome, and mechanical-versus-model verification. Change the one canonical recipe only after that evidence; do not tune agent files independently.
 
 ### `dobby check [file...]`
 
@@ -391,7 +407,7 @@ dobby state append-worklog --task 3 --file /tmp/worklog.md --json
 dobby state lint --json
 ```
 
-`init` writes the skeleton plus the `.gitignore` entry and refuses an existing document. `set` replaces **one** section body and preserves every other byte (unknown sections included); `## Goal` / `## Source` are write-once, `## Work log` is never settable — that is what `append-worklog` is for, and it demotes the entry's own `##` headings to `###` so the document keeps one heading level per depth. `lint` reports the structure (H1, the seven sections present, in order, unduplicated, gitignored) and exits 1 on any violation.
+`init` writes the skeleton plus the `.gitignore` entry and refuses an existing document. `set` replaces **one** section body and preserves every other byte (unknown sections included); `## Goal` / `## Source` are write-once, `## Work log` is never settable — that is what `append-worklog` is for, and it demotes the entry's own `##` headings to `###` so the document keeps one heading level per depth. `lint` reports the structure (H1, the seven required sections present, canonical sections in order and unduplicated, gitignored). A legacy `## Execution profile` is an unknown section: Dobby tolerates and preserves it byte-for-byte, but `init` no longer creates it and the fixed recipe never reads it.
 
 ### `dobby build-plan`
 
@@ -442,18 +458,18 @@ Everything after `--` is the command. One run answers `{invocation, exitCode, st
 The `gh` surface of a PR review, mechanized. These commands move **data**; every judgment (is this finding valid, what is the fix, may we merge) stays with the caller.
 
 ```sh
-dobby review fetch --json                       # the PR, the bot adapter, open threads, the summary
-dobby review apply --plan /tmp/plan.json --json # reply + resolve, then re-trigger
+dobby review fetch [--adapter greptile] --json  # the PR, selected bot, open threads, summary
+dobby review apply --plan /tmp/plan.json [--adapter greptile] --json # reply + resolve, then re-trigger
 dobby review apply --stdin --dry-run --json
 dobby pr watch --json                           # CI to a verdict
-dobby pr watch --await-review --deadline 600 --json
+dobby pr watch [--adapter greptile] --await-review --deadline 600 --json
 ```
 
-`review fetch` returns `{pr, adapter, candidates, threads, summary}` — the review threads over GraphQL (drained with gh's `$endCursor` pagination contract, each thread carrying its last comments so a re-run sees its own prior replies) and the bot's summary comment over REST (sorted by `updated_at`, because the bot edits one comment in place).
+`review fetch` returns `{pr, adapter, candidates, threads, summary}` — the review threads over GraphQL (drained with gh's `$endCursor` pagination contract, each thread carrying its last comments so a re-run sees its own prior replies) and the bot's summary comment over REST. Bot authors are exact-matched after stripping `[bot]`; substring lookalikes do not count. When `candidates` names several bots, re-run with `--adapter <id>` and carry that flag through apply/watch; ambiguous writes and watches fail instead of silently taking registry order. If several adapters are required gates, the caller must retain every final payload and require one common `pr.headRefOid`, restarting the whole set on mismatch. Greptile summaries include parsed `reviewedHeadOid` evidence from the documented `Last reviewed commit` footer.
 
 `review apply` consumes a disposition plan — `{pr, reTrigger, plan: [{threadId, disposition: "fix" | "dismiss" | "outdated" | "defer", reply}]}` — replies, resolves (`defer` deliberately does **not** resolve: a deferred finding stays open), skips threads already answered, and then re-triggers if asked. Idempotent by construction.
 
-`pr watch` owns its own polling loop and derives the verdict from check **bucket counts**, because `gh pr checks --json` always exits 0 and `--watch --json` is a hard error. Verdicts: `ci-failed`, `ci-green`, `ci-pending`, `merge-ready`, `feedback-present`, `open-unreviewed`, `skipped`. `--deadline` (default 300s) budgets **each** wait phase separately — CI first, then the review with `--await-review` — so a slow CI run never eats the review wait. There is no merge path.
+`pr watch` owns its own polling loop and derives the verdict from check **bucket counts**, because `gh pr checks --json` always exits 0 and `--watch --json` is a hard error. Verdicts: `ci-failed`, `ci-green`, `ci-pending`, `merge-ready`, `feedback-present`, `open-unreviewed`, `skipped`. It re-reads `headRefOid` after checks and after each review snapshot; a concurrent push discards both and restarts from CI. Greptile `merge-ready` requires its named current-commit check to pass and its footer SHA to equal HEAD. CodeRabbit requires its named current-commit passing check; an old summary without it fails closed. Stale or missing evidence remains `open-unreviewed`, with `reviewFresh` and a diagnostic `reason` in JSON. `--deadline` (default 300s) budgets **each** wait phase separately — CI first, then review — so slow CI never consumes the review wait. There is no merge path.
 
 ### `dobby tracker` · `dobby claim` · `dobby goal parse`
 
@@ -542,7 +558,7 @@ An optional file at the repo root. Every field is optional — its presence mark
 | `tracker` | The issue backend for [`tracker` / `claim` / `goal parse`](#dobby-tracker--dobby-claim--dobby-goal-parse): `{ "type": "github" }` (the default when the key is absent), `{ "type": "linear", "team": "VON" }` (Linear has no repo-derivable team), or `{ "type": "local" }` (a plain `BACKLOG.md`). |
 | `release` | The release target — its presence is what makes [`dobby release`](#dobby-release) exist. `type` is required (`"npm"` or `"homebrew-cask"`); the rest is per-channel: `dir`, `smoke` (npm), `tap`, `cask`, `notaryProfile` (homebrew-cask), plus the shared `lockstep` and `surfaces`. |
 
-`tracker` and `release` are validated when the config is read: a malformed one is a clear error naming the key, never a silently ignored setting.
+`tracker` and `release` are validated when the config is read. The fixed Workflow recipe deliberately does not belong in this project contract and is not selected or overridden per goal.
 
 ## Inferred defaults per capability
 

@@ -35,7 +35,16 @@ Write down, per hunk: **their intent**, **our intent**, and whether the two are 
 
 ## Step 3: Resolve each hunk — delegate, never edit inline
 
-The architect does not edit conflicted files. Dispatch `dobby:implementor` (Agent tool, `subagent_type: "dobby:implementor"`) with, per hunk: the file + marker location, **both recovered intents**, and the resolution rule below. Batch all hunks in one file (and trivially-related files) into ONE implementor call; parallel implementors only on **non-overlapping** files (same rule as `/dobby:execute` waves).
+Before `bunx` or the first Agent, require BOTH local onboarding markers at the
+current workroot: `dobby.config.json` and `node_modules/.bin/dobby`. If either is
+absent, STOP, point to `/dobby:onboard`, and do not run `bunx dobby`; remote
+package resolution is forbidden. Only then run `bunx dobby env --json`, require
+the complete `workflowRecipe`, and validate its positive-integer
+`limits.maxConcurrency`. Missing/malformed data means STOP with zero Agents;
+never guess a cap from prose or frontmatter. Retain the limit for every retry or
+fix Agent later in this conflict operation.
+
+The architect does not edit conflicted files. Dispatch `dobby:implementor` (Agent tool, `subagent_type: "dobby:implementor"`) with, per hunk: the file + marker location, **both recovered intents**, and the resolution rule below. Batch all hunks in one file (and trivially-related files) into ONE implementor call. Partition independent implementors into deterministic sequential batches of at most `workflowRecipe.limits.maxConcurrency`: launch one batch in parallel only for **non-overlapping** files (same rule as `/dobby:execute` waves), await it fully, then launch the next. Retries and replacements consume a slot; serialize anything touching shared state.
 
 The resolution rule the implementor applies to each hunk:
 
@@ -43,14 +52,20 @@ The resolution rule the implementor applies to each hunk:
 - **Incompatible** → pick the side matching the **merge goal** from Step 1, and record the trade-off (what the other side wanted, and why it lost) for the commit body and any ADR.
 - **Never invent behaviour** — the merged code does only what one side or the other already did; no new third path.
 
-The implementor removes every conflict marker (`<<<<<<<`, `=======`, `>>>>>>>`), keeps the tree green (build/type/lint), and does NOT stage or commit. If it believes a hunk can't be reconciled without inventing behaviour, it flags that in its work-log rather than guessing — you bring that back to the user.
+The implementor removes every conflict marker (`<<<<<<<`, `=======`, `>>>>>>>`), keeps the tree green (build/type/lint), and does NOT stage or commit. It returns the structured writer envelope `{status, workLog, blocker}`. Validate every result before starting the next batch or Step 4:
+
+- `{status: "completed", workLog: <non-empty>, blocker: ""}` → integrate the accounting for that hunk/file and continue.
+- `{status: "blocked", workLog: <non-empty>, blocker: <non-empty>}` → STOP the operation without aborting it, report both the blocker and its file accounting, and return `needs-human`; do not launch another Agent, run the project gate, stage files, or continue the merge/rebase/cherry-pick.
+- Null, a bare work log, empty required fields, or an incoherent envelope → the writer may have partially changed a conflicted file. Mechanically inspect ONLY that call's named files with `git status --short -- <files>`, `git diff -- <files>`, `git diff --check -- <files>`, and a marker scan for `<<<<<<<|=======|>>>>>>>`; Read untracked/expected targets because `git diff` omits them. Report the observed accounting and return `needs-human`. Do not infer resolution from the tree and do not advance to Step 4.
+
+If the implementor believes a hunk cannot be reconciled without inventing behaviour, it uses the valid `blocked` shape rather than hiding that fact in a completed work log.
 
 ## Step 4: Run the project's discovered checks
 
 The resolution is validated by the project's own gate, not by eyeballing. Read `checks` from `dobby.config.json` and run each `run` command in order from the repo root — typically typecheck → tests → format. This is the same authority `/dobby:commit` uses.
 
-- Any check fails → the merge broke something. Send the failure (command + output verbatim) back to `dobby:implementor` to fix, then re-run the checks. Never weaken or skip a check to make it pass.
-- No `dobby.config.json` → the project has no discovered gate. Fall back to whatever the repo documents (its `package.json` scripts, `justfile`, CI config) and say plainly which checks you ran; suggest the user TYPE `/dobby:onboard` to establish the contract for next time.
+- Any check fails → the merge broke something. Send the failure (command + output verbatim) back to `dobby:implementor` to fix. Apply the SAME structured-result handling from Step 3 to that fix: only `completed` may re-run the checks; `blocked` or invalid stops `needs-human` before another gate. Never weaken or skip a check to make it pass.
+- Either onboarding marker disappeared after Step 3's preflight → STOP and report that the local execution contract changed mid-run. Never fall back to a remotely resolved CLI or an improvised gate.
 
 ## Step 5: Finish the merge/rebase
 
@@ -76,7 +91,11 @@ Interact with the user in their language. Code, comments, commit messages, and A
 
 - [ ] Current state established: operation in flight (`git status`) and the exact conflicting files (`--diff-filter=U`) identified — never guessed
 - [ ] Per hunk, BOTH sides' intent recovered from commits/PRs/issues and stated in one sentence each; nothing resolved whose purpose is unclear
+- [ ] Both local markers (`dobby.config.json` + `node_modules/.bin/dobby`) existed before `bunx`; either missing STOPped at `/dobby:onboard` without remote resolution or Agent launch
+- [ ] Complete `workflowRecipe` and valid `limits.maxConcurrency` resolved through `bunx dobby env --json` before the first Agent; missing/malformed data launched zero Agents
 - [ ] Every hunk resolved by `dobby:implementor` (architect edited no conflicted file): compatible → both intents preserved; incompatible → merge-goal side chosen and trade-off recorded; no invented behaviour
+- [ ] Every initial/fix implementor envelope handled fail-closed: `completed` integrated; `blocked` stopped with blocker + work-log accounting; null/malformed triggered file-scoped status/diff/diff-check/marker inspection and `needs-human`, before gate/stage/continue
+- [ ] Independent implementors, retries, and fix Agents ran in sequential batches no larger than the resolved limit; parallel files did not overlap and shared-state mutations were serialized
 - [ ] Project's discovered checks (`dobby.config.json`) run green; failures fixed via implementor, never weakened or skipped
 - [ ] Merge/rebase NOT aborted; resolved files staged; commit handed to `/dobby:commit`; rebases looped to completion
 - [ ] Any incompatible-hunk trade-off surfaced as an ADR candidate for `/dobby:wrap`

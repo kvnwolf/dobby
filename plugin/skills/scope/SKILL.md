@@ -8,7 +8,7 @@ The front door of a work session. Normalize the goal, put the session in its own
 
 **The mechanics belong to the CLI; the judgment and every gate belong here.** `bunx dobby goal parse` resolves the goal, `bunx dobby scope preflight` says what the worktree would take, `bunx dobby up` brings it up, `bunx dobby state` owns `STATE.md`. Read each `--json` payload and BRANCH on it — never re-derive a fact one of them already reports.
 
-Each of them runs the repo's **LOCAL** `dobby`. If it isn't installed — `bunx dobby …` can't run, or the preflight reports `dobbyInstalled: false` — every mechanic below is unavailable (`STATE.md` included), so **STOP the stage before creating anything** and point at `/dobby:onboard` (or `/dobby:migrate-config` for a repo moving off an old contract). There is no fallback.
+Each of them runs the repo's **LOCAL** `dobby`. Before Step 1's FIRST `bunx dobby`, require the executable marker `node_modules/.bin/dobby` under the current repo root. Missing → **STOP before running `bunx` or creating anything** and point at `/dobby:onboard` (or `/dobby:migrate-config` for a repo moving off an old contract); never let `bunx` resolve an npm package remotely. Do **not** require `dobby.config.json` at this front door: config absence is a valid pre-onboarding scope path. The local bin can still normalize/preflight and create `STATE.md`; later, `configPresent:false` skips only bring-up and records the `/dobby:onboard` follow-up. A defensive `dobbyInstalled:false` from preflight also STOPs. There is no fallback.
 
 ## Step 1: Normalize the input into a goal
 
@@ -109,7 +109,7 @@ Dispatch a `researcher` agent (Agent tool, `subagent_type: "dobby:researcher"`) 
 
 **Cross-reference the goal against the code — don't just map files.** Instruct the researcher to validate the goal's claims against what the code actually does and to report every contradiction as a finding (e.g. "you said cancellation is per-line, but the code cancels whole Orders — which is right?") so the checkpoint can resolve it before it propagates into the interview and spec. The goal is often written from an outdated mental model; the code is the ground truth. A wrong premise caught here is cheap; caught at execute it is expensive.
 
-**Context-budget the digest.** The exploration output shares one architect window with the interview and spec. If the goal touches a large surface, tell the researcher to return a COMPRESSED digest (the load-bearing modules, conventions, constraints, and contradictions — named, not dumped) rather than an exhaustive file-by-file transcript. If a full map is genuinely needed, have the researcher write it to a path and return a pointer plus the digest.
+**Context-budget the digest.** The exploration output stays in the main planning thread through interview and spec. If the goal touches a large surface, tell the researcher to return a COMPRESSED digest (the load-bearing modules, conventions, constraints, and contradictions — named, not dumped) rather than an exhaustive file-by-file transcript. If a full map is genuinely needed, have the researcher write it to a path and return a pointer plus the digest.
 
 ## Step 5: Checkpoint and record
 
@@ -142,6 +142,7 @@ Interact with the user in their language. Write what you persist — `STATE.md` 
 
 ## Acceptance checklist
 
+- [ ] Local `node_modules/.bin/dobby` existed BEFORE the first `bunx dobby`; missing STOPped before any mechanic and routed to `/dobby:onboard` / `/dobby:migrate-config`, with no remote package resolution (`dobby.config.json` was not required at this stage)
 - [ ] Goal normalized via `bunx dobby goal parse "<arg>" --json` (never by reading `dobby.config.json#tracker` or matching issue patterns by hand); asked in plain text if the input was empty
 - [ ] `hardStop` honored: non-null → stage STOPPED and reported (D8); a free-text goal always continues
 - [ ] If `source` is an issue: fetched per **view goal — the exception** in `../backlog/references/trackers.md`, then claimed with `bunx dobby claim <id> --json` — github when `claimed: true`; linear by executing the returned `{delegate:"mcp", op:"claim"}` descriptor through the ToolSearch-resolved tool (the kit's ONLY Linear-MCP write point; In Review / Done stay Linear-native), stage STOPPED if the MCP cannot read it
@@ -150,8 +151,8 @@ Interact with the user in their language. Write what you persist — `STATE.md` 
 - [ ] Worktree created + entered via the `EnterWorktree` tool with the collision-free slug (branch `worktree-<slug>`, `.claude/worktrees/<slug>/`)
 - [ ] `bunx dobby up --json` run (blocking) when `configPresent`; `ok:true` reported with `devUrl`/`phase` (no-app = clean success); `ok:false` → `reason` + stderr reported, then the two-option AskUserQuestion — **(a) abort (default/recommended)** `ExitWorktree(remove)` → stopped, or **(b) continue degraded** only on the explicit selection, naming `degradedCommand` when non-null
 - [ ] Degradation surfaced in all three places (STATE.md Environment note + Step 5 checkpoint + Next-step handoff), the note FOLDED into `## Exploration` as a bold `**Environment note:**` lead — no new heading
-- [ ] Missing local `dobby` (`dobbyInstalled:false`) → stage STOPPED before anything was created, pointing at `/dobby:onboard` / `/dobby:migrate-config`; `configPresent:false` → bring-up skipped with an `/dobby:onboard` note and the stage CONTINUED
-- [ ] `STATE.md` created with `bunx dobby state init --goal … --source …` (the engine owns the skeleton AND the gitignore entry); `--source` carries the backend, id and lifecycle link; a refusal (existing `STATE.md`) stopped the stage
+- [ ] Defensive `dobbyInstalled:false` → stage STOPPED before anything was created; `configPresent:false` → bring-up skipped with an `/dobby:onboard` note and the stage CONTINUED through local `state init`
+- [ ] `STATE.md` created with `bunx dobby state init --goal … --source …` (the engine owns the seven-section skeleton AND the gitignore entry); `--source` carries the backend, id and lifecycle link; a refusal (existing `STATE.md`) stopped the stage
 - [ ] Codebase explored with a `researcher` agent; `CONTEXT.md` + ADRs read if present
 - [ ] Researcher cross-referenced the goal's claims against the code and surfaced contradictions (not just a file map)
 - [ ] Exploration returned as a compressed, context-budgeted digest (depth on what matters; pointer for a full map if needed)

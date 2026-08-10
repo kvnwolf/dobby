@@ -28,7 +28,8 @@ import { run } from "./run.ts";
 //    "scope skeleton == `state init` output byte-for-byte") — with the two flag
 //    values substituted. It is a literal, not a re-derivation.
 //  - The seven canonical section names, their ORDER, and `_pending_` as the
-//    replace-marker are the task spec's own enumeration.
+//    replace-marker are the task spec's own enumeration. Retired/unknown
+//    sections remain accepted and preserved.
 //  - `### Task <id>`, the H2→H3 demotion, `## Spec` re-settable, `## Goal` /
 //    `## Source` write-once, `## Work log` never settable, unknown sections
 //    preserved: Decision 14 + research default O4, stated verbatim.
@@ -426,6 +427,36 @@ describe("dobby state set — replacing a section body", () => {
       "1. one session, one PR"
     );
   });
+
+  it("preserves a retired Execution profile while replacing interview findings", async () => {
+    const legacy = docFrom([
+      "Goal",
+      "Source",
+      "Execution profile",
+      "Exploration",
+      "Findings (interview)",
+      "Research",
+      "Spec",
+      "Work log",
+    ]).replace(
+      "## Execution profile\n_pending_",
+      "## Execution profile\nProfile: critical"
+    );
+    const root = makeStateRepo({ state: legacy });
+
+    const result = await run(
+      ["state", "set", "Findings (interview)", "--stdin"],
+      root,
+      "### Decisions\n- Export the visible filtered set."
+    );
+    const doc = readState(root);
+
+    expect(result.exitCode).toBe(0);
+    expect(doc).toContain("## Execution profile\nProfile: critical");
+    expect(sectionBody(doc, "Findings (interview)")).toContain(
+      "Export the visible filtered set."
+    );
+  });
 });
 
 // ===========================================================================
@@ -640,6 +671,35 @@ describe("dobby state lint — structural checks", () => {
       state: DOC_WITH_ENVIRONMENT,
     });
     const result = await run(["state", "lint"], root);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("passes a canonical seven-section session", async () => {
+    const root = makeStateRepo({
+      gitignore: "STATE.md\n",
+      state: docFrom(CANONICAL_SECTIONS),
+    });
+    const result = await run(["state", "lint"], root);
+
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("passes a legacy session carrying the retired Execution profile section", async () => {
+    const root = makeStateRepo({
+      gitignore: "STATE.md\n",
+      state: docFrom([
+        "Goal",
+        "Source",
+        "Execution profile",
+        "Exploration",
+        "Findings (interview)",
+        "Research",
+        "Spec",
+        "Work log",
+      ]),
+    });
+    const result = await run(["state", "lint"], root);
+
     expect(result.exitCode).toBe(0);
   });
 

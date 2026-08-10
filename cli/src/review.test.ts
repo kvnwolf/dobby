@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { run } from "./run.ts";
@@ -103,6 +103,11 @@ const PR_42 = {
   headRefOid: "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
   number: 42,
   url: "https://github.com/acme/scratch/pull/42",
+};
+
+const PR_42_NEXT = {
+  ...PR_42,
+  headRefOid: "abcdef0123456789abcdef0123456789abcdef01",
 };
 
 // A DIFFERENT PR, answered only when the argv names 7 — so `--pr 7` reaching (or
@@ -221,8 +226,59 @@ const THREAD_PAGES_GREPTILE = ghPages([
 
 const NO_THREADS = ghPages([ghPage([], false)]);
 
-const BOT_SUMMARY_BODY =
-  "## Greptile summary\n\nConfidence score: 4/5\n\nOne unresolved concern remains.";
+// Greptile documents this footer as the source of truth for the most recent
+// commit it reviewed. The real body uses the full GitHub commit URL, not a short
+// display SHA, so the fixture does too.
+const BOT_SUMMARY_BODY = [
+  "## Greptile summary",
+  "",
+  "Confidence score: 4/5",
+  "",
+  "One unresolved concern remains.",
+  "",
+  `<sub>Reviews (2): Last reviewed commit: ["Current head"](https://github.com/acme/scratch/commit/${PR_42.headRefOid}) | [Re-trigger Greptile](https://app.greptile.com/api/retrigger?id=42)</sub>`,
+].join("\n");
+
+const BOT_SUMMARY_BODY_NEXT = BOT_SUMMARY_BODY.replace(
+  PR_42.headRefOid,
+  PR_42_NEXT.headRefOid
+);
+
+const STALE_REVIEWED_HEAD = "1111222233334444555566667777888899990000";
+
+function greptileComments(body: string): string {
+  return JSON.stringify([
+    {
+      body,
+      updated_at: "2026-07-24T11:30:00Z",
+      user: { login: "greptile-apps[bot]" },
+    },
+  ]);
+}
+
+const ISSUE_COMMENTS_STALE_REVIEW = greptileComments(
+  [
+    "## Greptile summary",
+    "",
+    "Confidence score: 5/5",
+    "",
+    `<sub>Reviews (1): Last reviewed commit: ["Old head"](https://github.com/acme/scratch/commit/${STALE_REVIEWED_HEAD})</sub>`,
+  ].join("\n")
+);
+
+// An unrelated current-commit link must not count: freshness comes specifically
+// from Greptile's `Last reviewed commit` footer contract.
+const ISSUE_COMMENTS_MISSING_REVIEWED_HEAD = greptileComments(
+  `## Greptile summary\n\nNo blocking issues. See https://github.com/acme/scratch/commit/${PR_42.headRefOid}.`
+);
+
+const ISSUE_COMMENTS_CODERABBIT = JSON.stringify([
+  {
+    body: "## CodeRabbit summary\n\nNo actionable findings.",
+    updated_at: "2026-07-24T11:30:00Z",
+    user: { login: CODERABBIT_LOGIN_BOT },
+  },
+]);
 
 // The REST `issues/{n}/comments` fixture, deliberately hostile to two shortcuts:
 // the NEWEST comment overall is a HUMAN one (so an unfiltered read picks the
@@ -275,6 +331,36 @@ const CHECKS_GREEN = JSON.stringify([
     bucket: "pass",
     link: "https://github.com/acme/scratch/actions/runs/11",
     name: "check",
+    state: "SUCCESS",
+  },
+  {
+    bucket: "pass",
+    link: "https://github.com/acme/scratch/runs/greptile",
+    name: "Greptile review",
+    state: "SUCCESS",
+  },
+]);
+
+const CHECKS_GREEN_WITHOUT_REVIEW = JSON.stringify([
+  {
+    bucket: "pass",
+    link: "https://github.com/acme/scratch/actions/runs/11",
+    name: "check",
+    state: "SUCCESS",
+  },
+]);
+
+const CHECKS_GREEN_CODERABBIT = JSON.stringify([
+  {
+    bucket: "pass",
+    link: "https://github.com/acme/scratch/actions/runs/11",
+    name: "check",
+    state: "SUCCESS",
+  },
+  {
+    bucket: "pass",
+    link: "https://github.com/acme/scratch/runs/coderabbit",
+    name: "CodeRabbit review",
     state: "SUCCESS",
   },
 ]);
@@ -435,6 +521,7 @@ interface FetchPayload {
     author: string;
     body: string;
     confidence: number | null;
+    reviewedHeadOid: string | null;
   } | null;
   threads: ReviewThread[];
 }
@@ -449,6 +536,11 @@ interface ApplyPayload {
 
 interface WatchPayload {
   failing?: { link: string; name: string }[];
+  reason?: string | null;
+  reviewFresh?: boolean | null;
+  summary?: {
+    reviewedHeadOid: string | null;
+  } | null;
   verdict: string;
 }
 
@@ -501,6 +593,21 @@ describe("review fetch — an explicitly numbered pull request", () => {
       await kit.run(["review", "fetch", "--pr", "7", "--json"])
     );
     expect(payload.pr).toMatchObject(PR_7);
+  });
+
+  it("rejects an unknown adapter before reading GitHub", async () => {
+    const kit = harness(ghAnswers());
+    const result = await kit.run([
+      "review",
+      "fetch",
+      "--adapter",
+      "imaginary",
+      "--json",
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("unknown adapter `imaginary`");
+    expect(kit.calls()).toEqual([]);
   });
 });
 
@@ -697,37 +804,39 @@ describe("review fetch — detecting the review tool", () => {
   });
 });
 
+const DUAL_ADAPTER_THREADS = ghPages([
+  ghPage(
+    [
+      ghThread("PRRT_naming", {
+        comments: [
+          {
+            body: NAMING_FINDING,
+            databaseId: 1001,
+            login: GREPTILE_LOGIN,
+          },
+        ],
+      }),
+      ghThread("PRRT_rabbit", {
+        comments: [
+          {
+            body: "Consider extracting this helper.",
+            databaseId: 2001,
+            login: CODERABBIT_LOGIN_BOT,
+          },
+        ],
+      }),
+    ],
+    false
+  ),
+]);
+
 describe("review fetch — two review tools on the same pull request", () => {
   let payload: FetchPayload;
 
   beforeAll(async () => {
     const kit = harness(
       ghAnswers({
-        threads: ghPages([
-          ghPage(
-            [
-              ghThread("PRRT_naming", {
-                comments: [
-                  {
-                    body: NAMING_FINDING,
-                    databaseId: 1001,
-                    login: GREPTILE_LOGIN,
-                  },
-                ],
-              }),
-              ghThread("PRRT_rabbit", {
-                comments: [
-                  {
-                    body: "Consider extracting this helper.",
-                    databaseId: 2001,
-                    login: CODERABBIT_LOGIN_BOT,
-                  },
-                ],
-              }),
-            ],
-            false
-          ),
-        ]),
+        threads: DUAL_ADAPTER_THREADS,
       })
     );
     payload = payloadOf<FetchPayload>(
@@ -743,6 +852,31 @@ describe("review fetch — two review tools on the same pull request", () => {
   it("still names one adapter, drawn from the candidates", () => {
     const ids = (payload.candidates ?? []).map((candidate) => candidate.id);
     expect(ids).toContain(payload.adapter.id);
+  });
+
+  it("selects one adapter mechanically and returns only its threads", async () => {
+    const comments = JSON.stringify([
+      {
+        body: BOT_SUMMARY_BODY,
+        updated_at: "2026-07-24T11:30:00Z",
+        user: { login: "greptile-apps[bot]" },
+      },
+      {
+        body: "## CodeRabbit summary\n\nNo actionable findings.",
+        updated_at: "2026-07-24T11:35:00Z",
+        user: { login: CODERABBIT_LOGIN_BOT },
+      },
+    ]);
+    const kit = harness(ghAnswers({ comments, threads: DUAL_ADAPTER_THREADS }));
+    const selected = payloadOf<FetchPayload>(
+      await kit.run(["review", "fetch", "--adapter", "coderabbit", "--json"])
+    );
+
+    expect(selected.adapter.id).toBe("coderabbit");
+    expect(selected.threads.map((thread) => thread.id)).toEqual([
+      "PRRT_rabbit",
+    ]);
+    expect(selected.summary?.author).toBe(CODERABBIT_LOGIN_BOT);
   });
 });
 
@@ -771,8 +905,34 @@ describe("review fetch — the review tool's summary comment", () => {
     expect(payload.summary?.author).toContain(GREPTILE_LOGIN);
   });
 
+  it("matches the summary author by exact bare login, never by substring", async () => {
+    const comments = JSON.stringify([
+      {
+        body: `Last reviewed commit: https://github.com/acme/scratch/commit/${STALE_REVIEWED_HEAD}`,
+        updated_at: "2026-07-24T12:30:00Z",
+        user: { login: "greptile-apps-proxy[bot]" },
+      },
+      {
+        body: BOT_SUMMARY_BODY,
+        updated_at: "2026-07-24T11:30:00Z",
+        user: { login: "greptile-apps[bot]" },
+      },
+    ]);
+    const kit = harness(ghAnswers({ comments, threads: NO_THREADS }));
+    const exact = payloadOf<FetchPayload>(
+      await kit.run(["review", "fetch", "--adapter", "greptile", "--json"])
+    );
+
+    expect(exact.summary?.author).toBe("greptile-apps[bot]");
+    expect(exact.summary?.reviewedHeadOid).toBe(PR_42.headRefOid);
+  });
+
   it("parses the confidence score out of the summary body", () => {
     expect(payload.summary?.confidence).toBe(4);
+  });
+
+  it("extracts Greptile's last reviewed commit from its documented footer", () => {
+    expect(payload.summary?.reviewedHeadOid).toBe(PR_42.headRefOid);
   });
 
   it("reports a null confidence when the summary carries no score", async () => {
@@ -1196,6 +1356,49 @@ describe("review apply — re-triggering the review", () => {
   });
 });
 
+describe("review apply — selecting between two review adapters", () => {
+  it("refuses an ambiguous write when --adapter is omitted", async () => {
+    const kit = harness(ghAnswers({ threads: DUAL_ADAPTER_THREADS }));
+    const plan = writePlan(kit.repo, {
+      plan: [{ disposition: "fix", threadId: "PRRT_rabbit" }],
+      pr: 42,
+      reTrigger: true,
+    });
+    const result = await kit.run(["review", "apply", "--plan", plan, "--json"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("multiple review adapters matched");
+    expect(callsMatching(kit.calls(), "resolveReviewThread")).toEqual([]);
+    expect(callsMatching(kit.calls(), "pr comment")).toEqual([]);
+  });
+
+  it("applies and re-triggers only the selected CodeRabbit adapter", async () => {
+    const kit = harness(ghAnswers({ threads: DUAL_ADAPTER_THREADS }));
+    const plan = writePlan(kit.repo, {
+      plan: [{ disposition: "fix", threadId: "PRRT_rabbit" }],
+      pr: 42,
+      reTrigger: true,
+    });
+    const payload = payloadOf<ApplyPayload>(
+      await kit.run([
+        "review",
+        "apply",
+        "--plan",
+        plan,
+        "--adapter",
+        "coderabbit",
+        "--json",
+      ])
+    );
+
+    expect(payload.resolved).toEqual(["PRRT_rabbit"]);
+    expect(payload.retriggered).toBe(true);
+    expect(oneCall(kit.calls(), "pr comment")).toContain(
+      "@coderabbitai review"
+    );
+  });
+});
+
 // ===========================================================================
 // `review apply --dry-run` — the rehearsal
 //
@@ -1477,7 +1680,7 @@ describe("pr watch — green checks, no review wait asked for", () => {
 // ===========================================================================
 
 describe("pr watch --await-review — the review already landed", () => {
-  it("verdicts merge-ready when the tool posted and left no open threads", async () => {
+  it("verdicts merge-ready when Greptile reviewed the current head and left no open threads", async () => {
     const kit = harness(ghAnswers({ threads: NO_THREADS }));
     const payload = payloadOf<WatchPayload>(
       await withPollInterval(0, () =>
@@ -1494,6 +1697,8 @@ describe("pr watch --await-review — the review already landed", () => {
       )
     );
     expect(payload.verdict).toBe("merge-ready");
+    expect(payload.reviewFresh).toBe(true);
+    expect(payload.summary?.reviewedHeadOid).toBe(PR_42.headRefOid);
   });
 
   it("verdicts feedback-present when open threads are waiting", async () => {
@@ -1513,6 +1718,320 @@ describe("pr watch --await-review — the review already landed", () => {
       )
     );
     expect(payload.verdict).toBe("feedback-present");
+  });
+
+  it("refuses a dual-bot watch until the adapter is selected", async () => {
+    const kit = harness(
+      ghAnswers({
+        checks: CHECKS_GREEN_CODERABBIT,
+        threads: DUAL_ADAPTER_THREADS,
+      })
+    );
+    const result = await withPollInterval(0, () =>
+      kit.run([
+        "pr",
+        "watch",
+        "--pr",
+        "42",
+        "--await-review",
+        "--deadline",
+        "0",
+        "--json",
+      ])
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("multiple review adapters matched");
+  });
+
+  it("watches only the selected adapter on a dual-bot PR", async () => {
+    const kit = harness(
+      ghAnswers({
+        checks: CHECKS_GREEN_CODERABBIT,
+        threads: DUAL_ADAPTER_THREADS,
+      })
+    );
+    const payload = payloadOf<WatchPayload>(
+      await withPollInterval(0, () =>
+        kit.run([
+          "pr",
+          "watch",
+          "--pr",
+          "42",
+          "--adapter",
+          "coderabbit",
+          "--await-review",
+          "--deadline",
+          "0",
+          "--json",
+        ])
+      )
+    );
+
+    expect(payload.verdict).toBe("feedback-present");
+  });
+});
+
+describe("pr watch --await-review — Greptile freshness", () => {
+  it("keeps a summary for an older head open-unreviewed", async () => {
+    const kit = harness(
+      ghAnswers({
+        comments: ISSUE_COMMENTS_STALE_REVIEW,
+        threads: NO_THREADS,
+      })
+    );
+    const payload = payloadOf<WatchPayload>(
+      await withPollInterval(0, () =>
+        kit.run([
+          "pr",
+          "watch",
+          "--pr",
+          "42",
+          "--await-review",
+          "--deadline",
+          "0",
+          "--json",
+        ])
+      )
+    );
+
+    expect(payload.verdict).toBe("open-unreviewed");
+    expect(payload.reviewFresh).toBe(false);
+    expect(payload.summary?.reviewedHeadOid).toBe(STALE_REVIEWED_HEAD);
+    expect(payload.reason).toContain(PR_42.headRefOid);
+    expect(payload.reason).toContain(STALE_REVIEWED_HEAD);
+  });
+
+  it("fails closed when a Greptile summary omits the reviewed-commit footer", async () => {
+    const kit = harness(
+      ghAnswers({
+        comments: ISSUE_COMMENTS_MISSING_REVIEWED_HEAD,
+        threads: NO_THREADS,
+      })
+    );
+    const payload = payloadOf<WatchPayload>(
+      await withPollInterval(0, () =>
+        kit.run([
+          "pr",
+          "watch",
+          "--pr",
+          "42",
+          "--await-review",
+          "--deadline",
+          "0",
+          "--json",
+        ])
+      )
+    );
+
+    expect(payload.verdict).toBe("open-unreviewed");
+    expect(payload.reviewFresh).toBe(false);
+    expect(payload.summary?.reviewedHeadOid).toBeNull();
+    expect(payload.reason).toContain("does not identify");
+  });
+
+  it("fails closed when the Greptile review check is absent", async () => {
+    const kit = harness(
+      ghAnswers({
+        checks: CHECKS_GREEN_WITHOUT_REVIEW,
+        threads: NO_THREADS,
+      })
+    );
+    const payload = payloadOf<WatchPayload>(
+      await withPollInterval(0, () =>
+        kit.run([
+          "pr",
+          "watch",
+          "--pr",
+          "42",
+          "--await-review",
+          "--deadline",
+          "0",
+          "--json",
+        ])
+      )
+    );
+
+    expect(payload.verdict).toBe("open-unreviewed");
+    expect(payload.reviewFresh).toBe(false);
+    expect(payload.reason).toContain("greptile review check");
+    expect(payload.reason).toContain("observed checks: check");
+  });
+
+  it("fails closed when the Greptile review check is present but not passing", async () => {
+    const checks = JSON.stringify([
+      {
+        bucket: "skipping",
+        link: "https://github.com/acme/scratch/runs/greptile",
+        name: "Greptile review",
+        state: "SKIPPED",
+      },
+    ]);
+    const kit = harness(ghAnswers({ checks, threads: NO_THREADS }));
+    const payload = payloadOf<WatchPayload>(
+      await withPollInterval(0, () =>
+        kit.run([
+          "pr",
+          "watch",
+          "--pr",
+          "42",
+          "--await-review",
+          "--deadline",
+          "0",
+          "--json",
+        ])
+      )
+    );
+
+    expect(payload.verdict).toBe("open-unreviewed");
+    expect(payload.reviewFresh).toBe(false);
+    expect(payload.reason).toContain("Greptile review=skipping");
+  });
+
+  it("fails closed for CodeRabbit when no commit-scoped review check exists", async () => {
+    const kit = harness(
+      ghAnswers({
+        checks: CHECKS_GREEN_WITHOUT_REVIEW,
+        comments: ISSUE_COMMENTS_CODERABBIT,
+        threads: NO_THREADS,
+      })
+    );
+    const payload = payloadOf<WatchPayload>(
+      await withPollInterval(0, () =>
+        kit.run([
+          "pr",
+          "watch",
+          "--pr",
+          "42",
+          "--await-review",
+          "--deadline",
+          "0",
+          "--json",
+        ])
+      )
+    );
+
+    expect(payload.verdict).toBe("open-unreviewed");
+    expect(payload.reviewFresh).toBe(false);
+    expect(payload.reason).toContain("coderabbit review check");
+  });
+
+  it("accepts CodeRabbit only when its current-commit check passed", async () => {
+    const kit = harness(
+      ghAnswers({
+        checks: CHECKS_GREEN_CODERABBIT,
+        comments: ISSUE_COMMENTS_CODERABBIT,
+        threads: NO_THREADS,
+      })
+    );
+    const payload = payloadOf<WatchPayload>(
+      await withPollInterval(0, () =>
+        kit.run([
+          "pr",
+          "watch",
+          "--pr",
+          "42",
+          "--adapter",
+          "coderabbit",
+          "--await-review",
+          "--deadline",
+          "0",
+          "--json",
+        ])
+      )
+    );
+
+    expect(payload.verdict).toBe("merge-ready");
+    expect(payload.reviewFresh).toBe(true);
+    expect(payload.summary?.reviewedHeadOid).toBeNull();
+  });
+});
+
+describe("pr watch --await-review — HEAD changes while polling", () => {
+  it("discards old checks and review evidence, then restarts on the new HEAD", async () => {
+    const binDir = mkStubBinDir(scratchDirs);
+    const prCount = join(binDir, "pr-view-count");
+    const checksCount = join(binDir, "checks-count");
+    const commentsCount = join(binDir, "comments-count");
+    const prA = join(binDir, "pr-a.json");
+    const prB = join(binDir, "pr-b.json");
+    const checks = join(binDir, "checks.json");
+    const threads = join(binDir, "threads.json");
+    const commentsA = join(binDir, "comments-a.json");
+    const commentsB = join(binDir, "comments-b.json");
+    writeFileSync(prA, JSON.stringify(PR_42));
+    writeFileSync(prB, JSON.stringify(PR_42_NEXT));
+    writeFileSync(checks, CHECKS_GREEN);
+    writeFileSync(threads, NO_THREADS);
+    writeFileSync(commentsA, greptileComments(BOT_SUMMARY_BODY));
+    writeFileSync(commentsB, greptileComments(BOT_SUMMARY_BODY_NEXT));
+    mkStubBin(
+      binDir,
+      "gh",
+      [
+        "#!/bin/sh",
+        'case "$*" in',
+        `  *'repo view'*) printf '%s' '${REPO_VIEW}'; exit 0 ;;`,
+        "  *'pr view'*)",
+        `    count=$(cat ${prCount} 2>/dev/null || echo 0)`,
+        "    count=$((count + 1))",
+        `    printf '%s' "$count" > ${prCount}`,
+        `    if [ "$count" -le 2 ]; then cat ${prA}; else cat ${prB}; fi`,
+        "    exit 0",
+        "    ;;",
+        "  *'pr checks'*)",
+        `    count=$(cat ${checksCount} 2>/dev/null || echo 0)`,
+        "    count=$((count + 1))",
+        `    printf '%s' "$count" > ${checksCount}`,
+        `    cat ${checks}`,
+        "    exit 0",
+        "    ;;",
+        `  *'reviewThreads'*) cat ${threads}; exit 0 ;;`,
+        "  *'/issues/'*)",
+        `    count=$(cat ${commentsCount} 2>/dev/null || echo 0)`,
+        "    count=$((count + 1))",
+        `    printf '%s' "$count" > ${commentsCount}`,
+        `    if [ "$count" -eq 1 ]; then cat ${commentsA}; else cat ${commentsB}; fi`,
+        "    exit 0",
+        "    ;;",
+        "esac",
+        "printf '%s\\n' \"unexpected gh call: $*\" >&2",
+        "exit 1",
+      ].join("\n")
+    );
+    const repo = makeScratchRepo({
+      branch: PR_42.headRefName,
+      commit: false,
+      prefix: "dobby-review-",
+      track: scratchDirs,
+    });
+    const payload = payloadOf<WatchPayload & { pr: typeof PR_42 }>(
+      await withPollInterval(0, () =>
+        withStubPath(binDir, () =>
+          run(
+            [
+              "pr",
+              "watch",
+              "--pr",
+              "42",
+              "--adapter",
+              "greptile",
+              "--await-review",
+              "--deadline",
+              "5",
+              "--json",
+            ],
+            repo
+          )
+        )
+      )
+    );
+
+    expect(payload.verdict).toBe("merge-ready");
+    expect(payload.pr.headRefOid).toBe(PR_42_NEXT.headRefOid);
+    expect(payload.summary?.reviewedHeadOid).toBe(PR_42_NEXT.headRefOid);
+    expect(readFileSync(checksCount, "utf8")).toBe("2");
   });
 });
 

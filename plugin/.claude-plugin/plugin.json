@@ -1,7 +1,7 @@
 {
 	"name": "dobby",
 	"version": "0.6.0",
-	"description": "Architect-and-workers engineering kit: staged work sessions (scope → interview → research → spec → execute → wrap), worker agents (researcher, implementor, reviewer, verifier), and supporting skills.",
+	"description": "Architect-and-workers engineering kit: staged planning in the main thread, a native Workflow for execute, five fixed-recipe worker agents, and supporting skills.",
 	"author": {
 		"name": "Kevin Wolf",
 		"email": "hi@kvnwolf.com"

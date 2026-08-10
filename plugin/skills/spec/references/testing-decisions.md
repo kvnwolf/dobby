@@ -27,7 +27,7 @@ State this in the Testing Decisions so the executor and the `dobby:test-author` 
 
 `/dobby:execute`'s build loop runs a `dobby:test-author` step **only** for tasks the spec marks test-first, and **only** when the repo has a test suite. So:
 
-1. **Detect whether the repo has a test suite** (with a researcher if needed). No suite → the build loop runs the classic implement→review→verify path; no task is test-first; you can omit the marker.
+1. **Detect whether the repo has a test suite** (with a researcher if needed). No suite → the build loop runs implement→verify; no task is test-first; you can omit the marker. Holistic code review happens later on the PR.
 2. **If a suite exists, mark each task test-first or not.** Test-first = tasks with real logic or seams. Not test-first = trivial config, pure-prose, or scaffolding with no behavior to pin down.
 3. **Carry the marker into the task table** — add a `Test-first` column (`yes`/`no`); the column layout lives in the spec skill's task-decomposition reference. That column IS the flag the test-author gate reads (`dobby build-plan` copies it into each task's `testFirst`); a task with no marker is treated as not test-first.
 

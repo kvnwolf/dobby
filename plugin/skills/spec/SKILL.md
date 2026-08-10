@@ -12,7 +12,7 @@ Use the interview Decisions and the research brief from the conversation (or `$A
 
 ## Step 2: Write the plan
 
-Write it yourself from the in-context decisions — this preserves the interview's nuance, which is lossy to re-serialize. For a large or unfamiliar task you MAY delegate to a Plan subagent (`subagent_type: "Plan"`), passing the full context.
+Write it yourself in the interactive main thread from the in-context decisions. This deliberately keeps planning intelligence aligned with the model/effort the user selected for the Claude Code session and preserves interview nuance without a lossy handoff. Do not delegate the plan to a planning subagent.
 
 **The plan's shape is fixed: `###` sub-headings under `## Spec`, spelled exactly as below.** This is not cosmetic — `bunx dobby spec lint` (Step 3) checks this inventory, and `bunx dobby build-plan` reads the task table and the Testing Decisions straight out of it for `/dobby:execute`. Extra sub-headings are free; the spellings below are required; `### User flow` is the ONE optional heading.
 
@@ -65,6 +65,7 @@ Interact with the user in their language. Write all plan content in English; kee
 ## Acceptance checklist
 
 - [ ] Built on a real shared understanding (interview/research), not assumptions
+- [ ] Plan authored in the interactive main thread at the session's selected model/effort; no planning subagent used
 - [ ] Plan written as the mandated `###` sub-headings under `## Spec` (Overview, Goals, Non-goals, Constraints, Decisions, Testing Decisions, Edge cases, Module structure, Tasks; User flow when the work has one)
 - [ ] Decisions are prose; any snippet present encodes a decision more tightly than prose (state machine / reducer / schema / type), trimmed to the decision-rich parts, and lives under `### Decisions`
 - [ ] Testing Decisions written: seams minimized per testing-decisions.md and confirmed with the user; test-first tasks marked when the repo has a suite; the literal `Manual verify setup:` line present (`none` or numbered steps)

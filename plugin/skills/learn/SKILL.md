@@ -56,6 +56,12 @@ Hand the approved edits to a `dobby:implementor` (or `/dobby:dispatch`), pointin
 
 Any discard the maintainer approved in Step 3 is a file too — hand the worker the `docs/learn-discarded/<concept>.md` write (new concept file, or an appended "Prior occurrences" line on an existing one) in the same dispatch, by the same cwd-relative path rule. The architect doesn't write it directly either.
 
+When calling the implementor directly, validate its `{status, workLog, blocker}` envelope before claiming the learning landed (when routing through `/dobby:dispatch`, that skill owns the same gate):
+
+- `{status: "completed", workLog: <non-empty>, blocker: ""}` → integrate the accounting, review the diff ONLY at the exact approved cwd-relative paths, and confirm each approved edit/discard is present before reporting success.
+- `{status: "blocked", workLog: <non-empty>, blocker: <non-empty>}` → report BOTH the blocker and file accounting, return `needs-human`, and STOP without claiming the proposal was applied or offering a downstream handoff.
+- Null, a bare work log, empty required fields, or an incoherent envelope → inspect only the approved paths with `git status --short -- <paths>`, `git diff -- <paths>`, and Read every expected target (including untracked new skill/KB files). Report the mechanical accounting and return `needs-human`; do not infer completion from partial text and do not repair it in the architect thread.
+
 ## Privacy
 The researcher extracts **method and pattern** signal — how the agent should *work*, never what it was building. A kit skill must never carry a client's domain specifics.
 
@@ -71,4 +77,5 @@ User-facing output in the user's language; skill edits in English (the kit is al
 - [ ] Each proposed edit cross-referenced against the skill's CURRENT text — no redundant wording piled onto a skill that already said the right thing
 - [ ] Declined-but-verified frictions recorded in `docs/learn-discarded/` with the maintainer's agreement, and named in the proposal
 - [ ] Proposal approved before any write; edits applied by a worker at cwd-relative paths — the architect edited nothing
+- [ ] Direct implementor envelope handled fail-closed: completed work reviewed only at approved paths; blocked stopped with blocker + work-log accounting; null/malformed triggered scoped status/diff/Read inspection and `needs-human`, never a false “learning applied”
 - [ ] Findings carry method/pattern signal only, never the consumer project's domain specifics

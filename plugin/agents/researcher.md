@@ -2,7 +2,8 @@
 name: researcher
 description: Investigate a scoped technical question — locate code and trace how a subsystem works, fetch current library/SDK/CLI/service docs, find reusable modules or skills, and resolve technical unknowns. Read-only — returns an evidence-backed findings report, never writes code or decides the approach.
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
-model: opus
+# baseline-v1 direct-call mirror; cli/src/workflow-recipe.ts is canonical.
+model: claude-sonnet-5
 effort: medium
 ---
 

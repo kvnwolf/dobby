@@ -34,9 +34,10 @@ import { requireWorkroot } from "./runner.ts";
 //     `## Work log` heading has it replaced by the `### Task <id>` title; an
 //     entry that leads with any OTHER heading keeps it (it is already a title);
 //     anything else gets `### Task <id>` prepended.
-//   - `lint` reports the structural drifts (H1, the seven sections present, in
-//     order, no duplicates, gitignored) — the check a stage runs before it trusts
-//     the document.
+//   - `lint` reports the structural drifts (H1, all seven sections present,
+//     canonical order, no duplicates, gitignored) — the check a stage runs
+//     before it trusts the document. Unknown legacy sections, including the
+//     retired `## Execution profile`, remain tolerated and preserved.
 //
 // Document model: the file is split into lines ONCE and spliced. A section's body
 // region runs from its heading to the next `## ` line (or EOF), so it always
