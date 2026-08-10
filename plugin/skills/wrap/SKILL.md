@@ -8,7 +8,13 @@ Turn a finished work session into durable project memory, confirm it works and t
 
 ## Step 1: Final human smoke test
 
-From `STATE.md`'s spec (user flow, goals, edge cases) and anything the executors/verifiers flagged as needing human judgment, build a SHORT list of user-facing behaviors the machine layers couldn't fully prove — cross-task end-to-end flows, subjective UX. Present them one at a time with AskUserQuestion (Pass / Fail / Skip). On Fail, dispatch the `implementor` agent (Agent tool, `subagent_type: "dobby:implementor"`; no commits) to fix it, then re-present. Don't re-run the per-task verification the workflow already did.
+From `STATE.md`'s spec (user flow, goals, edge cases) and anything the executors/verifiers flagged as needing human judgment, build a SHORT list of user-facing behaviors the machine layers couldn't fully prove — cross-task end-to-end flows, subjective UX. Present them one at a time with AskUserQuestion (Pass / Fail / Skip). On Fail, dispatch the `implementor` agent (Agent tool, `subagent_type: "dobby:implementor"`; no commits) to fix it, naming the exact affected paths, then validate its structured `{status, workLog, blocker}` result before re-presenting:
+
+- `completed` is valid only with non-empty `workLog` and empty `blocker`. Append that accounting to `STATE.md` via `bunx dobby state append-worklog` (scratch file first), then re-present the failed smoke behavior.
+- `blocked` is valid only with non-empty `workLog` and blocker. Report both, append the accounting plus a visible `needs-human: <blocker>` marker to `STATE.md`, and STOP wrap with the session doc intact.
+- Null, a bare work log, empty required fields, or any incoherent shape may conceal a partial fix. Inspect only the named paths with scoped `git status --short -- <paths>` / `git diff -- <paths>` and Read each expected target, including untracked files. Report the mechanical accounting, append a `needs-human` work-log entry describing the unaccounted result, and STOP before doc reconciliation, disposal, or commit handoff. Do not infer success or repair it inline.
+
+Don't re-run the per-task verification the workflow already did. This is exceptional smoke-fix control, not a new reviewer loop.
 
 **Push right — present a decision-ready brief, not raw output.** For each behavior, the user should be able to judge in seconds: give them a compact Brief — **what to test** (the exact flow/steps to exercise), **what to decide** (the pass/fail question in their terms), and **what's needed from you** (any credential, seed data, or environment they must supply). Do the reduction work yourself; never dump logs, diffs, or a wall of raw output and ask the user to interpret it. If a behavior needs setup they alone can do, that goes in "what's needed from you" so nothing stalls silently.
 
@@ -64,6 +70,7 @@ Interact with the user in their language. Write docs / ADRs / CONTEXT in English
 ## Acceptance checklist
 
 - [ ] Final human smoke test run as decision-ready Briefs (what to test · what to decide · what's needed from the user), never raw output
+- [ ] Every smoke-fix implementor envelope handled before re-test/cleanup: completed accounting appended to `STATE.md`; blocked reported + persisted as `needs-human`; null/malformed mechanically inspected by named paths, persisted as `needs-human`, and stopped before docs/disposal/handoff
 - [ ] Doc reconcile opened on `bash scripts/wrap-inventory.sh` — changed modules, missing `CONTEXT.md`s and `_pending_` sections read off the report, not guessed
 - [ ] CONTEXT.md / CLAUDE.md updated where the work changed them — glossary kept pure (domain-only, no implementation detail), invariants cross-referenced against the code
 - [ ] ADR candidates offered + written (with approval) for decisions meeting the 3 criteria; each file created via `bunx dobby adr new` (numbering never hand-picked, its `# NNNN. <title>` H1 kept as written) and only the BODY authored per `references/adr-format.md`

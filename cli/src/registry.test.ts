@@ -189,6 +189,7 @@ describe("run() — per-command flag allowlist", () => {
 
 // The spec's string options, verbatim.
 const STRING_OPTIONS = [
+  "adapter",
   "message-file",
   "pr-body-file",
   "bump",

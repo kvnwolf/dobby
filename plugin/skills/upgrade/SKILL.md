@@ -35,7 +35,7 @@ bun update @kvnwolf/dobby --latest
 
 Each release that asks something of a consumer ships a note at `references/v<minor>.md`. Read, in ascending order, ONLY the files whose version falls inside the jump (above the previously installed version, up to and including the latest), and execute their actions. A version with no file asks nothing of a consumer — don't hunt for missing files.
 
-Notes so far: `references/v0.7.md`.
+Notes so far: `references/v0.7.md`, `references/v0.8.md`, `references/v0.9.md`, `references/v0.12.md`.
 
 ## Step 4: Re-run the gate
 
@@ -43,7 +43,15 @@ Notes so far: `references/v0.7.md`.
 bunx dobby check --fix
 ```
 
-A jump can arm rules that didn't exist under the old version, so a tree that was green can come back with findings. Each is a fix-vs-suppress judgment (`// biome-ignore lint/<group>/<rule>: <reason>` for the deliberate ones); dispatch non-trivial code fixes to a `dobby:implementor` (Agent tool, `subagent_type: "dobby:implementor"`). Report the gate's output whole — never pipe it through `head`/`tail`; the exit code, not your reading of the text, is the verdict. Done when the gate exits 0.
+A jump can arm rules that didn't exist under the old version, so a tree that was green can come back with findings. Each is a fix-vs-suppress judgment (`// biome-ignore lint/<group>/<rule>: <reason>` for the deliberate ones); dispatch non-trivial code fixes to a `dobby:implementor` (Agent tool, `subagent_type: "dobby:implementor"`), naming the exact files/paths the finding permits it to touch.
+
+Validate every fix Agent's `{status, workLog, blocker}` envelope BEFORE re-running the gate:
+
+- `{status: "completed", workLog: <non-empty>, blocker: ""}` → integrate its accounting, inspect the named diff, then re-run `bunx dobby check --fix` whole.
+- `{status: "blocked", workLog: <non-empty>, blocker: <non-empty>}` → report BOTH the blocker and file accounting, return `needs-human`, and STOP before another gate or the commit handoff.
+- Null, a bare work log, empty required fields, or an incoherent envelope → inspect only the named paths with `git status --short -- <paths>`, `git diff -- <paths>`, and Read expected/untracked targets. Report the mechanical accounting and return `needs-human`; do not run the gate, dispatch another fix, or treat the version jump as ready to commit.
+
+Report every gate invocation's output whole — never pipe it through `head`/`tail`; the exit code, not your reading of the text, is the verdict. Done only when a gate run after all coherent completed fixes exits 0.
 
 ## Step 5: Next step
 
@@ -64,5 +72,6 @@ Interact with the user in their language. Anything written to the repo stays in 
 - [ ] Legacy era routed through `/dobby:migrate-config` (Skill tool), then ALL reference notes walked; already-latest reported and stopped; never-onboarded pointed to `/dobby:onboard`
 - [ ] Version jumped with `bun update @kvnwolf/dobby --latest`; local bin confirms the latest version
 - [ ] Only the notes inside the jump read, in order; their actions executed (destructive ones on user confirmation)
-- [ ] Gate re-run to exit 0; findings judged fix-vs-suppress, non-trivial fixes dispatched to an implementor; output reported whole
+- [ ] Gate re-run to exit 0; findings judged fix-vs-suppress, non-trivial fixes dispatched with exact path scopes; output reported whole
+- [ ] Every fix envelope handled before another gate/handoff: coherent `completed` integrated; `blocked` stopped with blocker + work-log accounting; null/malformed triggered scoped status/diff/Read inspection and `needs-human`, with no retry/gate/commit prompt
 - [ ] Ended with the AskUserQuestion gate (`/dobby:commit` recommended / stop); chosen skill invoked via the Skill tool

@@ -12,7 +12,15 @@ From `$ARGUMENTS`: a module, a subsystem, or the whole repo. If blank, ask what 
 
 ## Step 2: Map the structure (researcher)
 
-Dispatch `researcher` agent(s) (Agent tool, `subagent_type: "dobby:researcher"`) to map the target — modules, their public interfaces, the import graph, where logic actually lives. For a whole-repo pass, fan out several researchers over different areas in parallel. They return grounded findings with paths; you don't grep in the main thread.
+Before `bunx` or the first Agent, require BOTH local onboarding markers at the
+current workroot: `dobby.config.json` and `node_modules/.bin/dobby`. If either is
+absent, STOP, point to `/dobby:onboard`, and do not run `bunx dobby`; never use
+remote resolution as onboarding. Only then run `bunx dobby env --json`, require
+the complete `workflowRecipe`, and validate its positive-integer
+`limits.maxConcurrency`. Missing/malformed data means STOP with zero Agents;
+never infer a fallback.
+
+Dispatch `researcher` agent(s) (Agent tool, `subagent_type: "dobby:researcher"`) to map the target — modules, their public interfaces, the import graph, where logic actually lives. For a whole-repo pass, partition independent areas into deterministic sequential batches of at most `workflowRecipe.limits.maxConcurrency`: launch one batch in parallel, await all its results, then launch the next. Retries and replacement Agents consume a slot. They return grounded findings with paths; you don't grep in the main thread.
 
 ## Step 3: Assess against the principles
 
@@ -31,6 +39,12 @@ The deliverable is a **self-contained visual HTML report** — the diagrams carr
 
 **Where it lands (NEVER in the repo):** `${TMPDIR:-/tmp}/architecture-review-<timestamp>.html` — a fresh file per run, auto-opened after writing, absolute path echoed so the user always has it (per-OS paths and open commands are in the reference).
 
+Treat that exact absolute path as the direct writer's artifact scope and validate its `{status, workLog, blocker}` envelope before opening or handing off the report:
+
+- `{status: "completed", workLog: <non-empty>, blocker: ""}` → integrate the accounting, mechanically require a non-empty file at the exact path (`test -s`) and Read its HTML scaffold/top recommendation anchors, then open/report it.
+- `{status: "blocked", workLog: <non-empty>, blocker: <non-empty>}` → report BOTH blocker and report accounting, return `needs-human`, and STOP before opening it or offering `/dobby:scope`.
+- Null, a bare work log, empty required fields, or an incoherent envelope → mechanically inspect the exact temp path with `test -e` / `test -s` and Read whatever artifact exists. Report that accounting and return `needs-human`; a plausible partial HTML file is not completion, and no next-step handoff follows.
+
 **ADR-respect:** ADRs in `docs/adr/` record decisions this pass must not re-litigate (`docs/adr/0001` — Conductor as execution host — already exists; `/dobby:wrap` and `/dobby:address-review` both write further sequential ADRs). Surface an ADR conflict **only when the friction is real** enough to warrant reopening it — an amber callout in the card (_"contradicts ADR-0001 — worth reopening because…"_). Don't list every refactor an ADR theoretically forbids.
 
 **Vocabulary is locked** to `skills/spec/references/architecture-vocab.md` — its use-exactly and never-substitute lists apply verbatim (`module`, `seam`, `depth`, `leverage`, `locality`, …). Domain nouns come from the project's `CONTEXT.md` (talk about "the Order intake module", not "the FooBarHandler"). Rank cards by leverage (worst boundary / highest-churn first). Be honest about what's fine — don't manufacture refactors. Close with a **Top recommendation** section: which candidate to tackle first, one sentence on why, an anchor link to its card.
@@ -45,3 +59,11 @@ Present an **AskUserQuestion** restating that the architecture review is done, w
 ## Language
 
 Interact in the user's language; write the HTML report's prose in English; keep domain terms in their real-world form.
+
+## Acceptance checklist
+
+- [ ] Both local markers (`dobby.config.json` + `node_modules/.bin/dobby`) existed before `bunx`; either missing STOPped at `/dobby:onboard` without remote resolution or Agent launch
+- [ ] `bunx dobby env --json` resolved a complete recipe and valid `limits.maxConcurrency` before the first Agent; malformed/missing data launched zero Agents
+- [ ] Researcher fan-out ran in sequential batches no larger than the resolved limit; retries/replacements counted and areas within a batch were independent
+- [ ] The report implementor ran only after all research batches completed, so it never overlapped the mapping fan-out
+- [ ] Report envelope handled fail-closed before open/handoff: coherent `completed` plus exact-path `test -s`/Read integrated; `blocked` reported blocker + accounting; null/malformed inspected the temp artifact and ended `needs-human` without `/dobby:scope`

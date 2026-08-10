@@ -1,6 +1,6 @@
 # dobby
 
-Kevin Wolf's agentic engineering kit for Claude Code, shipped as two surfaces from one repo: the **plugin** (skills + agents + hooks) and the **`@kvnwolf/dobby` CLI**. dobby doesn't make Claude Code smarter — it makes it **disciplined**: the main thread stays an architect that frames, asks, decides, and reviews but never writes code, while five worker agents do the hands-on work. Every change is implemented, code-reviewed, and verified by **separate** agents before it counts as done.
+Kevin Wolf's agentic engineering kit for Claude Code, shipped as two surfaces from one repo: the **plugin** (skills + agents + hooks) and the **`@kvnwolf/dobby` CLI**. dobby doesn't make Claude Code smarter — it makes it **disciplined**: the main thread stays an architect that frames, asks, decides, and reviews but never writes code, while five worker agents do the hands-on work. Every task is independently verified before execute calls it done, and the complete change receives holistic external review at the PR boundary.
 
 > **Standing on Matt Pocock's shoulders**: many of dobby's skills and agents are adapted from [mattpocock/skills](https://github.com/mattpocock/skills) — each adapted file credits its exact source in a footer. If you want to get better at working with AI, go visit [aihero.dev](https://aihero.dev/).
 
@@ -29,25 +29,37 @@ The repo also ships **`@kvnwolf/dobby`**, the kit's **mechanical execution layer
 
 Two roles, never mixed:
 
-- **The architect** (your main conversation) — interrogates you until the task has zero ambiguity, plans, dispatches workers, reviews what comes back, and owns every decision. If you ever see the main thread grepping around or editing files during kit stages, that's a bug in the kit.
-- **The workers** (custom agents, addressed as `dobby:<name>`) — each runs with its own model and effort, tuned to its job:
+- **The architect** (your main conversation) — interrogates you until the task has zero ambiguity, plans, dispatches workers, reviews what comes back, owns host mechanics, and owns every decision. Skills inherit this interactive session's model/effort; choose its intelligence manually for the task. If you ever see the main thread grepping around, editing files, or implementing code during kit stages, that's a bug in the kit.
+- **The workers** (`dobby:<name>`) — five independent agents that research, test, implement, review, and verify. Each agent prompt has one authoritative file under `plugin/agents/`; the fixed recipe carries only model/effort and execution limits.
 
-| Agent | Role | Model |
+| Agent | Role | `baseline-v1` |
 | --- | --- | --- |
-| `researcher` | Explore code, fetch current docs (ctx7), resolve unknowns | Opus / medium |
-| `test-author` | Write a task's tests from the spec alone, blind to the implementation | Opus / xhigh |
-| `implementor` | Write the code for one scoped task | Opus / xhigh |
-| `reviewer` | Code-review a task's diff, pass/fail verdict | Opus / high |
-| `verifier` | Prove the task works against the running app | Sonnet / high |
+| `researcher` | Explore code, fetch current docs (ctx7), resolve unknowns | `claude-sonnet-5` / medium |
+| `test-author` | Write a task's tests from the spec alone, blind to the implementation | `claude-opus-5` / high |
+| `implementor` | Write the code for one scoped task | `claude-sonnet-5` / high |
+| `reviewer` | Explicit ad-hoc or missing-work-log safety review; not the normal execute path | `claude-opus-5` / high |
+| `verifier` | Prove the task works against the running app | `claude-sonnet-5` / medium |
 
-The payoff: your context stays clean for thinking, implementation quality is enforced by independent review, and "done" means *proven against the running app*, not "the code looks right".
+The payoff: your context stays clean for thinking, execute proves behavior without bouncing tasks through a duplicate review loop, and the external PR reviewer judges the complete diff with cross-task context.
+
+### Fixed recipe experiment
+
+`bunx dobby env --json` is the authoritative Dobby view of the fixed native Workflow recipe. `/dobby:execute` takes the complete `workflowRecipe` object immediately before the build run and passes it unchanged to the same native Claude Workflow that dispatches the custom agents — Dobby does **not** launch `claude -p`, Codex, or another subprocess harness.
+
+The recipe id is **`baseline-v1`**. It fixes `maxOuter=2`, `maxConcurrency=2`, and mechanical-first verification in addition to the five worker model/effort pairs above. Its deterministic fingerprint binds that id to the exact roles, limits, and verification posture; the build run recomputes it and refuses drift before launching an agent. Those limits apply both inside the build Workflow and to direct researcher/worker fan-outs, which run in sequential batches of at most two. A write-capable worker that returns no usable work log receives an independent safety review of the current scoped diff, then remains `needs-human` instead of flowing into a false success. There is no normal per-task reviewer loop or `maxReview`; the reviewer policy remains for direct dispatch and that safety path. There are deliberately no economical/standard/critical profiles, no per-task selection, no `STATE.md` execution-profile section, and no project/global config, Dobby environment override, or CLI flag. This is a seven-day baseline experiment: hold one recipe steady, observe real work, then tune from evidence instead of designing a configuration system ahead of use.
+
+The experiment watches first-attempt success, retries, cap exhaustion, verification-source mix, task outcome, and calls by role. Workflow fields Claude does not expose—tokens, cache hits, provider, duration, and script-internal run id—remain the literal `unknown`; Dobby does not fabricate cost. Record qualitative misses too: tasks that needed more architectural depth, research that was too shallow, false verifier failures, and cases where Opus added or failed to add value.
+
+If Greptile is the repository's external review gate, configure it to review every pushed HEAD and leave machine-readable evidence: `triggerOnUpdates: true`, `statusCheck: true`, `statusCommentsEnabled: true`, `shouldUpdateDescription: false`, and `hideFooter: false`; require the Greptile check in GitHub branch protection. `dobby pr watch` compares Greptile's `Last reviewed commit` footer to the current PR HEAD and fails closed as `open-unreviewed` on a stale or missing footer.
+
+`cli/src/workflow-recipe.ts` is the one recipe source. Agent prompt bodies remain authoritative in `plugin/agents/`; their frontmatter mirrors the direct-call model/effort and drift tests pin all five definitions to the recipe. If the experiment changes a role, edit the recipe and its mirrored frontmatter together—never duplicate the prompt. Claude Code still gives the operator an external escape hatch: `CLAUDE_CODE_SUBAGENT_MODEL` can override subagent model pins at the host level. That is outside Dobby's recipe and should be noted when interpreting an experimental run.
 
 ## Where it runs: the terminal host
 
 dobby runs in a plain `claude` session — your terminal, including over ssh, and inside **cmux** (the manaflow-ai native macOS terminal). The kit owns the whole worktree + run lifecycle itself, mechanized by the `@kvnwolf/dobby` CLI:
 
-- `/dobby:scope` creates and enters a per-goal git worktree and brings it up with `bunx dobby up` (installs deps, materializes the env files a fresh worktree needs, then starts the app).
-- `/dobby:execute` re-runs `bunx dobby up` — idempotent and liveness-first, so a re-run never double-starts.
+- `/dobby:scope` creates and enters a per-goal git worktree, brings it up with `bunx dobby up`, then grounds the goal through researchers so the main-thread architect can plan from evidence.
+- `/dobby:execute` re-runs `bunx dobby up` — idempotent and liveness-first, so a re-run never double-starts — then resolves the authoritative `baseline-v1` recipe with `bunx dobby env --json`.
 - `/dobby:finish` merges the goal's PR when it's still open (gated — your explicit call), then tears it all down with `bunx dobby down`.
 
 When it detects **cmux** (`CMUX_WORKSPACE_ID` is set in every cmux pane), `dobby up` enriches the run: the dev server gets its own named pane, a browser pane opens at the app URL once the app reports live (never on a booting 404), and the verifier drives the UI through cmux's browser CLI. A plain ssh/tmux session (no cmux) degrades gracefully — the app runs as a detached background job, no panes.
@@ -75,7 +87,7 @@ A work session moves through six stages. Each stage ends by asking which command
       │
 /dobby:spec         the build plan, printed in full — you approve it
       │
-/dobby:execute      one build run: waves of (test →) implement → review → verify
+/dobby:execute      one build run: waves of (test →) implement → verify
       │
 /dobby:wrap         human smoke test, docs/ADRs, STATE.md disposed
       │
@@ -95,13 +107,13 @@ Side paths, available at any point:
 
 - `/dobby:prototype` — when a decision can't be settled with words, interview/research hand off to a throwaway prototype you can play with, then resume.
 - `/dobby:diagnose` — when something breaks during execute (or any time), a disciplined hypothesis-driven debugging loop.
-- `/dobby:dispatch` — the whole architect/worker machinery for a task too small to deserve a session.
+- `/dobby:dispatch` — the coordinator/worker machinery for a task too small to deserve a full planning session.
 - `/dobby:address-review` — take a review bot's or reviewer's PR comments from posted to addressed + threads resolved + re-reviewed.
 - `/dobby:handoff` — compact the session into an ephemeral fork document a fresh session can pick up (see [Context hygiene](#context-hygiene-fork-vs-continue)).
 
 ### Context hygiene: fork vs. continue
 
-A long session accumulates dead context — resolved threads, abandoned branches, raw tool output — that quietly crowds out the room the architect needs to think. When context is getting long, the work spans days, or you're about to switch to a distinct sub-goal, don't just keep going: type `/dobby:handoff`. It writes an **ephemeral fork document** (to your OS temp dir) that summarizes where things stand, references the durable artifacts (`STATE.md`, PRDs, ADRs, diffs) by path instead of copying them, redacts secrets, and lists the `/dobby:*` skills to reach for next. Start a fresh session, point it at that document, and continue with a clean slate. It's for **forking**, not durable record-keeping — decisions still land in `CONTEXT.md` / ADRs / commits.
+A long session accumulates dead context — resolved threads, abandoned branches, raw tool output — that quietly crowds out the room the architect needs to think. When context is getting long, the work spans days, or you're about to switch to a distinct sub-goal, don't just keep going: type `/dobby:handoff`. It writes an **ephemeral fork document** (to your OS temp dir) that summarizes where things stand, references the durable artifacts (`STATE.md`, PRDs, ADRs, diffs) by path instead of copying them, redacts secrets, and lists the `/dobby:*` skills to reach for next. Start a fresh session, point it at that document, and continue with a clean slate. The handoff is for **forking**, not durable record-keeping — decisions still land in `CONTEXT.md` / ADRs / commits.
 
 ## Your first session — end-to-end walkthrough
 
@@ -113,15 +125,15 @@ One concrete feature, carried through every stage: **adding CSV export to an adm
 /dobby:scope add a CSV export button to the admin users table
 ```
 
-The architect creates `STATE.md` at your repo root (the session's shared doc) and dispatches a `dobby:researcher` to ground the goal: where the users table lives, which conventions the project uses, what the domain glossary and ADRs say. You don't wait on grepping — a worker does it.
+The architect creates `STATE.md` at your repo root (the session's shared doc) and dispatches `dobby:researcher` to ground the goal: where the users table lives, which conventions the project uses, what the domain glossary and ADRs say. You don't wait on grepping — a worker does it, then the main thread reasons from its report.
 
-**You'll see:** a short grounded summary ("the table is `src/admin/users/`, it uses the shared DataTable, exports don't exist anywhere yet"), then the handoff question: `/dobby:interview` recommended, with research or spec as the alternatives.
+**You'll see:** a short grounded summary ("the table is `src/admin/users/`, it uses the shared DataTable, exports don't exist anywhere yet"), then the handoff question: `/dobby:interview` recommended, with research or spec as the alternatives. There is no budget/profile question; every task uses `baseline-v1` during the experiment.
 
 **Artifact:** `STATE.md` with a filled `## Exploration` section.
 
 ### 2. Interview
 
-The architect now interrogates you **in rounds**: each turn asks everything that's answerable right now — up to four questions in one popup, with any open-ended ones following as a numbered list you can answer in a single message. Every question is informed by what the researcher found, restates its own context (so you never have to remember the previous three), and carries a recommended answer. Anything that depends on an answer you haven't given yet waits for the next round, so a chain of dependent decisions still arrives one step at a time, round by round:
+The architect now interrogates you **in rounds**: each turn asks everything that's answerable right now — up to four questions in one popup, with any open-ended ones following as a numbered list you can answer in a single message. Every question is informed by research, restates its own context, and carries a recommended answer. Anything that depends on an answer you haven't given yet waits for the next round:
 
 > Should the export respect the current filters and search, or always dump the full table? *(Recommended: respect filters — that's what the visible data implies.)*
 
@@ -133,7 +145,7 @@ If a question can't be settled verbally ("which of these two layouts feels right
 
 ### 3. Research
 
-Researchers fan out in parallel: one fetches current docs for the CSV library candidates (via `ctx7` — never from training data), another checks how streaming downloads work in your framework version, another looks for an existing export pattern in the codebase worth reusing.
+The architect fans researchers out (at most two at a time under the fixed recipe): one fetches current docs for the CSV library candidates (via `ctx7` — never from training data), another checks how streaming downloads work in your framework version, another looks for an existing export pattern in the codebase worth reusing. Their reports return to the main thread for synthesis.
 
 **You'll see:** a tight research brief — key facts with doc sources, what to reuse, open questions flagged.
 
@@ -145,7 +157,7 @@ Researchers fan out in parallel: one fetches current docs for the CSV library ca
 /dobby:spec
 ```
 
-The architect turns decisions + research into a build plan and **prints it in full in the conversation** — overview, edge cases, and a task table where every task carries its own *verify recipe* (the exact steps that will later prove it works). Approval is a single tap (Aprobar / Ajustar) right after the printed plan; nothing builds until you say so.
+The architect turns decisions + research into a build plan. In a scoped session it persists into the existing `STATE.md`; for a genuinely standalone, already-understood task, `/dobby:spec` may initialize the same canonical state before writing the plan. Main runs `dobby spec lint`, fixes exact structural findings, and **prints the full plan in the conversation**—overview, edge cases, and a task table where every task carries its own *verify recipe*. Approval is a single tap (Aprobar / Ajustar); nothing builds until you approve.
 
 **Artifact:** `## Spec` in `STATE.md`.
 
@@ -155,15 +167,15 @@ The architect turns decisions + research into a build plan and **prints it in fu
 /dobby:execute
 ```
 
-The coordinator makes sure the app is up — `/dobby:execute` runs `bunx dobby up --json` (in a named cmux pane, or a detached background job; idempotent and liveness-first, so a re-run never double-starts), and that single call is also what reports the live dev URL the verifiers will share — then launches **one build run**: a single workflow carrying the whole approved plan, which walks the waves in order and runs the tasks inside each wave at once. Per task, **separate agents** run a state machine:
+The coordinator makes sure the app is up — `/dobby:execute` runs `bunx dobby up --json` (in a named cmux pane, or a detached background job; idempotent and liveness-first, so a re-run never double-starts), and that call reports the live dev URL the verifiers will share. It then runs `bunx dobby env --json`, validates the complete `baseline-v1` recipe, and passes it unchanged into **one native build run**: a single Claude Workflow carrying the whole approved plan, which walks the waves in order and runs at most two tasks inside each wave. Per task, **separate agents** run a state machine:
 
 ```
-(test-author) → implement → code review → (findings? fix → re-review) → verify → (fail? restart) → done
+(test-author) → implement → mechanical-first verify → (fail? fix → re-verify) → done
 ```
 
-The implementor never reviews itself; the reviewer never implements; the verifier checks the *running app* against the task's verify recipe. The leading test step is conditional: when the repo has a test suite and the spec marked a task test-first, a `dobby:test-author` writes the failing tests before the implementor touches the code; repos without a suite degrade to the classic three-step loop. Independent tasks run in parallel waves — the run sequences them exactly as the plan cut them (area-disjoint, a destructive task alone in its wave), never regrouped. A task that exhausts its retries is flagged `needs-human` instead of thrashing forever, and every task that depended on it is skipped as `blocked` — no agents spawned, the blocker named in its row.
+The implementor never verifies itself; the verifier runs the exact mechanical recipe first and applies model judgment only where the result needs interpretation. The leading test step is conditional: when the repo has a test suite and the spec marked a task test-first, a `dobby:test-author` writes the failing tests before the implementor touches the code. Independent tasks run in parallel waves — the run sequences them exactly as the plan cut them (area-disjoint, a destructive task alone in its wave), never regrouped. A first verification failure may dispatch one implementor fix because a second verifier attempt remains; a final failure stops `needs-human` with no terminal fix. Every task that depended on it is skipped as `blocked` — no agents spawned, the blocker named in its row. The normal loop deliberately has no per-task reviewer: after commit/push, the repository's external reviewer (currently Greptile) reviews the complete PR, and merge readiness requires a review of the current HEAD rather than a stale summary or silence.
 
-**You'll see:** the build run narrating itself live as it works — a line when each wave opens, one line per task the moment it lands (`✓ verified`, `✗ needs-human`, `⊘ blocked`), a line per review or verify retry, a summary line per wave, and extra detail for a task in trouble (once it fails a review or a verify, every later step of *that* task is narrated). That narration lives in the run's progress widget, so the coordinator also echoes each task's outcome into the chat as it lands — you can follow the whole run without opening the widget. When the run returns, you get the status table per task, and the work log appended to `STATE.md`.
+**You'll see:** the build run narrating itself live as it works — the recipe/limits, a line when each wave opens, one line per task the moment it lands (`✓ verified`, `✗ needs-human`, `⊘ blocked`), a line per verification retry, a summary line per wave, and extra detail for a task in trouble. That narration lives only in the Workflow run's progress widget; the coordinator does not invoke `Monitor` or duplicate it into chat. When the run returns, you get the status table, serial `STATE.md` work-log updates, and honest telemetry for calls, attempts, retries, first-attempt success, cap exhaustion, and evidence source. Dynamic escalation is absent (`escalationReason: null`); provider, token, duration, and script-internal run-id fields stay `unknown` when the Workflow runtime does not expose them.
 
 ### 6. Wrap
 
@@ -243,7 +255,7 @@ STATE.md
 └── ## Work log               ← execute: what each implementor actually did
 ```
 
-Nobody hand-edits it: every write goes through `bunx dobby state` (`init` writes the skeleton and the `.gitignore` entry, `set <Section>` replaces exactly one body, `append-worklog --task <id>` appends one entry, `lint` checks the structure), so a stage can never clobber a sibling section.
+Nobody hand-edits it: every write goes through `bunx dobby state` (`init` writes the seven-section skeleton and the `.gitignore` entry, `set <Section>` replaces exactly one body, `append-worklog --task <id>` appends one entry, `lint` checks the structure), so a stage can never clobber a sibling section. Old files with the retired `## Execution profile` remain readable: unknown sections are preserved and tolerated, but Dobby never creates, interprets, or deletes that legacy section automatically.
 
 It is **never committed** — `/dobby:wrap` disposes it after reconciling the durable docs (`CONTEXT.md`, `CLAUDE.md`, ADRs).
 
@@ -265,20 +277,21 @@ These couple to Claude Code's session storage (`~/.claude/projects`) on purpose 
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `Agent type 'dobby:researcher' not found` | Agents register at session startup | `/reload-plugins`; if that doesn't take, restart the session |
+| `Agent type 'dobby:researcher'` (or another `dobby:*` agent) not found | Agents register at session startup | `/reload-plugins`; if that doesn't take, restart the session |
 | `/dobby:*` skills don't show up | Plugin not enabled | `/plugin` → enable `dobby@dobby` (or reinstall) |
 | Researchers cite stale/odd docs | `ctx7` CLI missing or unauthenticated | Install `ctx7`; set `CONTEXT7_API_KEY` for higher limits |
 | Skill edits not picked up (local dev) | Only `SKILL.md` hot-reloads | `/reload-plugins` for agents/hooks changes |
 | Post-edit check hook never fires | By design outside dobby projects | Needs `dobby.config.json` at the project root **and** a local `@kvnwolf/dobby` bin (run `/dobby:onboard`) |
 | A hook blocked my `git push` | The pre-push backstop found a red gate on the tree being pushed | Read the findings it printed (they're the whole list, not a sample) and fix them — or, when you're pushing a WIP branch on purpose, `git push --no-verify` as a conscious bypass |
 | Execute re-authored the build run and lost the loop logic | The build run's script must be used verbatim — one run per plan, the waves sequenced inside it | Re-run `/dobby:execute`; the skill's `references/build-workflow.md` is the canonical script |
+| Execute says `workflowRecipe` is missing or malformed | `dobby env --json` did not return the complete `baseline-v1` object expected by the installed skill | Run `bunx dobby env --json`; align the local `@kvnwolf/dobby` package and plugin versions, then execute again. Never type model/limit values into the Workflow by hand. |
 | `portless` prompts for sudo / fails to bind `:443` on first run | First-time CA install + privileged port | Run `portless trust` once (surfaced by `/dobby:onboard`); it's a one-time setup, later runs don't need it |
 | An old session died and left a worktree in `.claude/worktrees/` | The session couldn't run `/dobby:finish` before exiting | Run `/dobby:finish` anyway — it detects the orphan, checks the PR (offering the merge if it's still open), confirms with you, and cleans up via raw git |
 | `/dobby:scope` stops ("open a new pane") | Nesting — THIS session is already inside a worktree, and the native tool can't nest (parallel worktrees from OTHER sessions are fine and don't trigger this) | Open a new cmux pane / `claude` session for the new goal and run `/dobby:scope <goal>` there — one goal per pane, no nesting |
 
 ## Recovery quick reference
 
-- **Session interrupted mid-stage?** `STATE.md` is the source of truth. Re-invoke the stage you were in — it reads the doc and continues.
+- **Session interrupted during planning?** `STATE.md` is the source of truth. Start a fresh Claude Code session in the same worktree and re-invoke `/dobby:interview`, `/dobby:research`, or `/dobby:spec` as appropriate; the main-thread architect reconstructs the task from Goal, Source, Exploration, Findings, Research, Spec, and project context. Execute resumes through its Workflow run id.
 - **Want to revisit a decision?** Re-run `/dobby:interview`; it updates `## Findings` and downstream stages pick up the change.
 - **A task came back `needs-human`?** That's the build run refusing to thrash. Read the reason in the status table, then `/dobby:diagnose` or `/dobby:dispatch` the fix.
 - **A task came back `blocked`?** Nothing ran for it — one of its dependencies didn't pass, and the run skips a task rather than build on a broken base. The status table names the blocker; fix that one first (`/dobby:diagnose` / `/dobby:dispatch`), and the blocked tasks become buildable again.

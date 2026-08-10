@@ -241,7 +241,7 @@ const COMMANDS: Readonly<Record<string, CommandEntry>> = {
     subcommands: { preflight: [], verify: [] },
   },
   pr: {
-    flags: ["json", "pr"],
+    flags: ["json", "pr", "adapter"],
     handler: runPr,
     subcommands: { watch: ["deadline", "await-review"] },
   },
@@ -254,7 +254,7 @@ const COMMANDS: Readonly<Record<string, CommandEntry>> = {
     handler: runRepro,
   },
   review: {
-    flags: ["json", "pr"],
+    flags: ["json", "pr", "adapter"],
     handler: runReview,
     subcommands: { apply: ["plan", "stdin", "dry-run"], fetch: [] },
   },
@@ -471,6 +471,7 @@ export async function run(
       allowPositionals: true,
       args: argv,
       options: {
+        adapter: { type: "string" },
         "await-review": { type: "boolean" },
         bench: { type: "boolean" },
         "body-file": { type: "string" },
@@ -775,6 +776,10 @@ export async function run(
 // print as a comma-separated list or the literal "none"; config prints
 // "true"/"false".
 function formatEnvText(snapshot: EnvSnapshot): string {
+  const recipe = snapshot.workflowRecipe;
+  const roleSummary = Object.entries(recipe.roles)
+    .map(([role, policy]) => `${role}=${policy.model}/${policy.reasoning}`)
+    .join(", ");
   return [
     `cmux: ${scalar(snapshot.cmux)}`,
     `worktree: ${scalar(snapshot.worktree)}`,
@@ -785,6 +790,11 @@ function formatEnvText(snapshot: EnvSnapshot): string {
     `devUrl: ${scalar(snapshot.devUrl)}`,
     `runPane: ${scalar(snapshot.runPane)}`,
     `browserPane: ${scalar(snapshot.browserPane)}`,
+    `workflowRecipe.id: ${recipe.id}`,
+    `workflowRecipe.fingerprint: ${recipe.fingerprint}`,
+    `workflowRecipe.limits: outer=${recipe.limits.maxOuter}, concurrency=${recipe.limits.maxConcurrency}`,
+    `workflowRecipe.roles: ${roleSummary}`,
+    `workflowRecipe.verification: ${recipe.verification}`,
   ]
     .join("\n")
     .concat("\n");

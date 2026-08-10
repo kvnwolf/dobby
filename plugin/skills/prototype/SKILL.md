@@ -21,14 +21,20 @@ If genuinely ambiguous, ask the user; if unreachable, default to whichever match
 
 Read the branch reference and turn it into a concrete build instruction: the question, the branch recipe (embed the reference's process — the implementor doesn't have it), the variant/action spec you decided, and where the prototype lives. Dispatch **ONE `implementor`** (Agent tool, `subagent_type: "dobby:implementor"`) — variants share the route and switcher, so parallel writers would collide.
 
-**No build loop.** Prototypes are exempt from review/verify by design; no work-log entry — the captured answer is the deliverable.
+**No build loop.** Prototypes are exempt from review/verify by design. The implementor still returns the normal `{status, workLog, blocker}` envelope, but here it is CONTROL PLANE only: the prototype artifact and later captured answer are the deliverables, and its `workLog` is NEVER appended to `STATE.md`.
+
+Validate the envelope before handing the prototype to the user:
+
+- `{status: "completed", workLog: <non-empty>, blocker: ""}` → mechanically confirm the named target exists in the exact requested location (and Read the entry file / route registration); then continue to the play session. Do not persist the work log.
+- `{status: "blocked", workLog: <non-empty>, blocker: <non-empty>}` → report both the blocker and artifact accounting, return `needs-human`, and STOP before handoff/capture. Do not persist the work log.
+- Null, a bare work log, empty required fields, or an incoherent envelope → inspect the exact prototype target mechanically (`test -e` / scoped `git status --short -- <target>` / `git diff -- <target>` as applicable, then Read expected and untracked files), report what exists, and return `needs-human`. Do not launch the play session, capture an answer, or infer success from a partial artifact.
 
 ## Step 3: Hand it over — the play session
 
 - **Logic branch** → give the user the one run command.
 - **UI branch** → give the URL on the **already-running dev server** (resolve it the way `/dobby:execute` Step 2 does — `bunx dobby up` ensures the run is up, then read `devUrl` from `bunx dobby env`; never start a second server) + the `?variant=` keys.
 
-The user drives. The interesting moments are "wait, that shouldn't be possible" and "I want the header from B with the sidebar from C" — those are the answer forming. Iterate through the implementor as the user asks for new actions, adjustments, or another variant.
+The user drives. The interesting moments are "wait, that shouldn't be possible" and "I want the header from B with the sidebar from C" — those are the answer forming. Iterate through the implementor as the user asks for new actions, adjustments, or another variant. Every iteration uses the SAME result-envelope gate from Step 2: only `completed` may return to the play session; `blocked` or invalid stops `needs-human` after reporting/mechanical inspection, and no iteration work log is persisted to `STATE.md`.
 
 ## Step 4: Capture the answer, clean up
 
@@ -45,7 +51,7 @@ The **answer is the only thing worth keeping**. Capture the question + verdict +
 
 Over a section that already holds the stage's work, passing the capture ALONE would replace it — step 1 is what makes this an append, and what tells you whether there is anything to preserve.
 
-Then **delete or absorb** (via the implementor): fold the winning variant or validated logic module into the real code through the normal flow — prototype code was written under prototype constraints, so production-bound pieces get rebuilt properly (the logic branch's pure module is the exception: it's built portable on purpose). Delete the losers, the switcher, and any throwaway route.
+Then **delete or absorb** (via the implementor): fold the winning variant or validated logic module into the real code through the normal flow — prototype code was written under prototype constraints, so production-bound pieces get rebuilt properly (the logic branch's pure module is the exception: it's built portable on purpose). Delete the losers, the switcher, and any throwaway route. Apply the SAME envelope gate to cleanup: only a coherent `completed` plus mechanical confirmation of the requested removal/absorption may finish; `blocked` or invalid leaves the artifact in place, reports `needs-human`, and skips the Next-step handoff. Never persist this cleanup work log to `STATE.md` either.
 
 ## Rules (both branches)
 
@@ -71,7 +77,8 @@ Interact with the user in their language. Write prototype code, comments, and th
 ## Acceptance checklist
 
 - [ ] The question stated explicitly, branch picked (logic vs UI) accordingly
-- [ ] Built by ONE `implementor` (no build loop, no work-log); throwaway, clearly marked, one command/URL
+- [ ] Built by ONE `implementor` (no build loop); its structured envelope controlled progress but its workLog was never persisted to `STATE.md`; throwaway artifact clearly marked, one command/URL
+- [ ] Initial build, every iteration, and cleanup handled envelopes fail-closed: only coherent `completed` advanced; `blocked` reported blocker + accounting; null/malformed triggered target-scoped mechanical inspection and `needs-human` before play/capture/next-step
 - [ ] UI branch served from the already-running dev server; variants structurally different, switcher prod-gated
 - [ ] User drove the prototype; iterations applied through the implementor
 - [ ] Answer captured — appended to the calling stage's STATE.md section by read-modify-write through `bunx dobby state set` (existing body preserved, never a hand edit; capture alone when the section still held `_pending_`), or NOTES.md standalone; ADR candidate flagged if warranted

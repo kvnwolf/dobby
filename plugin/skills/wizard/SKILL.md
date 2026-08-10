@@ -40,6 +40,12 @@ Hand the mapped-out procedure to **ONE `dobby:implementor`** (Agent tool, `subag
   - Hold the template's bar: open the URL before asking for its value; `ask_secret` for anything secret; `write_env` every persisted value; `set_secret` only the values CI actually needs (each name must exactly match a `secrets.*` reference); `confirm` before any irreversible action. Each `stage` clears the screen — keep a stage to one focused task so nothing the human needs scrolls away.
   - **Static-verify only** (see Step 4) — NEVER run the script end-to-end.
 
+The target path above is also the mechanical recovery scope. Validate the returned `{status, workLog, blocker}` envelope BEFORE Step 4:
+
+- `{status: "completed", workLog: <non-empty>, blocker: ""}` → integrate its accounting and proceed to static verification.
+- `{status: "blocked", workLog: <non-empty>, blocker: <non-empty>}` → report BOTH the blocker and script accounting, return `needs-human`, and STOP before static verification, run instructions, cleanup, or commit handoff.
+- Null, a bare work log, empty required fields, or an incoherent envelope → the script may be partial. Mechanically inspect the exact target with `test -e`, scoped `git status --short -- <script>` / `git diff -- <script>` when it is in the repo, and Read it to establish whether the template marker/library/stage region exists (including an untracked target). Report that accounting and return `needs-human`; do not run the Step 4 gate or infer authoring completion.
+
 ## Step 4: Verify and hand off
 
 The implementor static-verifies and reports back; confirm the wizard is sound:
@@ -67,6 +73,7 @@ Interact with the user in their language. Write the wizard's code, comments, and
 - [ ] Procedure scoped from the repo (`.env*` / `README` / `docker-compose*` / `.github/workflows/*`); every CI `secrets.*` / `vars.*` reference mapped to a produced value
 - [ ] Every stage traces to concrete UI/CLI instructions a stranger could follow; no invented steps
 - [ ] Built by ONE `dobby:implementor`: `references/template.sh` copied verbatim, stages authored ONLY below the `# STAGES` marker, library above it untouched
+- [ ] Implementor envelope handled before static verification: coherent `completed` integrated; `blocked` stopped with blocker + work-log accounting; null/malformed triggered exact-script existence/status/diff/Read inspection and `needs-human`, with no verify/run/cleanup/commit handoff
 - [ ] Honest `TOTAL_STAGES` / `TOTAL_MINUTES`; library helpers used; secrets hidden, persisted values written, only CI-needed values `set_secret`
 - [ ] Static-verify ONLY (`bash -n`, `shellcheck` if available, `chmod +x`) — never run end-to-end
 - [ ] Ephemeral by default; committed only if the user wants a repeatable path

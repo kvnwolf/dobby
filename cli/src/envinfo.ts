@@ -4,6 +4,10 @@ import { loadConfig } from "./config.ts";
 import { detectCapabilities } from "./detect.ts";
 import { resolveBin, resolveWorkroot, runCapture } from "./runner.ts";
 import { dbTasks } from "./tasks.ts";
+import {
+  resolveWorkflowRecipe,
+  type WorkflowRecipe,
+} from "./workflow-recipe.ts";
 
 // Top-level regexes (biome useTopLevelRegex — a literal inside a function recompiles
 // on every call).
@@ -43,6 +47,8 @@ export interface EnvSnapshot {
   devUrl: string | null;
   // The kit run-pane surface ref (surface titled dobby-run-<slug>), or null.
   runPane: string | null;
+  // The fixed native-Claude role recipe and build-loop caps.
+  workflowRecipe: WorkflowRecipe;
   // The enclosing git worktree root (git's resolved top-level), or null outside a repo.
   worktree: string | null;
 }
@@ -68,6 +74,7 @@ export function collectEnv(root: string): EnvSnapshot {
     dbTasks: [...dbTasks(capabilities).tasks.keys()],
     devUrl,
     runPane: panes.runPane,
+    workflowRecipe: resolveWorkflowRecipe(),
     worktree: workroot,
   };
 }

@@ -77,23 +77,27 @@ A green local gate proves only the TREE, not the PIPELINE (deploys run steps the
 - `prUrl` is null and you committed on a trunk branch — nothing was opened, by policy. Go straight to the Next step.
 
 ```bash
-bunx dobby pr watch --await-review --deadline 300 --json
+bunx dobby pr watch [--adapter <selected id>] --await-review --deadline 300 --json
 ```
 
 It owns the polling (CI to terminal, then the review round, each phase on its own deadline) and answers with ONE `verdict`. Branch on it:
 
 | `verdict` | What it means | Do |
 |---|---|---|
-| `merge-ready` | CI green, review posted, no open threads | State plainly that the PR is merge-ready. **NEVER merge it yourself — merging is always the user's call.** The merge itself is offered, gated, inside `/dobby:finish` (the Next step below). |
+| `merge-ready` | CI green, review posted, no open threads, and commit-scoped review evidence: Greptile check + matching footer SHA, or CodeRabbit current-commit check | State plainly that the PR is merge-ready. **NEVER merge it yourself — merging is always the user's call.** The merge itself is offered, gated, inside `/dobby:finish` (the Next step below). |
 | `feedback-present` | Open review threads (`openThreads` > 0) | Invoke **`/dobby:address-review`** via the Skill tool. It owns triage (with its human gate), the fixes, thread resolution and the re-trigger — don't reimplement any of it here. |
-| `open-unreviewed` | Nothing posted before the deadline | Report the PR as open + unreviewed and end. Never poll again for a bot that may not exist. |
+| `open-unreviewed` | No review of the current HEAD landed before the deadline; for Greptile this also covers a stale or missing `Last reviewed commit` footer | Report the PR as open + unreviewed, include `reason` and `summary.reviewedHeadOid` when present, and end. Never reinterpret an old summary or bot silence as approval. |
 | `ci-failed` | A check went red (`failing[]` names each one + its `link`) | Route those check names and links to a worker — **never** an inline edit. After the worker's fix, re-run step 5 (a fix is a commit) and then this step. |
 | `ci-pending` | Checks still running when the deadline expired | Report that, or re-run the command with a longer `--deadline`. |
 | `skipped` | No PR on this branch (`reason` says why) | Nothing to watch — go to the Next step. |
 
-**Confidence never moves the verdict**: `pr watch` decides on open THREADS alone, so a posted summary with no open threads is `merge-ready` whatever its score. When the payload's `summary.confidence` is non-null, state it alongside the verdict and let the user confirm the bar — the confidence-driven judgment (including the dashboard-only case) belongs to `/dobby:address-review`.
+**Current-HEAD evidence is a hard gate.** `pr watch` re-reads the PR around CI and review collection; if HEAD changes, it discards both snapshots and restarts from checks. Greptile edits one summary comment in place, so `updatedAt` alone proves nothing: its named status check must pass AND the footer's full `summary.reviewedHeadOid` must equal `pr.headRefOid`. CodeRabbit has no equivalent footer in this adapter, so its commit-scoped CodeRabbit check must pass; an old summary without that check is `open-unreviewed`. The required Greptile project setup is `triggerOnUpdates: true`, `statusCheck: true`, a required Greptile status check in GitHub branch protection, and a visible summary footer (`hideFooter: false`); see `../address-review/references/adapters.md`. There is no review-by-silence path.
 
-A **nonzero exit** means gh could not report at all (auth, network, rate limit) — surface its stderr and stop; an unreadable pipeline is never a green light.
+When the command fails because several adapters matched, run `bunx dobby review fetch --json`, ask which adapter is the gate, then re-run the watch with `--adapter <chosen id>`. When several adapters are required, run each in turn and require every `merge-ready` payload to name the SAME `pr.headRefOid`; if any differ, a push landed between gates, so discard all results and restart the full adapter set. Preserve each selected id through `/dobby:address-review` and report merge-ready only for the common validated SHA.
+
+**Confidence never moves the verdict**: once review freshness is proven, `pr watch` decides findings on open THREADS, so a current summary with no open threads is `merge-ready` whatever its score. When the payload's `summary.confidence` is non-null, state it alongside the verdict and let the user confirm the bar — the confidence-driven judgment (including the dashboard-only case) belongs to `/dobby:address-review`.
+
+A **nonzero exit** means the watch could not produce an unambiguous observation (gh auth/network/rate limit, or multiple adapters without `--adapter`) — surface its stderr and stop; an unreadable or ambiguous pipeline is never a green light.
 
 ## Next step
 
@@ -111,5 +115,5 @@ Reached only once the commit is **on the remote**: a red gate, a failed `git com
 - [ ] Ceremony run as ONE `bunx dobby ship --message-file <f> [--pr-body-file <f>] --json` — no hand-run gate, no hand-run `git commit`/`git push`/`gh pr create`
 - [ ] `committed: false` read through `gateExitCode` — ≠ 0 → the gate findings reported verbatim; `0` → git's own failure text reported as such (never re-labelled a gate failure); either way the commit abandoned. `committed: true` → `sha` / `prUrl` reported, plus `prNote` when a requested PR has no URL
 - [ ] `pushed: false` on a made commit treated as a STOP, not a success: git's push stderr surfaced, the commit stated as local-only with no PR, step 6 and the Next-step handoff skipped
-- [ ] PR monitored via `bunx dobby pr watch --await-review --deadline 300 --json` and routed by its verdict (`ci-failed` → a worker, never an inline edit, then re-ship + re-watch; `feedback-present` → `/dobby:address-review`; `merge-ready` / `open-unreviewed` reported, with `summary.confidence` stated when present); a nonzero exit surfaced instead of read as green
+- [ ] PR monitored via `bunx dobby pr watch [--adapter <selected id>] --await-review --deadline 300 --json` and routed by its verdict (`ci-failed` → a worker, never an inline edit, then re-ship + re-watch; `feedback-present` → `/dobby:address-review`; `merge-ready` / `open-unreviewed` reported, with `summary.confidence` stated when present); multi-adapter ambiguity was selected mechanically and every required adapter validated one common SHA (the full set restarted on mismatch); Greptile required a passing review check plus `summary.reviewedHeadOid == pr.headRefOid`, CodeRabbit required its passing current-commit check, and stale/missing evidence was never accepted by silence; a nonzero exit surfaced instead of read as green
 - [ ] The skill NEVER merged the PR (merging is the user's call)
