@@ -58,7 +58,7 @@ useSpawnBudget();
 //    the SAME literal with only the values the spec says move — so a phase that
 //    rewrites one byte too many fails on the diff.
 //  - `0.4.2` → `0.5.0`, `v0.5.0`, `mad-eye 0.5.0`, `rustup target add`,
-//    `--bundles dmg --target universal-apple-darwin`,
+//    `--bundles app,dmg --target universal-apple-darwin`,
 //    `Print :CFBundleShortVersionString` are the SPEC's own literals.
 //  - The sha256 is what the `shasum` boundary ANSWERED (this file chose it), never
 //    a checksum recomputed here the way the adapter computes it.
@@ -102,7 +102,7 @@ const CASK = "mad-eye";
 // this path, and an argv built by string concatenation mangles it.
 const PRODUCT = "Mad Eye";
 
-// Where `bun tauri build --bundles dmg --target universal-apple-darwin` leaves
+// Where `bun tauri build --bundles app,dmg --target universal-apple-darwin` leaves
 // its output (the spec's own path).
 const BUNDLE_REL = "src-tauri/target/universal-apple-darwin/release/bundle";
 const DMG_NAME = `${PRODUCT}_${NEXT_VERSION}_universal.dmg`;
@@ -564,11 +564,22 @@ function writeStubs(spec: StubSpec): void {
     'case "$*" in',
     "  *'tauri build'*)",
     `    rm -rf ${sq(join(spec.root, BUNDLE_REL))}`,
-    `    mkdir -p ${sq(dirname(join(spec.root, BUNDLE_REL)))}`,
+    `    mkdir -p ${sq(join(spec.root, BUNDLE_REL))}`,
     ...(spec.build === null
       ? []
       : [
-          `    cp -R ${sq(join(spec.binDir, "staged-bundle"))} ${sq(join(spec.root, BUNDLE_REL))}`,
+          '    bundles=""',
+          '    previous=""',
+          '    for arg in "$@"; do',
+          '      if [ "$previous" = "--bundles" ]; then bundles="$arg"; break; fi',
+          '      previous="$arg"',
+          "    done",
+          '    case ",$bundles," in',
+          `      *,dmg,*) cp -R ${sq(join(spec.binDir, "staged-bundle", "dmg"))} ${sq(join(spec.root, BUNDLE_REL, "dmg"))} ;;`,
+          "    esac",
+          '    case ",$bundles," in',
+          `      *,app,*) cp -R ${sq(join(spec.binDir, "staged-bundle", "macos"))} ${sq(join(spec.root, BUNDLE_REL, "macos"))} ;;`,
+          "    esac",
         ]),
     "    ;;",
     "esac",
@@ -952,7 +963,7 @@ describe("homebrew-cask bumpExtras", () => {
 // ===========================================================================
 
 describe("homebrew-cask packGate", () => {
-  it("builds a universal dmg through tauri", () => {
+  it("builds universal app and dmg bundles through tauri", () => {
     const fixture = makeCaskFixture();
 
     withStubs(fixture, () => caskAdapter.packGate(fixture.context));
@@ -961,7 +972,7 @@ describe("homebrew-cask packGate", () => {
       "tauri",
       "build",
       "--bundles",
-      "dmg",
+      "app,dmg",
       "--target",
       "universal-apple-darwin",
     ]);
