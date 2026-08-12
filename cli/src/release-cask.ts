@@ -113,8 +113,10 @@ const CARGO_MANIFEST = "Cargo.toml";
 const UNIVERSAL_TARGET = "universal-apple-darwin";
 const MAC_TARGETS = ["aarch64-apple-darwin", "x86_64-apple-darwin"] as const;
 
-// The ONE bundle format this target ships (`--bundles dmg`) — and, because the
-// bundler names its output directory after the format, also that directory.
+// The two bundle formats the gate needs Tauri to preserve: the app supplies the
+// embedded version, while the dmg is the artifact that ships. The dmg output
+// directory keeps its own constant because it is also used as a path segment.
+const BUILD_BUNDLES = "app,dmg";
 const DMG_BUNDLE = "dmg";
 
 // Where `bun tauri build` leaves its output, relative to the tauri dir.
@@ -427,12 +429,19 @@ function packGate(context: ReleaseContext): ReleasePhaseResult {
   // failed build's own words are the only useful thing to report.
   const built = runCapture(
     "bun",
-    ["tauri", "build", "--bundles", DMG_BUNDLE, "--target", UNIVERSAL_TARGET],
+    [
+      "tauri",
+      "build",
+      "--bundles",
+      BUILD_BUNDLES,
+      "--target",
+      UNIVERSAL_TARGET,
+    ],
     { root: context.dir }
   );
   if (failed(built)) {
     return {
-      error: `\`bun tauri build --bundles ${DMG_BUNDLE} --target ${UNIVERSAL_TARGET}\` failed in ${context.dir} — ${detailOf(built)}`,
+      error: `\`bun tauri build --bundles ${BUILD_BUNDLES} --target ${UNIVERSAL_TARGET}\` failed in ${context.dir} — ${detailOf(built)}`,
       ok: false,
     };
   }
