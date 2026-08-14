@@ -11,6 +11,9 @@
   },
   "packageManager": "bun@1.3.13",
   "knip": {
+    "ignore": [
+      "plugin/skills/**/scripts/**"
+    ],
     "ignoreDependencies": [
       "@biomejs/biome",
       "@tailwindcss/vite",
