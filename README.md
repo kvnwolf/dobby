@@ -110,6 +110,8 @@ Side paths, available at any point:
 - `/dobby:dispatch` — the coordinator/worker machinery for a task too small to deserve a full planning session.
 - `/dobby:address-review` — take a review bot's or reviewer's PR comments from posted to addressed + threads resolved + re-reviewed.
 - `/dobby:handoff` — compact the session into an ephemeral fork document a fresh session can pick up (see [Context hygiene](#context-hygiene-fork-vs-continue)).
+- `/dobby:trim-context` — inventory and, after approval, reduce repository prose/comment context cost with an independently reviewed sweep ledger.
+- `/dobby:anti-slop` — inventory and, after approval, make minimum contextual fixes to generic AI-writing patterns in prose and user-facing copy.
 
 ### Context hygiene: fork vs. continue
 
@@ -216,6 +218,8 @@ The whole session ran inside a per-goal worktree that `/dobby:scope` created —
 | An incoming issue or outside PR to evaluate and turn into a brief | `/dobby:triage` |
 | A manual setup or A→B procedure worth turning into a guided run | `/dobby:wizard` — generates an interactive bash setup wizard |
 | Learn a topic and check you actually got it | `/dobby:teach` |
+| Context in repository docs/comments is bloated or stale | `/dobby:trim-context` — inventory the whole workroot, approve batches, then independently review the sweep and its ledger |
+| Repository prose or user-facing copy sounds generic, vague, or AI-written | `/dobby:anti-slop` — make contextual, minimum fixes without judging authorship; it never changes comments |
 | Context is getting long, or you want to branch a fresh session off a clean summary | `/dobby:handoff` — an ephemeral fork document |
 | A merge/rebase left conflict markers you need to reconcile without losing either side | `/dobby:resolve-conflicts` |
 | A brand-new empty repo | `/dobby:onboard` — scaffolds it and picks the issue tracker (GitHub Issues by default, or Linear / local `BACKLOG.md`) |
@@ -229,6 +233,14 @@ The whole session ran inside a per-goal worktree that `/dobby:scope` created —
 | Wiring server data into a list/table | `/dobby:data-fetching` (auto-activates) |
 
 Rule of thumb: if getting it wrong would cost you a rework cycle, it deserves a session (`scope`). If you could review the whole change in one glance, `dispatch` it.
+
+### Inference sweeps: context trim and AI slop
+
+`/dobby:trim-context` and `/dobby:anti-slop` are separate **inference-only** skills. They inspect the whole Git workroot, propose tiered batches, and need explicit approval before workers change human text. Neither is a Gate, runs the Gate, changes CLI/config/tooling behavior, stages, or commits; use the normal lifecycle to ship an approved sweep.
+
+Choose `/dobby:trim-context` to reduce the **token/context cost** of repository guidance and comments while preserving their meaning and operational constraints. It is the sole owner of comment changes. Choose `/dobby:anti-slop` to improve **voice** in prose and user-facing copy through the smallest contextual fix; it never judges authorship, uses scores or banned-word quotas, or changes comments. When both apply, always run `/dobby:trim-context` first, then `/dobby:anti-slop` after the trim outcome is known.
+
+Both skills keep their reviewed coverage in the tracked **Sweep ledger**, `.dobby/sweeps.json`. This ledger is the deliberate exception to the normal inference-only boundary: it records each completed sweep's exact final-byte hashes and rules version, rather than adding a configurable or executable surface. Coverage is per file, per skill — each file's entry can hold a `trim-context` sub-key, an `anti-slop` sub-key, or both, and each skill reads and writes only its own so the two sweeps coexist in the same repository without one invalidating the other's coverage.
 
 ## Convention skills
 
