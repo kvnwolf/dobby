@@ -28,6 +28,14 @@
       ]
     },
     {
+      "path": "plugin/CONTEXT.md",
+      "update_when": [
+        "When the plugin's file surface changes (skills/, agents/, hooks/, vendored script assets)",
+        "When a skill's shared contract, mechanical helper, or ledger format changes shape",
+        "When a plugin-level invariant (self-containment, no ../cli reach, inference-only sweeps) changes"
+      ]
+    },
+    {
       "path": "cli/README.md",
       "update_when": [
         "When the CLI's npm-facing interface changes (commands, flags, `env` output, lifecycle behavior)",

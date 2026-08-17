@@ -31,16 +31,20 @@ CLI at runtime (`bunx dobby …`), never imported.
     — host-coupled helpers over Claude Code session storage.
   - `skills/trim-context/scripts/comment-inventory.mjs` — a read-only, deterministic
     mechanical extractor that walks tracked files with real Tree-sitter syntax trees
-    (never a text/regex heuristic) to emit comment-unit JSON. Its runtime and every
-    grammar live vendored under `skills/trim-context/scripts/vendor/`
-    (`web-tree-sitter/` + `grammars/*.wasm`), copied unmodified from npm and never
-    fetched at run time; `skills/trim-context/scripts/vendor/PROVENANCE.md` records
-    each asset's source package/version, license, and SHA-256, plus the re-vendoring
-    steps. `skills/trim-context/references/sweep-contract.md` is the shared contract
-    `/dobby:trim-context` and `/dobby:anti-slop` both read for inventory, approval,
+    (never a text/regex heuristic) to emit comment-unit JSON, now read as the
+    per-file weight/targeting input that ranks files into lots rather than an
+    exhaustive inventory; a `parse-error` row names a real gap but no longer blocks
+    ledger finality (ADR-0028). Its runtime and every grammar live vendored under
+    `skills/trim-context/scripts/vendor/` (`web-tree-sitter/` + `grammars/*.wasm`),
+    copied unmodified from npm and never fetched at run time;
+    `skills/trim-context/scripts/vendor/PROVENANCE.md` records each asset's source
+    package/version, license, and SHA-256, plus the re-vendoring steps.
+    `skills/trim-context/references/sweep-contract.md` is the shared contract
+    `/dobby:trim-context` and `/dobby:anti-slop` both read for ranking/approval,
     disjoint ownership, independent review, and the `.dobby/sweeps.json` ledger
-    format (per-file `trim-context`/`anti-slop` sub-keys so the two sweeps coexist
-    without one invalidating the other's coverage).
+    format (per-file `trim-context`/`anti-slop` sub-keys, coverage accruing
+    incrementally, so the two sweeps coexist without one invalidating the other's
+    coverage).
 
 ## Interface
 
