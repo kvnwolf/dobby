@@ -56,7 +56,7 @@ Apply the shared contract's first-full-sweep and incremental rules to the `anti-
 
 ## Step 4: Obtain approval and apply minimum fixes
 
-Turn the inventory into tiered, disjoint approval batches using the shared contract's tiers. Each proposed change includes its findings with citation and minimum fix, the exact file set, preservation rules, before bytes, projected byte/token savings, and category metrics. Present every batch before writing; explicit human approval is required for each. Rejected candidates become explicit retains. Deferred units prevent completed coverage.
+Turn the inventory into tiered, disjoint approval batches using the shared contract's tiers. Each proposed change includes its findings with citation and minimum fix, the exact file set, preservation rules, before bytes, projected byte/token savings, and category metrics. Approval follows the shared contract's policy-approval model: one explicit approval of scope and aggressiveness before any write, not per batch. Rejected candidates become explicit retains. Deferred units prevent completed coverage.
 
 After approval, dispatch `dobby:implementor` workers over disjoint file sets. Partition independent implementors into deterministic sequential batches of at most `workflowRecipe.limits.maxConcurrency`: launch one batch in parallel, await all its results, then launch the next; retries and replacement Agents consume a slot. Their brief permits only the approved human-text changes and requires the smallest edit that resolves the cited contextual weakness. They must not alter comments, behavior, code, the ledger, unstated copy, or another worker's files; they must not stage or commit.
 

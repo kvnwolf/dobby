@@ -1,5 +1,7 @@
 # 0027. Vendor Tree-sitter WASM inside the trim-context skill
 
+**Status:** accepted — the vendored extractor, its provenance chain, and the declared SQL grammar gap all stand; the fail-closed consequence (a `parse-error` blocking ledger finality) is superseded by [ADR-0028](./0028-trim-sweeps-spend-budget-on-judgment-not-inventory.md).
+
 `/dobby:trim-context` must find every comment before it judges any, and a field measurement showed the stakes: one consumer repository held 24,113 comments across 1.83 MB, roughly 434k estimated tokens. Regex loses to strings, template literals, JSX, dollar-quoted SQL and shebangs, and consumer-installed parsers cannot be assumed — the plugin is cache-copied on install, so it may never reach `../cli` or the consumer's `node_modules`. We therefore vendor the `web-tree-sitter` runtime plus seven grammars (TypeScript, TSX, JavaScript, CSS, HTML, Bash, SQL) inside `plugin/skills/trim-context/scripts/vendor/`, with `PROVENANCE.md` recording each asset's package, version, licence and SHA-256, and a read-only extractor that enumerates only tracked files.
 
 ## Consequences

@@ -10,7 +10,7 @@ Every tracked file outside that parser surface — Markdown, JSON, YAML, TOML, l
 
 **Known SQL coverage gap**: the vendored SQL grammar has no PostgreSQL Row-Level-Security or ACL DDL support — `CREATE POLICY`, `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, and `GRANT` do not parse. Tree-sitter's error recovery then marks the *whole containing file* as a parse error, so every comment in that file is skipped, not just comments near the unsupported statement — a single RLS policy or grant statement in an otherwise-ordinary migration file can zero out that file's comment coverage. This was evaluated against both the currently vendored grammar and `@derekstride/tree-sitter-sql@0.3.11` (its actively maintained successor, which as of 2026-08-12 still carries an explicit `// TODO: policy` and has no `GRANT` production at all); neither parses these statements, and no other verifiable, provenance-checkable Tree-sitter SQL grammar with real Postgres RLS/ACL support was found. A sweep over a Postgres/Supabase-heavy repository should expect a materially incomplete `.sql` inventory for this reason and report it as such, not as an anomaly.
 
-`parsed` rows may feed comment inventory. Any `parse-error` row is incomplete coverage: report it and stop before final ledger creation or replacement. A later run may continue from a fresh full inventory; never imply that partial parser coverage certified a completed sweep. An `unsupported` row is not itself incomplete coverage (see above) — it still gets a disposition from the researcher's whole-workroot inferential inventory, which reads its full text rather than the mechanical extractor's per-comment view.
+`parsed` rows feed comment inventory. A `parse-error` row is incomplete coverage for that file alone — report it and name it in the savings report — but it no longer voids ledger finality for the rest of the workroot. A run against a Postgres/Supabase-heavy repository can hit dozens of RLS/ACL parse errors this way (a field sweep hit 43 `.sql` files) while resolving hundreds of other files cleanly; the ledger records what was resolved and simply leaves the parse-error files uncovered, not the whole sweep. A later run may re-attempt any `parse-error` path from a fresh inventory. An `unsupported` row is not itself incomplete coverage (see above) — it still gets a disposition from the researcher's whole-workroot inferential inventory, which reads its full text rather than the mechanical extractor's per-comment view.
 
 Resolve the Git workroot, then cover the **entire workroot**, not a requested subtree or the diff. Inventory tracked files at that root; do not cross into another repository, a submodule, `.git/`, ignored output, or untracked scratch files.
 
@@ -21,9 +21,9 @@ An eligible unit is human-authored guidance that an agent or maintainer may read
 
 Do not treat executable code, identifiers, string literals, user-visible copy, data, lockfiles, generated/minified/vendor files, licenses, or `.dobby/sweeps.json` as eligible text. A source file enters the inventory only for its comments; its logic is outside the sweep.
 
-The researcher returns one exhaustive row per eligible unit, including: workroot-relative file path; unit kind (`document` or `comment`); cost tier; exact current byte count; candidate, retain, or defer disposition; and a short reason. A candidate names the exact redundant/stale/filler claim and what information remains. A retain names the invariant, rationale, external reference, or audience need that makes it load-bearing. Do not hide a low-value unit by omitting it.
+The researcher returns one row per FILE, not per unit: workroot-relative path, tier, current eligible-text bytes, expected disposition, and any known lever. Per-unit decisions are made inside the lot by the implementor, under the preservation rules below — not enumerated up front. A one-row-per-unit inventory does not scale: a 24,113-comment repository would spend its entire budget writing rows before a single judgment is made. For comment-track files, the extractor's per-file comment-byte totals are the ranking input: group by file/module and order lots by weight (post-process the extractor's JSON with `jq`/`awk` to rank modules). Do not hide a low-value file by omitting it — a file whose units are all retain is still reported, as a retain row with its reason.
 
-## Cost tiers and approval batches
+## Cost tiers, lot sizing, and tracks
 
 Tier context cost, not editorial attractiveness:
 
@@ -33,9 +33,15 @@ Tier context cost, not editorial attractiveness:
 | 2 | Repeatedly reached while working | `CONTEXT.md`, module guidance, operational docs, contributor documentation |
 | 3 | Read only with a file or narrow task | General docs and source/configuration comments |
 
-Make approval batches in tier order. A batch may combine only units with the same tier and similar preservation rule. It must list its complete, disjoint file set, unit-level proposed change or retain, before bytes, projected bytes removed, rough projected tokens (`bytes / 4`, labelled as an estimate), and every preservation constraint. No file may appear in two batches, even when it contains multiple eligible units.
+A lot is **6-8 files chosen by weight** — not a whole tier, not one file at a time. A 47-file lot calibration exhausted one implementor after 13 of 47 files, 430K tokens, and 257 tool calls; 6-8 files is the size a real sweep could carry all the way to a finished, reviewed state. Lot size is a per-lot WORK cap, orthogonal to `workflowRecipe.limits.maxConcurrency`, which instead caps how many lots run concurrently, not how large any one lot is.
 
-Present all batches before writing. The human explicitly approves, rejects, or revises each batch. Rejection is an explicit retain and may be included in a completed manifest; a defer is unresolved and prevents completed-sweep finality. Material revision creates a new proposal that needs approval again. Silence, a general request to "clean it up", or approval of another batch is never approval to write.
+An implementor brief is EITHER comment-trim OR prose densification, never both. A worker briefed for one track that also reworks the other is out of scope even when the diff nets negative bytes — a field lot briefed to trim comments instead reformatted a `CONTEXT.md` into bullets for a net −186 bytes. The two tracks also carry different expected yields; see "Levers and rate calibration" below.
+
+A lot combines only files of the same tier and the same track. It lists its complete, disjoint file set, before bytes, projected bytes removed, rough projected tokens (`bytes / 4`, labelled as an estimate), and every preservation constraint. No file may appear in two lots.
+
+## Policy approval
+
+Approval happens once, up front, at the level of **scope and aggressiveness** — which tracks run, how aggressive the trim is, and what is explicitly excluded — not per lot; a repository that produces lots by the hundred can never clear a per-lot gate. Lots then run without individual pre-write approval. Return to the human only when: the policy changes (redirecting budget between tracks, changing aggressiveness), a lot proposes something outside the approved scope, or the sweep reaches a blocked/partial outcome (see "Partial, blocked, and error outcomes" below). Silence, a general request to "clean it up", or approval of an unrelated policy question is never approval to write. An explicit rejection is an explicit retain; a defer is unresolved.
 
 ## First full sweep and ledger selection
 
@@ -48,7 +54,7 @@ A valid ledger has exactly this semantic shape:
   "schemaVersion": 1,
   "files": {
     "relative/path.md": {
-      "trim-context": { "contentHash": "sha256:<64 lowercase hex characters>", "rulesVersion": "human-text-v1" },
+      "trim-context": { "contentHash": "sha256:<64 lowercase hex characters>", "rulesVersion": "human-text-v2" },
       "anti-slop": { "contentHash": "sha256:<64 lowercase hex characters>", "rulesVersion": "contextual-slop-v1" }
     }
   },
@@ -72,20 +78,20 @@ Use these states, evaluated against this skill's own sub-key wherever it appears
 
 | Ledger state (for this skill) | Required action |
 | --- | --- |
-| No `.dobby/sweeps.json` file on disk | Enter the **first full sweep**: inventory every eligible unit in the whole workroot and propose every candidate/retain decision. Do not call coverage complete or create a ledger until each unit is resolved. |
-| File exists, but this skill has no sub-key in any `files` entry yet (its first run against a ledger the other skill created) | Enter the first full sweep for this skill alone; treat the other skill's sub-keys as already-covered and untouched. |
-| This skill's sub-key present for a path, `rulesVersion` matches | Inventory all eligible units; only paths whose sub-key for this skill is missing or whose current bytes do not match the stored `contentHash` require a new decision. Still report unchanged sub-key entries as already covered. |
+| No `.dobby/sweeps.json` file on disk | Enter the **first full sweep**: inventory the whole workroot and lot eligible files by weight. Write this skill's sub-key for every file this run resolves — changed or explicit-retain. A file not reached this run gets no sub-key; the ledger is written incrementally as lots pass review, never blocked waiting for every eligible file to resolve. |
+| File exists, but this skill has no sub-key in any `files` entry yet (its first run against a ledger the other skill created) | Enter the first full sweep for this skill alone, same incremental rule; treat the other skill's sub-keys as already-covered and untouched. |
+| This skill's sub-key present for a path, `rulesVersion` matches | Inventory all eligible files; only paths whose sub-key for this skill is missing or whose current bytes do not match the stored `contentHash` require a new decision. Still report unchanged sub-key entries as already covered. |
 | This skill's sub-key present for a path, `rulesVersion` differs | Run the same whole-workroot first full sweep for this skill; a prior rule set cannot certify this one. |
 | Ledger container malformed: invalid JSON, unrecognized top-level key, unknown `schemaVersion`, `files` not an object, or an invalid path key | Fail closed for **both** skills: report the ledger defect and stop before dispatching any writer. Do not replace, repair, or infer from it — the container is shared and cannot be trusted in half. |
 | This skill's own sub-key malformed: invalid `contentHash` format, or missing/invalid `rulesVersion`, wherever it appears for this skill | Fail closed for **this skill only**: report the defect and stop before dispatching any writer for this skill. A malformed sub-key filed under the other skill's name is that skill's problem to surface, not evidence of corruption here. |
 
-A completed first full sweep has an approved trim or explicit-retain decision for every eligible unit. If any unit is deferred, or an approved batch cannot finish, report incomplete coverage and leave this skill's sub-keys untouched. A later run starts the first full sweep again. This deliberate repetition is safer than certifying a partial baseline.
+The ledger records exactly what this run actually swept and independently reviewed. A resolved file — changed by an approved lot, or explicit-retain — gets this skill's sub-key written from reviewed final bytes. A file this run did not reach — parse-error, deferred, blocked, or simply out of this run's budget — gets no sub-key and no coverage claim; the absent-sub-key semantics above already cover it, so no schema change is needed. The savings report (below) names every unresolved file and its reason. The ledger never claims coverage it does not have. This is deliberate: a sweep is incremental by design, and later runs pick up wherever the last run's sub-keys stop, per the table above.
 
 ### Getting a new ledger tracked
 
 Whether `git add -f` is needed depends on whether the path is **tracked by Git**, never on whether the file merely **exists on disk**. A file can exist untracked: `.dobby/` is ignored, so an earlier run that wrote `.dobby/sweeps.json` and then failed its independent review (or was interrupted before the coordinator's force-add) leaves the file sitting on disk, unstaged and untracked, for the next run to find. Treating that on-disk presence as proof of tracking would let the force-add be skipped forever, stranding the ledger outside Git indefinitely. Determine trackedness with a Git query against the path itself (e.g. `git ls-files --error-unmatch -- .dobby/sweeps.json`), not a file-existence check.
 
-If `.dobby/sweeps.json` is **not tracked by Git** — whether no run has ever written it, or an earlier run wrote it but never got it staged — this run's first full sweep (or the sweep that finally completes it) and every approved batch end with a file Git still does not track. After the independent reviewer described in "Writers, reviewers, and final bytes" below validates that file's schema and this skill's own sub-keys and hashes, the **coordinator — never a worker —** runs `git add -f -- .dobby/sweeps.json` exactly once, immediately after that validation, to bring the path under tracking despite the ignore rule. This is the coordinator's one narrow, approved exception to never staging or committing; it applies only when the path was not already tracked, only once per untracked-to-tracked transition, and only after independent review has passed.
+If `.dobby/sweeps.json` is **not tracked by Git** — whether no run has ever written it, or an earlier run wrote it but never got it staged — this run's first full sweep (or the sweep that finally completes it) and every approved lot end with a file Git still does not track. After the independent reviewer described in "Writers, reviewers, and final bytes" below validates that file's schema and this skill's own sub-keys and hashes, the **coordinator — never a worker —** runs `git add -f -- .dobby/sweeps.json` exactly once, immediately after that validation, to bring the path under tracking despite the ignore rule. This is the coordinator's one narrow, approved exception to never staging or committing; it applies only when the path was not already tracked, only once per untracked-to-tracked transition, and only after independent review has passed.
 
 If `.dobby/sweeps.json` is **already tracked by Git** — because an earlier run of this skill or the other sweep skill got it tracked — it is an ordinary tracked path: this skill's reviewed updates to its own sub-keys need no `-f` and are picked up by whatever normal commit flow runs afterward, the same as any other tracked file the sweep changed.
 
@@ -99,37 +105,47 @@ Keep meaning, behavior, and operational safety intact. A trim may remove duplica
 
 Do not send a comment-bearing file to any unrelated writer during the sweep. If another task needs a comment change, stop and defer it to this workflow rather than overlapping ownership.
 
+Two traps force an out-of-bounds change to executable code to fix — retain the comment instead of triggering either: deleting a JSX comment can collapse a fragment and trip `noUselessFragment`; deleting the sole comment inside an otherwise-empty block trips `noEmptyBlockStatements`. Also do not replace content with a cross-pointer (e.g. "see Interface") when the detail lives only in the section being cut — that moves the loss, it does not remove it.
+
 ### `CONTEXT.md` is a contract, not padding
 
 Treat every `CONTEXT.md` as a compact interface document. Preserve its title, purpose, Files, Interface, Invariants, and What's intentionally NOT here sections when present, plus the root glossary and any recorded decision. Do not remove a domain term, public surface, invariant, or intentional deferral merely because code appears to imply it. Its Files section must still describe the actual current file surface; the sweep cannot invent a change to make that true. Keep the headings and condense only redundant prose within their existing meaning.
 
+## Levers and rate calibration
+
+Every lot returns the reusable levers it discovered — a preservation shortcut or a load-bearing structural pattern that will recur in other files of the same track — and the coordinator injects them into subsequent briefs. Field example: a `CONTEXT.md`'s `## Files` section that merely restates `## Interface` and `## Invariants` is redundant repetition already covered under "Preservation rules" above; once that lever was carried forward it produced a consistent ~-12% lot after lot.
+
+Every brief states the expected yield: roughly **5% on code comments, 12-14% on prose**. State explicitly that leaving a file untouched because everything in it is load-bearing is a CORRECT outcome — this exists to stop agents inflating cuts to look productive. Outliers exist and must not re-calibrate expectations: one route directory yielded −31,900 bytes from inline label-comments while the repository's real comment rate outside it was ~5%.
+
 ## Writers, reviewers, and final bytes
 
-After approval, assign one `dobby:implementor` per batch (or per non-overlapping subset). Every brief includes its exact file set, approved units, preservation constraints, and the prohibition on staging, committing, touching other files, or writing the ledger. Writers return the standard structured envelope and record final paths plus before/after bytes.
+After policy approval, assign one `dobby:implementor` per lot. Every brief includes its exact file set, track (comment or prose, never mixed), tier, preservation constraints, expected yield and the "untouched is correct" note (see "Levers and rate calibration" above), any levers carried forward from prior lots, and the prohibition on staging, committing, touching other files, or writing the ledger. Every brief requires the file-editing tools for every edit — never a shell heredoc or a compound shell pipeline; the permission guard in isolated worktrees rejects both, and a worker forced to route around that rejection mid-run is a known stall cause. Writers return the standard structured envelope and record final paths plus before/after bytes.
 
-A `dobby:reviewer` who authored none of those files independently reviews each complete batch. It reads final file bytes and the approval, checks that only permitted human text changed, preservation rules held, and the reported saving is honest. A review finding returns only to the implementing owner; the corrected file set gets another independent review. Do not substitute an implementor's self-check, a diff skim, or the coordinator's judgment for this review.
+Verify the hard invariant — **zero executable lines changed** — mechanically, per lot, before any human-judgment review: a filtered diff must come back empty, e.g. `git diff -U0 -- '<lot's file set>' | grep -E '^[+-]' | grep -vE '<comment-syntax patterns for the files in scope>'`. This is cheap, deterministic, and caught every violation in the field session that used it.
 
-After every approved batch passes, assign a separate implementor to build the manifest from the reviewed final bytes, writing only this skill's own sub-key (and, for `anti-slop`, its own `metrics` sub-key) inside the shared `.dobby/sweeps.json`; every other skill's existing entries pass through byte-for-byte untouched. It records all resolved eligible files under this skill's sub-key: changed, explicit-retain, and previously covered unchanged files that remain in scope. It omits deferred files. A different reviewer validates the ledger's top-level schema, this skill's own `rulesVersion`, sorted paths and sub-keys, and every final-byte hash under this skill's sub-key before ledger finality — and confirms no other skill's sub-key changed. This writer also never stages or commits — when `.dobby/sweeps.json` is not yet tracked by Git, getting it staged is the coordinator's job, per "Getting a new ledger tracked" above, not this writer's.
+Reserve the independent `dobby:reviewer` for what a diff cannot decide: whether surviving text still carries the same action, boundary, and reason, and whether load-bearing content was preserved. Every prose/`CONTEXT.md` lot gets this review; a comment lot only needs it when its mechanical check is not clean. The reviewer must have authored none of the reviewed files. A review finding returns only to the implementing owner; the corrected file set gets another independent review (and, if bytes changed, a fresh mechanical check). Do not substitute an implementor's self-check, a diff skim, or the coordinator's judgment for either check.
+
+Once every lot that needed review has passed it, and every lot resolved purely by a clean mechanical check is done, assign a separate implementor to build the manifest from the reviewed final bytes, writing only this skill's own sub-key (and, for `anti-slop`, its own `metrics` sub-key) inside the shared `.dobby/sweeps.json`; every other skill's existing entries pass through byte-for-byte untouched. It records every file this run resolved under this skill's sub-key: changed and explicit-retain. It omits files this run did not resolve — parse-error, deferred, blocked, or not yet reached — those get no sub-key and are named in the savings report instead. A different reviewer validates the ledger's top-level schema, this skill's own `rulesVersion`, sorted paths and sub-keys, and every final-byte hash under this skill's sub-key before ledger finality — and confirms no other skill's sub-key changed. This writer also never stages or commits — when `.dobby/sweeps.json` is not yet tracked by Git, getting it staged is the coordinator's job, per "Getting a new ledger tracked" above, not this writer's.
 
 ## Partial, blocked, and error outcomes
 
-Treat a blocked/malformed writer or reviewer result, an out-of-scope edit, a hash mismatch, unresolved review finding, or interrupted batch as incomplete:
+Treat a blocked/malformed writer or reviewer result, an out-of-scope edit, a hash mismatch, or an unresolved review finding as incomplete for the lot it touches:
 
-1. Stop dispatching later writes and do not auto-revert any bytes already written.
-2. Preserve the prior ledger unchanged; do not write a partial manifest or mark changed files covered.
+1. Stop dispatching further writes into that lot's files; do not auto-revert any bytes already written. A blocked lot does not retroactively unblock lots that already passed — those remain eligible for this run's ledger write.
+2. When the manifest-writing step runs, it records every file this run resolved and independently reviewed (or cleanly mechanically checked); it omits a blocked or unresolved lot's files entirely — no sub-key, not a partial or dishonest one. If the sweep stops before that step ever runs, no new sub-keys are written this run and the prior ledger is unchanged.
 3. Report each changed, unreviewed, reviewed, rejected, and unstarted unit with its owner/result and the exact blocker.
-4. Ask the human whether to repair through the responsible worker or leave the sweep incomplete. A resumed sweep re-inventories final bytes and re-approves any changed proposal.
+4. Ask the human whether to repair the blocked lot through the responsible worker or leave those files unresolved for a later run. A resumed run re-inventories final bytes for any changed proposal it re-attempts.
 
-A manifest writer or manifest reviewer failure follows the same rule: no new ledger finality for this skill's sub-keys; the other skill's existing entries are unaffected either way. A missing `.dobby/sweeps.json` file is not an error; it is the first-full-sweep case above. When the path was not already tracked by Git, a failed manifest write or review also means the coordinator never runs the one-time `git add -f`: without independent review passing, the path stays untracked for the next run to re-check — even if the failed write left a file sitting on disk. When the path was already tracked by Git (by the other skill or an earlier successful run), a failed write or review only leaves this skill's own sub-keys unfinalized — the path's tracking status is unaffected.
+A manifest writer or manifest reviewer failure follows the same rule: no new ledger finality for this skill's sub-keys this run; the other skill's existing entries are unaffected either way. A missing `.dobby/sweeps.json` file is not an error; it is the first-full-sweep case above. When the path was not already tracked by Git, a failed manifest write or review also means the coordinator never runs the one-time `git add -f`: without independent review passing, the path stays untracked for the next run to re-check — even if the failed write left a file sitting on disk. When the path was already tracked by Git (by the other skill or an earlier successful run), a failed write or review only leaves this skill's own sub-keys unfinalized — the path's tracking status is unaffected.
 
 ## Savings report
 
 Finish with a compact, auditable report. Separate projected from actual savings and include, by tier and total:
 
-- eligible files/units, changed files/units, and explicit retains/deferred/rejected counts;
+- eligible files, changed files, and explicit retains/deferred/rejected counts;
 - before and final eligible-text bytes, bytes removed, and estimated tokens removed (`bytes / 4`);
 - comment and `CONTEXT.md` files changed, with retained safety/contract reasons;
-- this skill's own sub-key ledger state before/after, its `rulesVersion`, and whether its coverage is complete; and
-- every blocker, partial write, or unit deliberately left outside the manifest.
+- this skill's own sub-key ledger state before/after and its `rulesVersion`; and
+- every unresolved file by name and reason — parse-error, deferred, blocked, or out of this run's budget. Never omit a name to make coverage look further along than it is.
 
 Never present a partial sweep as a completed saving or a final ledger.
