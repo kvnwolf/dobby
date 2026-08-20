@@ -41,7 +41,12 @@ useSpawnBudget();
 //      even though the file itself was already in the record, and even when
 //      the per-file COUNT of failing tests stays the same (one test fixed,
 //      a different one breaks);
-//   9. an OLD-format record (bare suite paths, pre-dating per-test identity)
+//   9. a DUPLICATE identity (two tests sharing one file+fullName token, which
+//      vitest does not forbid) is safe: the record carries a COUNT per
+//      identity, not just membership, so one recorded occurrence exempts only
+//      one current failure — a second failure landing under the exact same
+//      name is still new and still surfaces;
+//   10. an OLD-format record (bare suite paths, pre-dating per-test identity)
 //      never crashes the gate — it is treated as no record at all.
 //
 // INDEPENDENT SOURCES for every expected value here:
@@ -254,6 +259,23 @@ const ALPHA_TEST_B: NamedFailure = {
   file: "src/alpha.test.ts",
   message: "AssertionError: expected 10 to be 11",
   name: "alpha › test B",
+};
+
+// A DUPLICATE identity (same file, same `fullName`) worn by two DIFFERENT
+// failures — the shape slice 9 exists to pin. Nothing about vitest forbids
+// two tests sharing a title (two `it("does the thing")` in one describe, or
+// two describes that flatten to the same full name); their messages differ
+// only so the fixture can tell, by eye, that they really are two rows.
+const DUPLICATE_NAME = "alpha › duplicate title";
+const ALPHA_DUP_FIRST: NamedFailure = {
+  file: "src/alpha.test.ts",
+  message: "AssertionError: expected 1 to be 2",
+  name: DUPLICATE_NAME,
+};
+const ALPHA_DUP_SECOND: NamedFailure = {
+  file: "src/alpha.test.ts",
+  message: "AssertionError: expected 8 to be 9",
+  name: DUPLICATE_NAME,
 };
 
 // --- observers --------------------------------------------------------------
@@ -562,7 +584,63 @@ describe("run() — check --baseline reports a NEW failing test even inside an a
 });
 
 // ---------------------------------------------------------------------------
-// Slice 9: a record written by the format that predates this fix (bare suite
+// Slice 9 (the P1 this file exists to pin): a DUPLICATE identity. Two
+// DIFFERENT tests sharing one file+fullName token collapse to ONE entry in the
+// record's naive reading — a record keyed on membership alone could not tell
+// "the recorded failure is still the only one" from "a second, brand-new
+// failure landed under the exact same name". The fix must count occurrences:
+// one recorded, two failing now, one of them is new and must surface.
+// ---------------------------------------------------------------------------
+describe("run() — check --baseline reports a NEW failure sharing an identity with a recorded one", () => {
+  it("fails the gate when a second test fails under the SAME name as the recorded one", async () => {
+    const { repo, failingTests } = makeBaselineRepo();
+    failingTests([ALPHA_DUP_FIRST]);
+    const recorded = await run(["baseline", "record"], repo);
+    expect(recorded.exitCode).toBe(0);
+    // Now TWO tests fail under the identical identity: the recorded one
+    // (unchanged) plus a brand-new one wearing the same title.
+    failingTests([ALPHA_DUP_FIRST, ALPHA_DUP_SECOND]);
+
+    const result = await run(["check", "--baseline", "--no-cache"], repo);
+    // An identity keyed on membership alone (`Set.has`) would see the token
+    // already recorded and exempt BOTH occurrences — a false green over a
+    // live regression. The fix must fail the gate and name the file.
+    expect(result.exitCode).toBe(1);
+    expect(combined(result)).toContain("src/alpha.test.ts");
+    expect(combined(result)).toContain("test: 1 suite(s) failed");
+  });
+
+  it("stays silent when only the single recorded occurrence remains (keep-working case)", async () => {
+    const { repo, failingTests } = makeBaselineRepo();
+    failingTests([ALPHA_DUP_FIRST]);
+    await run(["baseline", "record"], repo);
+    failingTests([ALPHA_DUP_FIRST]);
+
+    const result = await run(["check", "--baseline", "--no-cache"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(combined(result)).not.toContain("src/alpha.test.ts");
+  });
+
+  it("stays silent when BOTH duplicate occurrences are recorded and both are still failing", async () => {
+    // Pins the record side of the fix, not just the check side: if the write
+    // path ever went back to de-duplicating the multiset (`[...new
+    // Set(tests)]`), the record below would carry the token once, the check
+    // budget would be 1 against 2 still-failing duplicates, and this would go
+    // falsely RED — a suite failing exactly as recorded must read as a pass.
+    const { repo, failingTests } = makeBaselineRepo();
+    failingTests([ALPHA_DUP_FIRST, ALPHA_DUP_SECOND]);
+    const recorded = await run(["baseline", "record"], repo);
+    expect(recorded.exitCode).toBe(0);
+    failingTests([ALPHA_DUP_FIRST, ALPHA_DUP_SECOND]);
+
+    const result = await run(["check", "--baseline", "--no-cache"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(combined(result)).not.toContain("src/alpha.test.ts");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 10: a record written by the format that predates this fix (bare suite
 // paths, no per-test identity — planted directly at `.dobby/baseline.json`,
 // since no command still writes that shape) must not crash the gate. It is
 // treated exactly like NO record at all: everything counts, and the run says

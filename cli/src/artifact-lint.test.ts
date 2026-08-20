@@ -125,6 +125,7 @@ const SAYS_CHECKLIST = /acceptance checklist/i;
 const SAYS_LINK = /link/i;
 const SAYS_NESTED_REFERENCE = /detail\.md|deeper\.md/;
 const SAYS_AREA_PATH = /real path|does not exist/i;
+const SAYS_AREA_CANONICAL = /canonically|canonical/i;
 
 // ===========================================================================
 // FIXTURES — the `## Spec` artifact.
@@ -525,6 +526,66 @@ describe("dobby spec lint — Affected areas as real paths", () => {
     const result = await run(["spec", "lint"], root);
     expect(result.exitCode).toBe(1);
     expect(reportOf(result)).toMatch(SAYS_AREA_PATH);
+  });
+
+  // `resolve()` maps every alias spelling below onto the SAME real target as
+  // `cli/src/run.ts` (ROW_1's own area, a path this task-table's fixture lets
+  // exist-by-creation), which is exactly the trap: existence alone would pass
+  // all of them, and each would then read as a DIFFERENT area to the dispatch
+  // protocol's plain string comparison, letting two tasks alias one file
+  // under different spellings and dodge the overlap check entirely.
+  it("reports a doubled separator as a non-canonical alias of the real path", async () => {
+    const doubled =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | cli/src//run.ts | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(withTable(taskTable([ROW_1, ROW_2, doubled])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    const report = reportOf(result);
+    expect(report).toMatch(SAYS_AREA_CANONICAL);
+    expect(report).toContain("cli/src/run.ts");
+  });
+
+  it("reports an interior `..` segment as a non-canonical alias of the real path", async () => {
+    const dotdot =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | cli/nope/../src/run.ts | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(withTable(taskTable([ROW_1, ROW_2, dotdot])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    const report = reportOf(result);
+    expect(report).toMatch(SAYS_AREA_CANONICAL);
+    expect(report).toContain("cli/src/run.ts");
+  });
+
+  it("reports an absolute path standing in for the same relative one as a non-canonical alias", async () => {
+    // The absolute spelling can only be written once `root` is known, so this
+    // repo is created first with the clean two-row table, then its STATE.md is
+    // overwritten in place with the third row naming `root`'s own absolute path.
+    const root = makeSpecRepo(withTable(taskTable([ROW_1, ROW_2])));
+    const absoluteArea = join(root, "cli/src/run.ts");
+    const aliasRow = `| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | ${absoluteArea} | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |`;
+    writeFileSync(
+      join(root, "STATE.md"),
+      stateDoc(specBody(withTable(taskTable([ROW_1, ROW_2, aliasRow]))))
+    );
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    expect(reportOf(result)).toMatch(SAYS_AREA_CANONICAL);
+  });
+
+  it("still accepts a leading `./` and a trailing `/` — the two spellings the dispatch protocol itself normalises away", async () => {
+    const leadingDot =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | ./cli/src/run.ts | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(withTable(taskTable([ROW_1, ROW_2, leadingDot])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(0);
+
+    const trailingSlash =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | cli/src/ | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const secondRoot = makeSpecRepo(
+      withTable(taskTable([ROW_1, ROW_2, trailingSlash]))
+    );
+    const secondResult = await run(["spec", "lint"], secondRoot);
+    expect(secondResult.exitCode).toBe(0);
   });
 });
 

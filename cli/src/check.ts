@@ -140,14 +140,19 @@ const SHORT_HASH_LENGTH = 8;
 // requested (a plain gate, judged against the whole tree, exactly as before);
 // null when it WAS requested but no record exists (every suite counts, and the
 // run says so explicitly rather than passing in silence); an array (possibly
-// empty) of opaque per-TEST identity tokens (`testIdentity` below —
-// file+fullName, never inspected outside this module) when a record exists —
-// tests in it are dropped from the test step's failures before the summary and
-// the exit code are decided, so only what THIS run newly broke is reported,
-// including a brand-new failure inside an already-red file. A recorded
-// baseline never reaches this parameter on a call that omitted `--baseline` —
-// the plain gate is never softened by it (the commit / pre-push forms of the
-// gate always pass undefined).
+// empty, possibly carrying the SAME token more than once) of opaque per-TEST
+// identity tokens (`testIdentity` below — file+fullName, never inspected
+// outside this module) when a record exists. Two DIFFERENT tests can share one
+// identity token — vitest does not forbid duplicate titles in the same file —
+// so the array is a MULTISET, not a set: it is tallied into per-identity
+// counts (`buildExemptionCounts` below) and each occurrence exempts exactly
+// ONE matching failure from the current run, in encounter order. A count of 1
+// against 2 current failures under that identity exempts one and reports the
+// other as new — the same "only what THIS run newly broke is reported" rule a
+// unique identity already got, now holding even when identity alone cannot
+// tell two tests apart. A recorded baseline never reaches this parameter on a
+// call that omitted `--baseline` — the plain gate is never softened by it (the
+// commit / pre-push forms of the gate always pass undefined).
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: enumeration, not tangled logic — a flat switch dispatching 7 independent gate-step handlers (biome/tsc/knip/conventions/build/test/extra), several of which fatal-return from check(); extracting them would thread shared accumulators + fatal-return plumbing through 7 helpers and regress a load-bearing, tested executor
 export function check(
   files: string[],
@@ -262,13 +267,16 @@ export function check(
   let extrasStopped = false;
 
   // THE GREEN BASELINE (see the `baselineRecord` doc above `check()`). Absent
-  // (`undefined`) => baseline mode is OFF: the exemption set stays empty and no
-  // note is added — the plain gate is judged exactly as before. Requested but no
-  // record (`null`) => everything still counts (the exemption set stays empty),
-  // but the run says so explicitly rather than filtering — or passing — in
-  // silence. A record (`string[]`, possibly empty) => those suites are exempt.
+  // (`undefined`) => baseline mode is OFF: the exemption counts stay empty and
+  // no note is added — the plain gate is judged exactly as before. Requested
+  // but no record (`null`) => everything still counts (the exemption counts
+  // stay empty), but the run says so explicitly rather than filtering — or
+  // passing — in silence. A record (`string[]`, possibly empty, possibly
+  // repeating a token) => tallied into per-identity counts (see
+  // `buildExemptionCounts`), so a duplicated identity exempts only as many
+  // current failures as were actually recorded under it.
   const baselineMode = baselineRecord !== undefined;
-  const baselineExempt = new Set(baselineRecord ?? []);
+  const baselineExempt = buildExemptionCounts(baselineRecord ?? []);
   if (baselineMode && baselineRecord === null) {
     notes.push({
       raw: null,
@@ -1148,20 +1156,24 @@ function runBuild(
 // resolver invariant) — via a cheap `node --version` probe. When the fallback
 // runtime is used and vitest fails, the note names the runtime so a bun-runtime
 // failure is diagnosable rather than looking like a genuine test failure.
-// `baselineExempt` is the GREEN BASELINE's set of per-TEST identity tokens
+// `baselineExempt` is the GREEN BASELINE's per-TEST identity tokens
 // (baseline.ts — `file<SEP>fullName`, opaque outside this module) that were
-// already failing before this task started — empty when `check --baseline` was
-// not requested, or when it was but no record exists (in which case the caller
-// has ALREADY pushed the "no record" note; here every suite counts, same as a
-// plain run). Exemption is per TEST, not per FILE: a suite already in the
-// record only drops the SPECIFIC failing tests it recorded, so a NEW failure in
-// an already-red file still surfaces. A failure is dropped from the parsed set
-// BEFORE the summary is built and BEFORE the exit code is decided, so "only
-// newly-failing tests are reported" holds for both.
+// already failing before this task started, tallied into a COUNT per identity
+// (`buildExemptionCounts`) — empty when `check --baseline` was not requested,
+// or when it was but no record exists (in which case the caller has ALREADY
+// pushed the "no record" note; here every suite counts, same as a plain run).
+// Exemption is per TEST, not per FILE: a suite already in the record only
+// drops the SPECIFIC failing tests it recorded, so a NEW failure in an
+// already-red file still surfaces. It is also per OCCURRENCE, not per distinct
+// identity: two tests can share one identity token (vitest allows duplicate
+// titles), so a count of 1 recorded against 2 current failures under that
+// token exempts only one of them — the other is new and surfaces. A failure is
+// dropped from the parsed set BEFORE the summary is built and BEFORE the exit
+// code is decided, so "only newly-failing tests are reported" holds for both.
 function runTest(
   root: string,
   cfgArgs: string[],
-  baselineExempt: ReadonlySet<string>
+  baselineExempt: ReadonlyMap<string, number>
 ): { note: CheckNote | null; exitCode: number; spawned: boolean } {
   const bin = resolveConsumerBin(root, "vitest", "vitest");
   if (bin === null) {
@@ -1204,12 +1216,25 @@ function runTest(
     // listed files answer for what is NEW, never what was inherited. Keyed on
     // file+test identity (not file alone), so a second, brand-new failure in an
     // already-red file is never swallowed along with the one the record named.
+    // The budget is spent PER OCCURRENCE (`remaining`, a scratch copy of the
+    // counts): two current failures sharing one identity are told apart by how
+    // many were recorded under it, not by the token alone — the Nth occurrence
+    // beyond the recorded count is never exempt.
     const failures =
       baselineExempt.size === 0
         ? parsed
-        : parsed.filter(
-            (failure) => !baselineExempt.has(testIdentity(failure))
-          );
+        : (() => {
+            const remaining = new Map(baselineExempt);
+            return parsed.filter((failure) => {
+              const identity = testIdentity(failure);
+              const budget = remaining.get(identity) ?? 0;
+              if (budget > 0) {
+                remaining.set(identity, budget - 1);
+                return false;
+              }
+              return true;
+            });
+          })();
     if (failures.length === 0) {
       // Every parsed failure predates this run's baseline record: nothing NEW
       // broke, so the step reads as a pass — same shape as a genuinely green run.
@@ -1235,20 +1260,29 @@ function runTest(
   };
 }
 
-// The TESTS failing RIGHT NOW, each named by its identity token
-// (`testIdentity` below — file+fullName, opaque outside this module) — the SAME
-// vitest resolution/spawn/parse path the gate's own test step uses (`runTest`
-// above), but standalone: `dobby baseline record` (baseline.ts) needs the
-// current failing set independent of a full gate run, and this is the
-// one-directional seam that lets it reuse the parser without check.ts
-// importing baseline.ts back (run.ts resolves the STORED record and hands it
-// to `check()`; baseline.ts calls this to PRODUCE one).
+// The TESTS failing RIGHT NOW, one entry PER FAILURE, each named by its
+// identity token (`testIdentity` below — file+fullName, opaque outside this
+// module) — the SAME vitest resolution/spawn/parse path the gate's own test
+// step uses (`runTest` above), but standalone: `dobby baseline record`
+// (baseline.ts) needs the current failing set independent of a full gate run,
+// and this is the one-directional seam that lets it reuse the parser without
+// check.ts importing baseline.ts back (run.ts resolves the STORED record and
+// hands it to `check()`; baseline.ts calls this to PRODUCE one).
 //
 // Per-TEST, not per-file: a record built from file paths alone could not later
 // tell "this file's recorded failure is still the same one" from "a second,
 // new failure just joined it" — the exact gap that let a green baseline hide a
 // new break in an already-red suite. baseline.ts stores these tokens verbatim
 // and derives the human-facing file list from `testIdentityFile`.
+//
+// NOT deduplicated — a MULTISET, only sorted. Two different tests can produce
+// the identical token (vitest does not forbid two tests sharing a `fullName`
+// in one file), and collapsing the list to a Set would then make one recorded
+// occurrence exempt BOTH forever: the one that stayed broken and any new test
+// that later fails under the same name. Keeping every occurrence lets
+// `buildExemptionCounts` (check.ts) — and `runTest` above — tell "recorded
+// once, still exactly one failure" from "recorded once, now two failures
+// under that name" apart.
 //
 // Degrades to an EMPTY list rather than an error whenever nothing could actually
 // run — no vitest capability, no consumer binary installed, output that could not
@@ -1283,7 +1317,9 @@ export function collectFailingTests(root: string): string[] {
   if (failures === null) {
     return [];
   }
-  return [...new Set(failures.map((failure) => testIdentity(failure)))].sort();
+  return failures
+    .map((failure) => testIdentity(failure))
+    .sort((a, b) => a.localeCompare(b));
 }
 
 // The separator joining a failure's file and test name into one opaque
@@ -1309,6 +1345,20 @@ function testIdentity(failure: { file: string; name: string }): string {
 export function testIdentityFile(identity: string): string {
   const index = identity.indexOf(TEST_IDENTITY_SEPARATOR);
   return index === -1 ? identity : identity.slice(0, index);
+}
+
+// Tally a (possibly duplicate-carrying) list of identity tokens into a count
+// per token — the exemption budget `runTest` spends one occurrence at a time.
+// This is the fix for the P1 this module closes: identity alone cannot tell
+// two DIFFERENT tests apart when they share one token (vitest does not forbid
+// duplicate `fullName`s in a file), but the COUNT can — one recorded against
+// two currently failing under that token means one of them is new.
+function buildExemptionCounts(record: readonly string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const identity of record) {
+    counts.set(identity, (counts.get(identity) ?? 0) + 1);
+  }
+  return counts;
 }
 
 // Pick the runtime for the vitest step: prefer NODE (a cheap `node --version`

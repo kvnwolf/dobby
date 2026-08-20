@@ -810,12 +810,36 @@ function normalizeAreaPath(area: string): string {
     : withoutLeading;
 }
 
+// The dispatch protocol's overlap check (build-protocol.md's "Overlapping
+// writers") only strips a leading `./` and a trailing `/` before comparing
+// two areas AS STRINGS — it does not collapse a doubled separator, resolve an
+// interior `..` segment, or reconcile an absolute path against a relative
+// one. `resolve()` maps `src//foo`, `foo/../src/bar`, and an absolute path
+// under the repo root all onto the SAME real target, which is exactly why
+// the existence check below cannot be trusted to also enforce canonical
+// spelling: it would accept every alias silently, and each alias would then
+// read as a DIFFERENT area to the protocol's string comparison, letting two
+// tasks that alias the same file dispatch concurrently. So canonical form is
+// enforced separately, ahead of the existence check: the ONLY spellings
+// `normalizeAreaPath` above leaves distinct on purpose (a leading `./`, a
+// trailing `/`) are exactly the ones the protocol itself normalises away —
+// everything else must already be written the way `resolve()` + `relative()`
+// would rewrite it, or the row is a finding.
+function canonicalAreaPath(root: string, area: string): string {
+  const rel = relative(root, resolve(root, area));
+  return rel === "" ? "." : rel;
+}
+
 // Why an area is not usable, as a finding message, or null when it is fine: an
 // EXISTING file or directory, or one this task will CREATE — recognised by
 // its parent directory already existing (task-decomposition.md's rule: a path
 // a task creates is legitimate as long as its parent already exists). A cell
 // that isn't shaped like a path at all (a comma-mangled fragment of a
-// parenthetical, free prose) is rejected before existence is even checked.
+// parenthetical, free prose) is rejected before existence is even checked,
+// and one that IS shaped like a path but is not written canonically (a
+// doubled separator, an interior `..`, an absolute path standing in for the
+// same relative one) is rejected before existence too — see
+// `canonicalAreaPath` above for why.
 function areaPathProblem(
   root: string,
   rawArea: string,
@@ -824,6 +848,10 @@ function areaPathProblem(
   const area = normalizeAreaPath(rawArea);
   if (!AREA_PATH_SHAPE.test(area)) {
     return `task ${taskId}: \`Affected areas\` names \`${rawArea}\`, which is not a real path — write the directory or file itself; split a parenthetical or description into its own comma-separated area, or drop it`;
+  }
+  const canonical = canonicalAreaPath(root, area);
+  if (canonical !== area) {
+    return `task ${taskId}: \`Affected areas\` names \`${rawArea}\`, which is not written canonically — the dispatch protocol compares areas as literal strings, so a doubled separator, a \`..\` segment, or an absolute path lets two tasks alias the same file under different spellings and dodge the overlap check; write \`${canonical}\` instead`;
   }
   const absolute = resolve(root, area);
   if (existsSync(absolute)) {

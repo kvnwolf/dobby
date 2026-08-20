@@ -38,19 +38,28 @@ function baselinePath(root: string): string {
   return join(root, STATE_DIR, BASELINE_FILE);
 }
 
-// The stored shape: a sorted, de-duplicated list of opaque per-TEST identity
-// tokens — exactly what `collectFailingTests` (check.ts) returns. The key is
-// named `tests`, not `suites`: a record written by the PREVIOUS format (a
-// bare list of suite paths, no test identity) stored it under `suites`, so a
-// `tests` read against it comes back `undefined` and fails the shape check
-// below — falling through to null ("no baseline") rather than being consulted
-// half-understood. That is the deliberate legacy handling this rewrite needs:
-// an old record can't tell "the same test still red" from "a different test in
-// the same file just broke", so it is treated exactly like no record at all,
-// never a crash and never a silent false exemption. Storage layout is
-// otherwise deliberately an implementation detail (no test asserts the raw
-// token shape): the record is meant to be observed only through `record` and
-// `check --baseline`.
+// The stored shape: a sorted list of opaque per-TEST identity tokens — exactly
+// what `collectFailingTests` (check.ts) returns. Deliberately NOT
+// de-duplicated: it is a MULTISET, one entry per failing test at record time.
+// Two DIFFERENT tests can share one identity token (vitest does not forbid two
+// tests with the same `fullName` in a file) — collapsing to a Set would make a
+// single recorded occurrence exempt every current failure under that token
+// forever, hiding a brand-new failure behind an already-fixed one with the
+// same name. `check --baseline` (check.ts) tallies the list back into a count
+// per identity and exempts only that many occurrences, so a duplicated
+// identity is safe: one recorded, two failing now still surfaces one as new.
+//
+// The key is named `tests`, not `suites`: a record written by the PREVIOUS
+// format (a bare list of suite paths, no test identity) stored it under
+// `suites`, so a `tests` read against it comes back `undefined` and fails the
+// shape check below — falling through to null ("no baseline") rather than
+// being consulted half-understood. That is the deliberate legacy handling
+// this rewrite needs: an old record can't tell "the same test still red" from
+// "a different test in the same file just broke", so it is treated exactly
+// like no record at all, never a crash and never a silent false exemption.
+// Storage layout is otherwise deliberately an implementation detail (no test
+// asserts the raw token shape): the record is meant to be observed only
+// through `record` and `check --baseline`.
 interface BaselineFile {
   tests: string[];
 }
@@ -102,7 +111,10 @@ export function readBaselineSuites(root: string): string[] | null {
  */
 function writeBaselineTests(root: string, tests: string[]): string | null {
   ensureExcluded(root);
-  const sorted = [...new Set(tests)].sort();
+  // Sorted, but NOT de-duplicated (see the `BaselineFile` comment above) — a
+  // repeated token is the record of two tests that failed under the same
+  // identity, and `check --baseline` needs the count, not just the name.
+  const sorted = [...tests].sort((a, b) => a.localeCompare(b));
   try {
     mkdirSync(join(root, STATE_DIR), { recursive: true });
     const payload: BaselineFile = { tests: sorted };
