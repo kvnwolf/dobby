@@ -1,15 +1,14 @@
 import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import { browserGuideFor } from "./browser-guide.ts";
+import { join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { detectCapabilities } from "./detect.ts";
+import { detectEnvironment } from "./environment.ts";
 import { resolveBin, resolveWorkroot, runCapture } from "./runner.ts";
 import { dbTasks } from "./tasks.ts";
 
 // Top-level regexes (biome useTopLevelRegex — a literal inside a function recompiles
 // on every call).
 const SCOPED_NAME_RE = /^@[^/]+\/(.+)$/;
-const WHITESPACE_SPLIT_RE = /\s+/;
 
 // Assembles the `dobby env` snapshot: a local picture of the working environment.
 // Pure over its `root` argument plus process.env; every fact is best-effort and
@@ -54,20 +53,23 @@ export interface EnvSnapshot {
 
 // Assemble the environment snapshot for the project at `root` (the caller's cwd).
 export function collectEnv(root: string): EnvSnapshot {
-  const cmux = process.env.CMUX_WORKSPACE_ID || null;
+  // Resolved ONCE — the single CMUX_WORKSPACE_ID read this command makes (see
+  // environment.ts); everything environment-specific below (the browser guide, the
+  // pane refs) reads through it.
+  const environment = detectEnvironment();
   // Resolve the workroot ONCE; every git/portless/cmux spawn below pins to it.
   const workroot = resolveWorkroot(root);
   // Capabilities are read from the CALLER's cwd (a single-package project runs
   // dobby at its root), independent of the git top-level.
   const capabilities = detectCapabilities(root);
-  const panes = discoverPanes(workroot, cmux);
+  const panes = environment.discoverPanes(workroot);
   const devUrl = resolveDevUrl(root, workroot, capabilities);
   return {
     branch: workroot === null ? null : gitBranch(workroot),
-    browserGuide: browserGuideFor(cmux),
+    browserGuide: environment.browserGuide(),
     browserPane: panes.browserPane,
     capabilities,
-    cmux,
+    cmux: environment.cmux,
     config: loadConfig(root)?.ok === true,
     // The same pure map the `db:*` executor resolves through — one source, so the
     // reported names and the runnable commands can never disagree.
@@ -179,104 +181,4 @@ function readManifest(root: string): Manifest | null {
   } catch {
     return null;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Kit pane refs — discovered through cmux's local IPC (never a network probe).
-// When CMUX_WORKSPACE_ID is set, walk the workspace's panes and their surfaces,
-// matching surface titles `dobby-run-<slug>` / `dobby-browser-<slug>` where slug
-// is the workroot directory basename, and report the matching surface refs.
-//
-// Any failure — no cmux workspace, cmux binary absent, access denied, no
-// matching surface — folds to null (env never fails). The exact cmux listing
-// stdout format is runtime-unverified (see research); the parser is deliberately
-// tolerant (scan lines for `<kind>:<ref>` tokens, substring-match titles) and is
-// CI-null regardless (no reachable cmux surface), with live behavior covered by
-// the wrap-stage human smoke.
-// ---------------------------------------------------------------------------
-
-/**
- * Discover the kit's run/browser pane surface refs through cmux's local IPC:
- * match the surfaces titled `dobby-run-<slug>` / `dobby-browser-<slug>` (slug =
- * workroot basename) and return their refs, else null. Any failure (no workspace,
- * cmux absent, no matching surface) folds to null.
- *
- * @public — reused by the `up`/`down` lifecycle (lifecycle.ts): `up` reuses
- * existing kit panes (idempotent), `down` discovers them to close.
- */
-export function discoverPanes(
-  workroot: string | null,
-  cmux: string | null
-): { runPane: string | null; browserPane: string | null } {
-  const none = { browserPane: null, runPane: null };
-  if (cmux === null || workroot === null) {
-    return none;
-  }
-  const slug = basename(workroot);
-  const runTitle = `dobby-run-${slug}`;
-  const browserTitle = `dobby-browser-${slug}`;
-
-  const panes = runCapture("cmux", ["list-panes", "--workspace", cmux], {
-    root: workroot,
-  });
-  if (panes.status !== 0) {
-    return none;
-  }
-  const paneRefs = parseRefs(panes.stdout, "pane");
-  if (paneRefs.length === 0) {
-    return none;
-  }
-
-  let runPane: string | null = null;
-  let browserPane: string | null = null;
-  for (const pane of paneRefs) {
-    const surfaces = runCapture(
-      "cmux",
-      ["list-pane-surfaces", "--workspace", cmux, "--pane", pane],
-      { root: workroot }
-    );
-    if (surfaces.status !== 0) {
-      continue;
-    }
-    for (const line of surfaces.stdout.split("\n")) {
-      if (runPane === null && line.includes(runTitle)) {
-        runPane = refOf(line, "surface");
-      }
-      if (browserPane === null && line.includes(browserTitle)) {
-        browserPane = refOf(line, "surface");
-      }
-    }
-    if (runPane !== null && browserPane !== null) {
-      break;
-    }
-  }
-  return { browserPane, runPane };
-}
-
-// Extract the ref token of `kind` (e.g. "pane" / "surface") from each non-empty
-// line of a cmux listing. cmux "Output defaults to refs" (`pane:3`, `surface:4`);
-// we scan for that token and fall back to the line's first whitespace-delimited
-// field when it is absent (format is runtime-unverified).
-function parseRefs(stdout: string, kind: string): string[] {
-  const refs: string[] = [];
-  for (const line of stdout.split("\n")) {
-    if (line.trim() === "") {
-      continue;
-    }
-    const ref = refOf(line, kind);
-    if (ref !== null) {
-      refs.push(ref);
-    }
-  }
-  return refs;
-}
-
-// The `kind:ref` token in a line (`surface:4`), or the first field as a fallback.
-function refOf(line: string, kind: string): string | null {
-  const token = new RegExp(`${kind}:\\S+`).exec(line);
-  if (token !== null) {
-    return token[0];
-  }
-  const [first] = line.trim().split(WHITESPACE_SPLIT_RE);
-  return first === undefined || first === "" ? null : first;
 }

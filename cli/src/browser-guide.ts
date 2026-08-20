@@ -2,17 +2,18 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// The verification protocol `dobby env` reports as `browserGuide`, so a verifier
+// The verification protocol `dobby env` reports as `browserGuide`, so QA
 // stops rediscovering the UI-driver ladder every run. Two variants, picked by
 // whether a cmux workspace is present (the SAME `CMUX_WORKSPACE_ID` fact
 // `collectEnv` already reports as `cmux`):
 //
-//  - cmux present: the vendored cmux-browser protocol (Rung 1 of the ladder in
-//    plugin/agents/verifier.md) — open, read the URL, snapshot for fresh refs,
-//    act, wait, re-snapshot, stale-ref recovery, script-error recovery. Vendored
-//    unmodified under `vendor/cmux-browser/`, never fetched live (irreproducible,
-//    network-dependent); provenance recorded in `vendor/cmux-browser/PROVENANCE.md`
-//    the way ADR-0027 already records `plugin/skills/trim-context/scripts/vendor/`.
+//  - cmux present: the vendored cmux-browser protocol (Rung 1 of the ladder
+//    described in the root CONTEXT.md glossary) — open, read the URL, snapshot
+//    for fresh refs, act, wait, re-snapshot, stale-ref recovery, script-error
+//    recovery. Vendored unmodified under `vendor/cmux-browser/`, never fetched
+//    live (irreproducible, network-dependent); provenance recorded in
+//    `vendor/cmux-browser/PROVENANCE.md` the way ADR-0027 already records
+//    `plugin/skills/trim-context/scripts/vendor/`.
 //  - no cmux: the non-cmux instructions — Rung 2 (claude-in-chrome) falling back
 //    to Rung 3 (curl-only), mirroring the SAME ladder's later rungs.
 //
@@ -47,8 +48,8 @@ function buildCmuxGuide(): string {
 }
 
 // The non-cmux instructions: Rung 2 (claude-in-chrome) falling back to Rung 3
-// (curl-only), mirroring plugin/agents/verifier.md's UI-driver ladder without
-// naming cmux-browser's own command surface (there is no cmux surface to drive
+// (curl-only), mirroring the SAME ladder's later rungs without naming
+// cmux-browser's own command surface (there is no cmux surface to drive
 // here).
 function buildNonCmuxGuide(): string {
   return [

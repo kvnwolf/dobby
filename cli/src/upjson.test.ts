@@ -286,7 +286,7 @@ describe("run() — `up --json` (machine-readable report)", () => {
   });
 
   it("echoes the cmux workspace id and still reports browserPane null when no browser pane was opened", async () => {
-    // browserPane is MANDATORY (execute's manual-setup gate and the verifier's
+    // browserPane is MANDATORY (execute's manual-setup gate and QA's
     // Rung 1 branch on it): a no-app project opens no browser pane, so the field
     // must be present and null even WITH cmux enrichment active.
     process.env[CMUX] = "cmux-ws-upjson";
