@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { splitCellMembers } from "./buildplan.ts";
 import {
   type CommandContext,
   type CommandResult,
@@ -366,6 +367,21 @@ const BANNED_VERIFY_COMMAND =
 // + `dispatch)`, both of which fail this shape before existence is even
 // checked.
 const AREA_PATH_SHAPE = /^[\w./-]+$/;
+
+// A backtick or asterisk left INSIDE an area value — unlike `_`, which a real
+// snake_case path segment legitimately carries (`splitCellMembers` in
+// buildplan.ts never strips one for exactly that reason), a backtick or
+// asterisk is never part of a real repository path, so any occurrence of
+// either is markdown decoration the author forgot was there. Edge-only
+// occurrences are already gone by the time `areaPathProblem` runs
+// (`splitCellMembers` strips them the same way `build-plan` does, at the
+// EDGES only); an interior one — `` cli/`src`/run.ts `` — is not, because
+// build-plan does not clean those up either. It stays part of the literal
+// string the dispatch protocol compares, so two spellings of the same file
+// (one plain, one with the decoration left in) would silently compare as
+// different areas.
+const INTERIOR_DECORATION = /[*`]/;
+const INTERIOR_DECORATION_G = /[*`]/g;
 
 const NUMBERED_STEP = /^\s*\d+[.)]\s/;
 const FENCE_LINE = /^\s*(?:```|~~~)/;
@@ -782,21 +798,20 @@ function lintRowAreas(
   return findings;
 }
 
-// The raw cell as its member areas: COMMA-split ONLY — `dobby build-plan`'s
-// own area list (`buildplan.ts`'s `splitList`, which the dispatch protocol's
-// overlap check reads) splits on comma alone, so this must match it exactly.
-// Splitting on semicolon too (like `Depends on`'s CELL_SEPARATOR) would bless
-// a cell such as `cli/src; plugin` as two clean paths here while build-plan
-// still emits it as ONE unsplit, non-existent area — clean at spec time,
-// invisible to the overlap check at dispatch, the exact gap this check
-// exists to close. Decoration stripped, blank fragments (a trailing comma's
-// leftover) dropped — but every OTHER fragment kept, `—` included, so it
-// reaches the shape check below and is judged rather than quietly filtered.
+// The raw cell as its member areas — `buildplan.ts`'s `splitCellMembers`
+// directly, NOT a locally re-derived split: that is the exact function `dobby
+// build-plan` itself calls to turn this same cell into `task.areas` (the list
+// the dispatch protocol's overlap check reads), comma-split, edge emphasis
+// stripped. Re-deriving an equivalent-looking split here is exactly how the
+// two drifted before — a different emphasis character class, or a different
+// stripping POSITION, lints one string clean while build-plan emits another,
+// and the overlap check then compares neither. Importing the same function
+// makes that drift structurally impossible rather than merely avoided.
+// `splitCellMembers` keeps every fragment blank ones aside, `—` included, so
+// it reaches the shape check below and is judged rather than quietly
+// filtered — unlike `Depends on`, this column has no "nothing here" value.
 function splitAreaList(value: string): string[] {
-  return value
-    .split(",")
-    .map((entry) => entry.replace(EMPHASIS, "").trim())
-    .filter((entry) => entry !== "");
+  return splitCellMembers(value);
 }
 
 // An area normalised the SAME way the dispatch protocol normalises it before
@@ -846,6 +861,10 @@ function areaPathProblem(
   taskId: string
 ): string | null {
   const area = normalizeAreaPath(rawArea);
+  if (INTERIOR_DECORATION.test(area)) {
+    const clean = area.replaceAll(INTERIOR_DECORATION_G, "");
+    return `task ${taskId}: \`Affected areas\` names \`${rawArea}\`, which still carries markdown emphasis INSIDE the path — build-plan only strips a leading/trailing marker before comparing areas as literal strings, so an interior backtick or asterisk stays part of the compared value and two spellings of the same file compare as different areas; write \`${clean}\` instead`;
+  }
   if (!AREA_PATH_SHAPE.test(area)) {
     return `task ${taskId}: \`Affected areas\` names \`${rawArea}\`, which is not a real path — write the directory or file itself; split a parenthetical or description into its own comma-separated area, or drop it`;
   }

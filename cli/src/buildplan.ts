@@ -757,13 +757,31 @@ const AFFIRMATIVE: ReadonlySet<string> = new Set([
   "✔",
 ]);
 
-// A comma-separated cell as its members, with the "nothing here" spellings
-// dropped — so `—` yields [] rather than a dependency on a task named "—".
-function splitList(cell: string): string[] {
+// A comma-separated cell as its raw members: edge emphasis stripped, trimmed,
+// blank fragments (a trailing comma's leftover) dropped — but every OTHER
+// spelling kept, the `NO_VALUE` ones included. This is the exact string a
+// dependency or an area BECOMES once build-plan reads the cell, and it is the
+// single source of truth for that: `spec lint`'s `Affected areas` check
+// (`artifact-lint.ts`'s `splitAreaList`) imports this directly instead of
+// re-deriving its own emphasis rules, so the string it validates and the
+// string this file emits can never drift apart again. `splitList` below
+// layers the NO_VALUE filter on top, for the cells where "nothing here" is a
+// legitimate answer — areas has no such answer, so `spec lint` keeps every
+// member this returns, `—` included, and judges it instead of dropping it.
+export function splitCellMembers(cell: string): string[] {
   return cell
     .split(",")
     .map((value) => stripEmphasis(value))
-    .filter((value) => !NO_VALUE.has(value.toLowerCase()));
+    .filter((value) => value !== "");
+}
+
+// A comma-separated cell as its members, with the "nothing here" spellings
+// ALSO dropped — so `—` yields [] rather than a dependency on a task named
+// "—". Layered on `splitCellMembers` above; see it for what a member IS.
+function splitList(cell: string): string[] {
+  return splitCellMembers(cell).filter(
+    (value) => !NO_VALUE.has(value.toLowerCase())
+  );
 }
 
 function isAffirmative(cell: string): boolean {

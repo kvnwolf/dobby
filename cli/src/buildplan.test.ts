@@ -306,6 +306,30 @@ describe("build-plan — the spec's task table as dispatch args", () => {
     ]);
   });
 
+  // The single-source-of-truth boundary `spec lint`'s `Affected areas` check
+  // relies on (`artifact-lint.ts`'s `splitAreaList` imports `splitCellMembers`
+  // from THIS file): an area's edge emphasis is stripped, an area's INTERIOR
+  // emphasis is not, ever — stripping it everywhere would silently rename a
+  // legitimate `snake_case` path. Pinned here, on the real emitted `task.areas`
+  // value, so a future edit to this stripping rule cannot land without also
+  // touching the lint check that now depends on it reading the same way.
+  it("strips edge emphasis from an area but leaves an INTERIOR marker as literal path text", async () => {
+    const decorated = `### Tasks
+
+| # | Task | Depends on | Affected areas | Verify recipe |
+|---|------|------------|-----------------|---------------|
+| 1 | Edge emphasis | — | \`cli/src/run.ts\`, **plugin/skills** | Never run → never observed |
+| 2 | Interior emphasis | 1 | cli/\`src\`/run.ts | Never run → never observed |
+`;
+    const decoratedRepo = makePlanRepo({
+      prefix: "dobby-plan-area-emphasis-",
+      spec: decorated,
+    });
+    const built = await plan(decoratedRepo);
+    expect(built.tasks[0]?.areas).toEqual(["cli/src/run.ts", "plugin/skills"]);
+    expect(built.tasks[1]?.areas).toEqual(["cli/`src`/run.ts"]);
+  });
+
   it("leaves decisions and constraints empty for the coordinator to distribute", async () => {
     const built = await plan(repo);
     expect(

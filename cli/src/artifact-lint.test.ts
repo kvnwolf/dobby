@@ -126,6 +126,7 @@ const SAYS_LINK = /link/i;
 const SAYS_NESTED_REFERENCE = /detail\.md|deeper\.md/;
 const SAYS_AREA_PATH = /real path|does not exist/i;
 const SAYS_AREA_CANONICAL = /canonically|canonical/i;
+const SAYS_AREA_EMPHASIS = /markdown emphasis/i;
 
 // ===========================================================================
 // FIXTURES — the `## Spec` artifact.
@@ -586,6 +587,56 @@ describe("dobby spec lint — Affected areas as real paths", () => {
     );
     const secondResult = await run(["spec", "lint"], secondRoot);
     expect(secondResult.exitCode).toBe(0);
+  });
+
+  // The reported case: an emphasis marker around an INTERIOR path segment
+  // (`` cli/`src`/run.ts ``), not the whole cell. `splitCellMembers` (shared
+  // with `dobby build-plan`) strips edge emphasis only, so this backtick pair
+  // survives the split exactly as build-plan would also carry it into
+  // `task.areas` — the lint must see the SAME leftover decoration build-plan
+  // would, and reject it, naming the clean path.
+  it("reports an Affected areas cell whose emphasis wraps an INTERIOR path segment, naming the clean path", async () => {
+    const interiorBacktick =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | cli/`src`/run.ts | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(
+      withTable(taskTable([ROW_1, ROW_2, interiorBacktick]))
+    );
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    const report = reportOf(result);
+    expect(report).toMatch(SAYS_AREA_EMPHASIS);
+    expect(report).toContain("cli/src/run.ts");
+  });
+
+  // The regression this whole fix exists to prevent: `spec lint` and `dobby
+  // build-plan` reading the SAME cell and landing on two DIFFERENT strings —
+  // clean at spec time, a silent alias at dispatch time. This test does not
+  // special-case any one character class; it runs both real commands against
+  // the same fixture and asserts the string one calls clean IS the literal
+  // string the other emits as `task.areas`, for cells written with edge
+  // emphasis in more than one style. If the two parsers ever drift apart
+  // again — a re-widened character class, a re-narrowed one, a split that
+  // moves position — one side of this equality breaks and the test fails,
+  // instead of a reviewer having to find it by hand a fourth time.
+  it("keeps `spec lint`'s accepted Affected areas spelling identical to what `dobby build-plan` emits as `task.areas`, for every edge-emphasis style", async () => {
+    const backtickedWhole =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | `cli/src/run.ts` | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const boldedWhole =
+      "| 4 | Artifact checks B | The map, wizard and arch-report artifact checks. | 1 | **cli/src/preflight.ts** | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(
+      withTable(taskTable([ROW_1, ROW_2, backtickedWhole, boldedWhole]))
+    );
+
+    const lintResult = await run(["spec", "lint"], root);
+    expect(lintResult.exitCode, reportOf(lintResult)).toBe(0);
+
+    const planResult = await run(["build-plan", "--json"], root);
+    expect(planResult.exitCode, planResult.stderr).toBe(0);
+    const plan = JSON.parse(planResult.stdout) as {
+      tasks: { areas: string[] }[];
+    };
+    expect(plan.tasks[2]?.areas).toEqual(["cli/src/run.ts"]);
+    expect(plan.tasks[3]?.areas).toEqual(["cli/src/preflight.ts"]);
   });
 });
 
