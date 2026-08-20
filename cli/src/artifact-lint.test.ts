@@ -124,6 +124,7 @@ const SAYS_LINES = /line/i;
 const SAYS_CHECKLIST = /acceptance checklist/i;
 const SAYS_LINK = /link/i;
 const SAYS_NESTED_REFERENCE = /detail\.md|deeper\.md/;
+const SAYS_AREA_PATH = /real path|does not exist/i;
 
 // ===========================================================================
 // FIXTURES — the `## Spec` artifact.
@@ -248,6 +249,14 @@ function withTable(table: string): Sections {
   return withSection("Tasks", table);
 }
 
+// The `Affected areas` lint requires a real path — `cli/src/run.ts`,
+// `cli/src/artifact-lint.ts` and `cli/src/preflight.ts` (ROW_1..3 below) never
+// exist in a throwaway scratch repo, only their shared parent does, so every
+// spec fixture creates `cli/src` up front. This is deliberate, not incidental:
+// it doubles as the fixture proving the "path a task will CREATE" allowance —
+// the directory exists, the `.ts` files inside it do not.
+const AREA_PARENT_FILES: Record<string, string> = { "cli/src/.gitkeep": "" };
+
 // A scratch repo holding a STATE.md with the given spec sections. `vitest: false`
 // drops the dependency, which is what turns the `Test-first` column from required
 // into absent-by-design (the capability comes from the shared detector).
@@ -258,7 +267,7 @@ function makeSpecRepo(
   const devDependencies =
     opts.vitest === false ? {} : { vitest: "^3.2.0" as string };
   return makeScratchRepo({
-    files: { "STATE.md": stateDoc(specBody(sections)) },
+    files: { ...AREA_PARENT_FILES, "STATE.md": stateDoc(specBody(sections)) },
     pkg: { devDependencies, name: "fixture-project", private: true },
     prefix: "dobby-artifact-spec-",
     track: scratchDirs,
@@ -291,7 +300,10 @@ describe("dobby spec lint — a well-formed spec", () => {
 
   it("lints the file named as a positional argument", async () => {
     const root = makeScratchRepo({
-      files: { "plan.md": stateDoc(specBody(CLEAN_SECTIONS)) },
+      files: {
+        ...AREA_PARENT_FILES,
+        "plan.md": stateDoc(specBody(CLEAN_SECTIONS)),
+      },
       pkg: { devDependencies: { vitest: "^3.2.0" }, name: "fixture-project" },
       prefix: "dobby-artifact-spec-",
       track: scratchDirs,
@@ -427,6 +439,92 @@ describe("dobby spec lint — the task table", () => {
     const result = await run(["spec", "lint"], root);
     expect(result.exitCode).toBe(1);
     expect(reportOf(result)).toMatch(SAYS_TABLE);
+  });
+});
+
+// ===========================================================================
+// Slice 3b — `Affected areas` as real repository paths. The clean fixture
+// (CLEAN_TABLE, above) already doubles as the "path a task will CREATE"
+// proof: `cli/src` exists in every spec fixture (AREA_PARENT_FILES) but
+// `cli/src/run.ts`, `cli/src/artifact-lint.ts` and `cli/src/preflight.ts`
+// (ROW_1..3) do not — that fixture staying clean IS the assertion that a
+// nonexistent path with an existing parent passes.
+// ===========================================================================
+
+describe("dobby spec lint — Affected areas as real paths", () => {
+  it("accepts an area that already exists in the repo", async () => {
+    const existing =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | STATE.md | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(withTable(taskTable([ROW_1, ROW_2, existing])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("reports an area whose parent directory does not exist either", async () => {
+    const nowhere =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | cli/nonexistent/preflight.ts | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(withTable(taskTable([ROW_1, ROW_2, nowhere])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    expect(reportOf(result)).toMatch(SAYS_AREA_PATH);
+  });
+
+  it("reports a bare label that names no real path in the repo", async () => {
+    const bare =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | dispatch | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(withTable(taskTable([ROW_1, ROW_2, bare])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    const report = reportOf(result);
+    expect(report).toMatch(SAYS_AREA_PATH);
+    expect(report).toContain("dispatch");
+  });
+
+  it("splits an Affected areas cell on comma ONLY, matching `dobby build-plan`'s own list parsing — a semicolon-joined cell is one bad fragment, not two good ones", async () => {
+    // `dobby build-plan` (`buildplan.ts`'s `splitList`, which the dispatch
+    // protocol's overlap check reads) splits areas on comma alone. If this
+    // lint split on semicolon too, `cli/src; plugin` would lint clean as two
+    // real paths while build-plan still emits it as ONE unsplit, nonexistent
+    // area — clean at spec time, invisible to the overlap check at dispatch.
+    const semicolonJoined =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | cli/src; plugin | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(
+      withTable(taskTable([ROW_1, ROW_2, semicolonJoined]))
+    );
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    const report = reportOf(result);
+    expect(report).toMatch(SAYS_AREA_PATH);
+    expect(report).toContain("cli/src; plugin");
+  });
+
+  it("reports a parenthetical description mangled into two fragments by the same comma that separates areas", async () => {
+    // A real example from this repo's own plan: `plugin/skills (research,
+    // dispatch)` splits — the SAME comma the column uses between areas — into
+    // `plugin/skills (research` and `dispatch)`, neither of which is shaped
+    // like a path.
+    const parenthetical =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | plugin/skills (research, dispatch) | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(
+      withTable(taskTable([ROW_1, ROW_2, parenthetical]))
+    );
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    const report = reportOf(result);
+    expect(report).toMatch(SAYS_AREA_PATH);
+    expect(report).toContain("plugin/skills (research");
+  });
+
+  it("reports the `—` no-dependency marker in an Affected areas cell as a bad path rather than dropping it silently", async () => {
+    // Unlike `Depends on`, `Affected areas` has no "nothing here" spelling —
+    // every task must declare real ground, so `—` fails like any other
+    // non-path instead of vanishing into zero areas checked.
+    const noArea =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | — | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(withTable(taskTable([ROW_1, ROW_2, noArea])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    expect(reportOf(result)).toMatch(SAYS_AREA_PATH);
   });
 });
 

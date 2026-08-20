@@ -440,6 +440,30 @@ describe("the dispatch protocol — scheduling", () => {
     ).toBe(true);
   });
 
+  it("states that spec-time lint now prevents two tasks describing the same file under unrelated labels", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /affected areas|\bareas\b/i,
+        /spec lint/i,
+        /real (?:repository )?path/i
+      ),
+      "`dobby spec lint` requires every area to be a real path, so unrelated prose labels for the same file can no longer both pass — the residual gap narrows to files a task never declared at all"
+    ).toBe(true);
+  });
+
+  it("narrows the residual gap to a file a task never declared, now that unrelated labels are caught at spec time", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /affected areas|\bareas\b/i,
+        /irreducible|residual/i,
+        /never declared/i
+      ),
+      "what remains after spec-time lint is genuinely irreducible: no static comparison can know what a task will open before it opens it"
+    ).toBe(true);
+  });
+
   it("names the serialised Exit gate as detection, not prevention, for that residual gap", () => {
     expect(
       statesJoinedRule(readProtocol(), /exit gate/i, /detect/i, /prevent/i),

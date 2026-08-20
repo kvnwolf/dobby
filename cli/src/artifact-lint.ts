@@ -20,7 +20,8 @@ import { resolveAsset, resolveWorkroot, runCapture } from "./runner.ts";
 // a nonzero exit) and differ only in the inventory:
 //
 //   - `spec lint`        — the `###` sub-headings, the task table, the
-//     `Manual verify setup:` line, the verify recipes, and the banned commands.
+//     `Manual verify setup:` line, the verify recipes, the banned commands, and
+//     the `Affected areas` cells against real repository paths.
 //   - `map next|claim|lint` — the decision map: the next claimable ticket,
 //     claiming one, and the structural lint (Blocked-by cycles named).
 //   - `skill lint`       — frontmatter against the VENDORED whitelist, the line
@@ -355,6 +356,17 @@ const VITEST_CAPABILITY = "vitest";
 const BANNED_VERIFY_COMMAND =
   /\b(?:lint|format|typecheck|tsc|biome|knip|vitest|jest|npm test|bun test|dobby check|build)\b/i;
 
+// The character shape a real repository path takes in this kit: word
+// characters, dot, dash and slash only. Nothing else — no space, no
+// parenthesis, no stray punctuation — belongs in a path, so anything outside
+// this shape is prose that leaked into the cell (task-decomposition.md's
+// `Affected areas` rule: name the path, not a description of it). This is what
+// catches a parenthetical aside split apart by the SAME comma that separates
+// areas, e.g. `plugin/skills (research, dispatch)` → `plugin/skills (research`
+// + `dispatch)`, both of which fail this shape before existence is even
+// checked.
+const AREA_PATH_SHAPE = /^[\w./-]+$/;
+
 const NUMBERED_STEP = /^\s*\d+[.)]\s/;
 const FENCE_LINE = /^\s*(?:```|~~~)/;
 // A table's delimiter row (`|---|------|`): pipes, dashes, colons and spaces,
@@ -390,6 +402,9 @@ interface SpecContext {
   // gate about whether this repo has a suite.
   hasTestSuite: boolean;
   path: string;
+  // The workroot every `Affected areas` entry resolves against — the area-path
+  // check needs an absolute base to answer "does this exist in the repo".
+  root: string;
 }
 
 function runSpecLint(context: CommandContext): CommandResult {
@@ -416,6 +431,7 @@ function runSpecLint(context: CommandContext): CommandResult {
   const specContext: SpecContext = {
     hasTestSuite: detectCapabilities(root).includes(VITEST_CAPABILITY),
     path: shown,
+    root,
   };
   return report(context, lintSpec(lines, region, specContext));
 }
@@ -596,6 +612,7 @@ function lintTaskTable(
   const rows = taskRows(table, columns);
   findings.push(...lintRowCells(rows, columns, context));
   findings.push(...lintRowDependencies(rows, context));
+  findings.push(...lintRowAreas(rows, columns, context));
   findings.push(...lintRowRecipes(rows, columns, context));
   return findings;
 }
@@ -732,6 +749,90 @@ function lintRowDependencies(rows: TaskRow[], context: SpecContext): Finding[] {
     }
   }
   return findings;
+}
+
+// `Affected areas` must name REAL repository paths — this is what makes the
+// dispatch protocol's overlap check (build-protocol.md's "Overlapping
+// writers") mean anything: it compares two tasks' areas AS PATHS, and a prose
+// label ("the gate", "CLI checks") for the same file defeats that comparison
+// silently, because two unrelated strings never compare equal or as a prefix
+// of one another. WITHOUT dropping the no-dependency spellings (`—`, `none`,
+// …) the way this file's `Depends on` check does: unlike `Depends on`, this
+// column has no "nothing here" value, so `—` must fail like any other
+// non-path instead of silently vanishing into zero areas checked.
+function lintRowAreas(
+  rows: TaskRow[],
+  columns: TaskColumns,
+  context: SpecContext
+): Finding[] {
+  if (columns.affected < 0) {
+    return [];
+  }
+  const findings: Finding[] = [];
+  for (const row of rows) {
+    for (const area of splitAreaList(row.affected)) {
+      const message = areaPathProblem(context.root, area, row.id);
+      if (message !== null) {
+        findings.push(
+          finding("spec-area-path", at(context.path, row.line), message)
+        );
+      }
+    }
+  }
+  return findings;
+}
+
+// The raw cell as its member areas: COMMA-split ONLY — `dobby build-plan`'s
+// own area list (`buildplan.ts`'s `splitList`, which the dispatch protocol's
+// overlap check reads) splits on comma alone, so this must match it exactly.
+// Splitting on semicolon too (like `Depends on`'s CELL_SEPARATOR) would bless
+// a cell such as `cli/src; plugin` as two clean paths here while build-plan
+// still emits it as ONE unsplit, non-existent area — clean at spec time,
+// invisible to the overlap check at dispatch, the exact gap this check
+// exists to close. Decoration stripped, blank fragments (a trailing comma's
+// leftover) dropped — but every OTHER fragment kept, `—` included, so it
+// reaches the shape check below and is judged rather than quietly filtered.
+function splitAreaList(value: string): string[] {
+  return value
+    .split(",")
+    .map((entry) => entry.replace(EMPHASIS, "").trim())
+    .filter((entry) => entry !== "");
+}
+
+// An area normalised the SAME way the dispatch protocol normalises it before
+// comparing paths (build-protocol.md's "Overlapping writers": strip a leading
+// `./`, strip a trailing `/`) — so the lint and the dispatch-time overlap
+// check judge the identical string, not two different ones.
+function normalizeAreaPath(area: string): string {
+  const withoutLeading = area.startsWith("./") ? area.slice(2) : area;
+  return withoutLeading.endsWith("/")
+    ? withoutLeading.slice(0, -1)
+    : withoutLeading;
+}
+
+// Why an area is not usable, as a finding message, or null when it is fine: an
+// EXISTING file or directory, or one this task will CREATE — recognised by
+// its parent directory already existing (task-decomposition.md's rule: a path
+// a task creates is legitimate as long as its parent already exists). A cell
+// that isn't shaped like a path at all (a comma-mangled fragment of a
+// parenthetical, free prose) is rejected before existence is even checked.
+function areaPathProblem(
+  root: string,
+  rawArea: string,
+  taskId: string
+): string | null {
+  const area = normalizeAreaPath(rawArea);
+  if (!AREA_PATH_SHAPE.test(area)) {
+    return `task ${taskId}: \`Affected areas\` names \`${rawArea}\`, which is not a real path — write the directory or file itself; split a parenthetical or description into its own comma-separated area, or drop it`;
+  }
+  const absolute = resolve(root, area);
+  if (existsSync(absolute)) {
+    return null;
+  }
+  if (area.includes("/") && existsSync(dirname(absolute))) {
+    return null;
+  }
+  return `task ${taskId}: \`Affected areas\` names \`${rawArea}\`, which does not exist in this repo — name a real directory or file (a path the task will CREATE is fine as long as its parent directory already exists)`;
 }
 
 function lintRowRecipes(
