@@ -396,6 +396,56 @@ describe("the dispatch protocol — scheduling", () => {
       "gate serialisation protects the gate's verdict, not the shared tree from concurrent edits"
     ).toBe(true);
   });
+
+  it("compares areas as normalised paths, not as opaque strings matched for exact equality", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /affected areas|\bareas\b/i,
+        /normali[sz]/i,
+        /opaque|exact.{0,10}equal|string.{0,10}equal/i
+      ),
+      "a directory area and a file area beneath it must compare equal, not just identical strings"
+    ).toBe(true);
+  });
+
+  it("treats one area being a prefix of the other as overlap", () => {
+    expect(
+      statesJoinedRule(readProtocol(), /affected areas|\bareas\b/i, /prefix/i),
+      "a directory area and a file area beneath it describe overlapping ground even though the labels differ"
+    ).toBe(true);
+  });
+
+  it("states that a task with vague areas weakens its own protection", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /affected areas|\bareas\b/i,
+        /vague/i,
+        /weaken/i
+      ),
+      "the area check is only as good as the paths the spec actually declares"
+    ).toBe(true);
+  });
+
+  it("admits the area check cannot catch every real collision", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /affected areas|\bareas\b/i,
+        /unrelated|undeclared|never declar/i,
+        NEGATION
+      ),
+      "unrelated labels for the same file, or a file a task never declared, slip past a static comparison"
+    ).toBe(true);
+  });
+
+  it("names the serialised Exit gate as detection, not prevention, for that residual gap", () => {
+    expect(
+      statesJoinedRule(readProtocol(), /exit gate/i, /detect/i, /prevent/i),
+      "the gate judges the whole tree and surfaces a sibling's undeclared edit as a finding, after the fact"
+    ).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
