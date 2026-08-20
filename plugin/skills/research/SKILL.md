@@ -17,13 +17,9 @@ From the task and any interview decisions (or `$ARGUMENTS`), list:
 
 If nothing is uncertain and no external tech is involved, say so and stop — don't manufacture research.
 
-## Step 2: Resolve the recipe when available, then dispatch bounded researchers
+## Step 2: Dispatch bounded researchers
 
-If BOTH local onboarding markers exist at the current workroot—`dobby.config.json` and `node_modules/.bin/dobby`—run **`bunx dobby env --json`** there before launching any Agent. Read the complete `workflowRecipe` and require `workflowRecipe.limits.maxConcurrency` to be a positive integer. Missing/malformed recipe or limit → STOP before the first Agent and report the mechanical error; never guess a fallback from prose or agent frontmatter.
-
-If either marker is absent, this is a standalone or unonboarded research request: do **not** run `bunx dobby` (remote package resolution is never an onboarding path), and serialize researchers one at a time. Research remains usable before onboarding, but it never invents a concurrency policy.
-
-Hand each independent research item to a `researcher` agent (Agent tool, `subagent_type: "dobby:researcher"`) — each one fetches current docs (via `ctx7`), traces the codebase, and returns grounded findings. Group sensibly — one per technology, or per cluster of related unknowns. Partition the resulting Agent calls into deterministic **sequential batches** of at most `maxConcurrency`: launch one batch in parallel, await every result in it, then launch the next. Retries and replacement Agents consume a slot in their batch; active Agents must never exceed the recipe limit.
+Hand each independent research item to a `researcher` agent (Agent tool, `subagent_type: "dobby:researcher"`) — each one fetches current docs (via `ctx7`), traces the codebase, and returns grounded findings. Group sensibly — one per technology, or per cluster of related unknowns. Size the fan-out yourself: partition the resulting Agent calls into deterministic **sequential batches** you judge safe to run together, launch one batch in parallel, await every result in it, then launch the next. Retries and replacement Agents consume a slot in their batch.
 
 Feed each researcher **dual vocabulary** so findings name things consistently: (1) the **architecture vocabulary** (`/dobby:spec`'s `../spec/references/architecture-vocab.md` — module / interface / depth / seam / adapter / leverage / locality) for structural claims, and (2) the **project's own domain glossary** (its `CONTEXT.md`) for domain nouns. A researcher that doesn't hold both invents its own words and the plan has to re-translate. Tell each one to report in these two vocabularies (structure in the architecture terms, domain in the project's terms) and to flag any concept it can't name in either.
 
@@ -67,10 +63,8 @@ Interact with the user in their language. Write the research brief in English; k
 ## Acceptance checklist
 
 - [ ] Every technology and unknown enumerated; applicable skills noted by you (you hold the list)
-- [ ] With both local markers present, `bunx dobby env --json` resolved before any Agent; complete `workflowRecipe` present and `limits.maxConcurrency` validated (missing/malformed → no Agent launched)
-- [ ] With either marker absent, no `bunx` command ran and researchers were serialized one at a time (standalone research remained available without remote package resolution)
 - [ ] Docs / codebase / unknowns researched by `researcher` agents (not dug in the main thread); current docs via ctx7, not training data
-- [ ] Researcher Agent calls ran in sequential batches of at most `workflowRecipe.limits.maxConcurrency` when the recipe was resolved; otherwise one at a time, including retries/replacements
+- [ ] Researcher Agent calls ran in sequential batches sized by your own judgment, including retries/replacements
 - [ ] Each researcher fed dual vocabulary (architecture-vocab + the project's `CONTEXT.md`) so findings name structure and domain consistently
 - [ ] Broad/open web questions sent to `deep-research`; empirical questions sent to `/dobby:prototype` or flagged as Open
 - [ ] Concise research brief synthesized from the findings; no code written, no plan made

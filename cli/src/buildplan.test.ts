@@ -12,9 +12,15 @@ import {
 useSpawnBudget();
 
 // ===========================================================================
-// `dobby build-plan` — the spec's task table, projected as the build-workflow
-// `args` (plus the waves, the preconditions verdict, and the two gates the
-// execute skill reads: `hasTestSuite` and `manualVerifySetup`).
+// `dobby build-plan` — the spec's task table, projected as the dispatch
+// `args` (plus the preconditions verdict and the two gates the execute skill
+// reads: `hasTestSuite` and `manualVerifySetup`).
+//
+// The command does NOT batch the plan. It emits the task list with each task's
+// `dependsOn` and `destructive` flag intact, so a task can start the moment its
+// OWN dependencies are done — a failed task stops only what genuinely depends
+// on it, and the Architect serialises a destructive task himself at dispatch
+// time. There is therefore no wave grouping anywhere in the payload.
 //
 // The seam is the in-process `run(argv, cwd)` contract (ADR-0008): the domain
 // module is never imported directly, so its internals can be restructured
@@ -25,13 +31,14 @@ useSpawnBudget();
 //    task field is the literal text of a cell in it (titles, descriptions,
 //    areas, verify recipes) — never a value recomputed the way the parser
 //    computes it.
-//  - The `args` key names (`tasks[{id,title,spec,decisions,constraints,areas,
-//    verifyRecipe,testFirst,dependsOn}]`, `hasTestSuite`, `workRoot`) are the
-//    literal contract of `plugin/skills/execute/references/build-workflow.md`,
-//    which consumes this payload verbatim.
+//  - The payload's key set (`tasks[{id,title,spec,decisions,constraints,areas,
+//    verifyRecipe,testFirst,destructive,dependsOn}]`, `preconditions`,
+//    `hasTestSuite`, `manualVerifySetup`, `workRoot`) is the literal field list
+//    of this task's spec: everything the payload carried keeps its meaning, and
+//    only the wave grouping goes.
 //  - `dependsOn` is the literal content of a row's `Depends on` cell — the ids
 //    exactly as the spec writer typed them, and none at all for `—`/empty. The
-//    build run looks a dependency up BY IDENTITY against the ids in `waves`
+//    dispatcher looks a dependency up BY IDENTITY against the emitted task ids
 //    (to skip a task whose dependency ended needs-human), so the expected
 //    values are those same id STRINGS, never numbers or re-derived keys.
 //  - The column layout (`# | Task | Description | Depends on | Affected areas |
@@ -39,9 +46,9 @@ useSpawnBudget();
 //    and the `Manual verify setup:` field are the kit's own spec-writing
 //    conventions (`plugin/skills/spec/references/task-decomposition.md` and
 //    `references/testing-decisions.md`).
-//  - Every WAVE expectation is computed BY HAND from the fixture it belongs to,
-//    stated in that fixture's comment (which tasks are ready, which share an
-//    area) — a partition a reader can verify by eye against the table.
+//  - Every ORDER expectation is the top-to-bottom order of the fixture's own
+//    table — a list a reader can verify by eye against the rows above it, not a
+//    schedule re-derived from areas or dependencies.
 //  - `hasTestSuite.value` follows the `vitest` CAPABILITY, so the fixtures make
 //    it a fact of the repo we built: a `vitest` devDependency (present) or none
 //    (absent). The spec-vs-capability `disagreement` is then a claim about two
@@ -88,9 +95,18 @@ interface BuildPlan {
     ok: boolean;
   };
   tasks: PlanTask[];
-  waves: string[][];
   workRoot: string;
 }
+
+// The payload keys this task's spec fixes, sorted. `waves` — or any other name
+// for a batch of tasks — is not among them: the grouping is gone, not renamed.
+const PAYLOAD_KEYS = [
+  "hasTestSuite",
+  "manualVerifySetup",
+  "preconditions",
+  "tasks",
+  "workRoot",
+];
 
 // --- fixture builders -------------------------------------------------------
 
@@ -208,20 +224,23 @@ function firstTask(built: BuildPlan): PlanTask {
 }
 
 // ===========================================================================
-// Slice 1 (the tracer bullet) — the task table becomes the build-workflow args.
+// Slice 1 (the tracer bullet) — the task table becomes the dispatch args, as a
+// FLAT list of tasks that each name what they wait on.
 //
-// Everything downstream leans on this: the coordinator hands `args.tasks`
-// straight to the build workflow. The fixture is the CURRENT spec format —
-// `### ` sub-headings inside `## Spec`, the full 8-column table (Description,
-// Test-first and Destructive all present) — and it carries the decoy tables, so
-// "read the `## Spec` section" is proven, not assumed.
+// Everything downstream leans on this: the Architect reads `tasks`, starts each
+// one the moment its own `dependsOn` are done, and never receives a batch to
+// step through. The fixture is the CURRENT spec format — `### ` sub-headings
+// inside `## Spec`, the full 8-column table (Description, Test-first and
+// Destructive all present) — and it carries the decoy tables, so "read the
+// `## Spec` section" is proven, not assumed.
 //
 // Table (authored below):
 //   1  no deps        areas: notifications module, data layer   test-first yes
 //   2  depends on 1   areas: notifications module               test-first no
 //   3  depends on 1   areas: app header                         test-first yes
-// BY HAND: task 1 is the only ready task → wave 1 = [1]. With 1 done, 2 and 3
-// are both ready and their areas share nothing → wave 2 = [2, 3].
+// The tasks CHAIN (2 and 3 both wait on 1), which is exactly the case the old
+// grouping existed for — so this fixture is where "no wave grouping, and each
+// task still names the tasks it waits on" is proven.
 // ===========================================================================
 
 const SPEC_FULL = `### Overview
@@ -243,7 +262,7 @@ Manual verify setup: none
 | 3 | Unread badge | Header badge shows the unread count, refreshing on an interval. | 1 | app header | yes | no | Two unread rows → the badge reads 2 |
 `;
 
-describe("build-plan — the spec's task table as build-workflow args", () => {
+describe("build-plan — the spec's task table as dispatch args", () => {
   let repo: string;
 
   beforeAll(() => {
@@ -335,9 +354,25 @@ describe("build-plan — the spec's task table as build-workflow args", () => {
     ]);
   });
 
-  it("orders the waves so a task runs only after the task it depends on", async () => {
+  it("emits no batching of the tasks, only the fields the plan is made of", async () => {
     const built = await plan(repo);
-    expect(built.waves).toEqual([["1"], ["2", "3"]]);
+    // The chain 1 → {2, 3} is precisely what used to be cut into batches. The
+    // whole key set is pinned so the grouping cannot come back under another
+    // name: a task starts when its own dependencies are done, and nothing in
+    // the payload says when to start it.
+    expect(Object.keys(built).sort()).toEqual(PAYLOAD_KEYS);
+  });
+
+  it("keeps every task in the plan even when a chain makes them wait", async () => {
+    const built = await plan(repo);
+    // All three rows are dispatchable work; the chain lives in `dependsOn`, not
+    // in a schedule that could drop or duplicate a task on its way out.
+    expect(ids(built.tasks)).toEqual(["1", "2", "3"]);
+    expect(built.tasks.map((task) => task.dependsOn)).toEqual([
+      [],
+      ["1"],
+      ["1"],
+    ]);
   });
 
   it("reports the workroot as the absolute root of the repo it planned", async () => {
@@ -370,8 +405,9 @@ describe("build-plan — the spec's task table as build-workflow args", () => {
 //   1  areas: export drawer   test-first yes   destructive no
 //   2  areas: search index    test-first no    destructive YES
 //   3  areas: api layer       test-first yes   destructive no
-// BY HAND: task 2 is destructive, so its wave holds it ALONE; 1 and 3 share no
-// area with anything, so every task is still scheduled exactly once.
+// Task 2 is destructive. Serialising it is the Architect's job at dispatch
+// time, so the payload's only duty is to CARRY the flag: task 2 is emitted
+// alongside the others, flagged, never isolated or held back.
 // ===========================================================================
 
 const SPEC_NO_DESCRIPTION = `### Testing Decisions
@@ -430,15 +466,20 @@ describe("build-plan — a table with no Description column", () => {
     ]);
   });
 
-  it("gives a destructive task a wave of its own", async () => {
+  it("emits a destructive task beside the others, flagged rather than isolated", async () => {
     const built = await plan(repo);
-    const wave = built.waves.find((batch) => batch.includes("2"));
-    expect(wave).toEqual(["2"]);
+    // The Architect serialises task 2 himself; the plan neither drops it, nor
+    // pulls it out into a group of its own, nor reorders the table around it.
+    expect(built.tasks.map((task) => [task.id, task.destructive])).toEqual([
+      ["1", false],
+      ["2", true],
+      ["3", false],
+    ]);
   });
 
-  it("schedules every task exactly once across the waves", async () => {
+  it("emits each task exactly once", async () => {
     const built = await plan(repo);
-    expect(built.waves.flat().sort()).toEqual(["1", "2", "3"]);
+    expect(ids(built.tasks)).toEqual(["1", "2", "3"]);
   });
 
   it("reports the manual verify setup as the developer's numbered steps", async () => {
@@ -468,7 +509,7 @@ describe("build-plan — a table with no Description column", () => {
 // only be found by its header row.
 //
 // Table (authored below): 1 (no deps, export module), 2 (depends on 1, export
-// drawer). BY HAND: wave 1 = [1], wave 2 = [2].
+// drawer) — both emitted, in that order, 2 naming 1 as its blocker.
 // ===========================================================================
 
 const SPEC_NO_SUBHEADINGS = `The export drawer gains a CSV download. Backend-only; the route is public, so nothing needs preparing.
@@ -538,13 +579,17 @@ describe("build-plan — a spec with no sub-headings", () => {
 });
 
 // ===========================================================================
-// Slice 4 — the waves, for the cases one table cannot show at once.
-// Each fixture states its hand-computed partition in its own comment.
+// Slice 4 — the cases the grouping used to exist for, each proving the plan now
+// answers with the flat task list and its declared dependencies instead.
+//
+// A shared area, a chain, and a task waiting on two others are exactly the
+// inputs that used to force a partition. None of them may reorder, hold back,
+// merge or drop a task now: whether two tasks may run together is the
+// Architect's call at dispatch time, made from `areas` and `dependsOn`.
 // ===========================================================================
 
-// 1 and 3 both touch `billing module`; 2 is independent. BY HAND: all three are
-// ready, so the first wave takes 1 and the area-disjoint 2, and 3 — which
-// collides with 1 — waits: [[1, 2], [3]].
+// 1 and 3 both touch `billing module`; 2 is independent — the area clash that
+// used to split the plan in two.
 const SPEC_AREA_CLASH = `### Tasks
 
 | # | Task | Depends on | Affected areas | Verify recipe |
@@ -554,9 +599,8 @@ const SPEC_AREA_CLASH = `### Tasks
 | 3 | Add invoice filters | — | billing module | Filter by month → the list narrows |
 `;
 
-// 1 and 3 both touch `cli/src/parse.ts`; 4 depends on 1. BY HAND: wave 1 takes 1
-// and 2 (disjoint); 3 is held back by its clash with 1. Once wave 1 is done, 3
-// is free AND 4 is unblocked, and their areas are disjoint: [[1, 2], [3, 4]].
+// 1 and 3 both touch `cli/src/parse.ts`; 4 depends on 1 — an area clash and a
+// chain in the same table, which used to produce a two-batch refill.
 const SPEC_REFILL = `### Tasks
 
 | # | Task | Depends on | Affected areas | Verify recipe |
@@ -567,8 +611,19 @@ const SPEC_REFILL = `### Tasks
 | 4 | Emit the plan JSON | 1 | cli/src/emit.ts | Emit a plan → stdout parses as JSON |
 `;
 
-// 3 depends on BOTH 1 and 2. BY HAND: 1 and 2 are ready and disjoint → wave 1;
-// 3 becomes ready only after both → wave 2: [[1, 2], [3]].
+// A table whose rows are NOT in dependency order: row 1 waits on row 2. The
+// plan reports the tasks as the spec writer wrote them — resolving that order
+// is the dispatcher's job, and a plan that sorted the rows would answer a
+// different document than the one the user approved.
+const SPEC_BACKWARD_DEP = `### Tasks
+
+| # | Task | Depends on | Affected areas | Verify recipe |
+|---|------|------------|----------------|---------------|
+| 1 | Render the audit page | 2 | audit page | Open the page → the rows render |
+| 2 | Add the audit query | — | audit query | Run the query → rows come back |
+`;
+
+// 3 depends on BOTH 1 and 2 — the multi-blocker case.
 const SPEC_MULTI_DEP = `### Tasks
 
 | # | Task | Depends on | Affected areas | Verify recipe |
@@ -578,35 +633,43 @@ const SPEC_MULTI_DEP = `### Tasks
 | 3 | Wire the retry policy | 1, 2 | retry module | Fail a job → it is retried |
 `;
 
-describe("build-plan — wave grouping", () => {
-  it("keeps two tasks that touch the same area out of the same wave", async () => {
+describe("build-plan — no ordering imposed on the tasks", () => {
+  it("emits two tasks that touch the same area as ordinary neighbours", async () => {
     const repo = makePlanRepo({
       prefix: "dobby-plan-clash-",
       spec: SPEC_AREA_CLASH,
     });
     const built = await plan(repo);
-    expect(built.waves).toEqual([["1", "2"], ["3"]]);
+    // 1 and 3 collide on `billing module`; the plan reports the areas and
+    // leaves the collision for the Architect to resolve when he dispatches.
+    expect(ids(built.tasks)).toEqual(["1", "2", "3"]);
+    expect(built.tasks.map((task) => task.areas)).toEqual([
+      ["billing module"],
+      ["settings module"],
+      ["billing module"],
+    ]);
   });
 
-  it("runs a task held back by an area clash alongside the newly unblocked tasks", async () => {
+  it("emits a chained plan in table order with no grouping around it", async () => {
     const repo = makePlanRepo({
       prefix: "dobby-plan-refill-",
       spec: SPEC_REFILL,
     });
     const built = await plan(repo);
-    expect(built.waves).toEqual([
-      ["1", "2"],
-      ["3", "4"],
-    ]);
+    expect(Object.keys(built).sort()).toEqual(PAYLOAD_KEYS);
+    expect(ids(built.tasks)).toEqual(["1", "2", "3", "4"]);
   });
 
-  it("holds a task until every task it depends on has run", async () => {
+  it("emits the tasks in table order even when a row waits on a later one", async () => {
     const repo = makePlanRepo({
-      prefix: "dobby-plan-multidep-",
-      spec: SPEC_MULTI_DEP,
+      prefix: "dobby-plan-backward-",
+      spec: SPEC_BACKWARD_DEP,
     });
     const built = await plan(repo);
-    expect(built.waves).toEqual([["1", "2"], ["3"]]);
+    // Row 1 waits on row 2. The plan is the table, not a schedule: it hands the
+    // rows over as written and lets the dependency say what waits for what.
+    expect(ids(built.tasks)).toEqual(["1", "2"]);
+    expect(built.tasks.map((task) => task.dependsOn)).toEqual([["2"], []]);
   });
 });
 
@@ -779,9 +842,9 @@ describe("build-plan — a single ad-hoc task (dispatch)", () => {
     });
   });
 
-  it("puts the single task in a single wave", async () => {
+  it("answers the dispatch path with the same ungrouped payload", async () => {
     const built = await plan(repo, ["--task", taskFile]);
-    expect(built.waves).toEqual([["1"]]);
+    expect(Object.keys(built).sort()).toEqual(PAYLOAD_KEYS);
   });
 
   it("still reports the repo's own suite capability and workroot", async () => {
@@ -850,7 +913,7 @@ describe("build-plan — planning a document other than STATE.md", () => {
       "Add the webhook receiver",
       "Retry a failed webhook",
     ]);
-    expect(built.waves).toEqual([["1"], ["2"]]);
+    expect(built.tasks.map((task) => task.dependsOn)).toEqual([[], ["1"]]);
   });
 
   it("still reports the repo's workroot when the document lives elsewhere", async () => {
@@ -912,12 +975,12 @@ describe("build-plan — an emphasized `Manual verify setup` field", () => {
 // ===========================================================================
 // Slice 8 — each task's declared dependencies.
 //
-// The waves say WHEN a task runs; `dependsOn` says WHO it waits for, which is a
-// different question and the one the build run asks: a task whose dependency
-// ended `needs-human` is skipped (`blocked`) instead of built, and it can only
-// recognize that dependency if the id it reads is the same id the waves carry.
-// So each expectation below is the literal `Depends on` cell of the row it
-// names, as strings — never a set re-derived from the schedule.
+// With no batching left, `dependsOn` is the ONLY thing that says who a task
+// waits for: a task starts the moment its own dependencies are done, and one
+// whose dependency ended `needs-human` is skipped (`blocked`) instead of built.
+// The dispatcher can only recognize that dependency if the id it reads is the
+// same id the task list carries. So each expectation below is the literal
+// `Depends on` cell of the row it names, as strings.
 // ===========================================================================
 
 // The `Depends on` cell left EMPTY rather than dashed — the other spelling of
@@ -951,13 +1014,13 @@ describe("build-plan — each task's declared dependencies", () => {
     ]);
   });
 
-  it("names dependencies with the same ids the waves schedule those tasks under", async () => {
+  it("names dependencies with the same ids the emitted tasks carry", async () => {
     const built = await plan(multiDepRepo);
-    // `done[dep]` is an identity lookup: a number, a padded string or a title
-    // here would silently never match a scheduled id, and every dependent would
-    // build as if its blocker had passed.
+    // Looking a blocker up is an identity match against the task list: a
+    // number, a padded string or a title here would silently never match, and
+    // every dependent would start as if its blocker had passed.
     expect(built.tasks.flatMap((task) => task.dependsOn)).toEqual(["1", "2"]);
-    expect(built.waves.flat()).toEqual(["1", "2", "3"]);
+    expect(ids(built.tasks)).toEqual(["1", "2", "3"]);
   });
 
   it("reads an empty `Depends on` cell as no dependency at all", async () => {

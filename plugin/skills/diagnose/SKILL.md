@@ -6,7 +6,7 @@ argument-hint: "[the bug or symptom]"
 
 For hard bugs (intermittent, non-obvious, performance regression). For a trivial bug, just fix it. The rule: **don't patch and pray**.
 
-This skill is also the `dobby:verifier`'s named downstream: when verification hits an **opaque 500** (a server error with no actionable message), the verifier hands off here to diagnose it.
+This skill is also the `dobby:qa`'s named downstream: when verification hits an **opaque 500** (a server error with no actionable message), QA hands off here to diagnose it.
 
 ## Step 1: Build a feedback loop
 

@@ -1,0 +1,21 @@
+# 0029. Subagent dispatch replaces the native Workflow
+
+The build loop used to run inside a single native Claude Workflow whose script owned scheduling, retries and failure classification. A field run (15 tasks, 1h43m, 1.75M tokens) finished 3 tasks: one task exhausted its two attempts and the script switched off ten dependents in a cascade, and 10 of the run's verdicts were `environment` — a dead browser costing an attempt exactly like a bug would. The Architect now dispatches named subagents directly (the Agent tool), following the prose protocol in `plugin/skills/execute/references/build-protocol.md`; there is no execution engine underneath it. This supersedes ADR-0023: the fixed recipe, its fingerprint and its concurrency cap are deleted, and each agent's model and effort live solely in its own frontmatter.
+
+## Considered options
+
+**Patch the script instead.** Both cascade and environment handling were ~15 lines in the script (`build-workflow.md:314` killed a task on `environment`; `:357-363` cascaded the block), and fixing them there would have been a far smaller diff. Rejected because the two things the maintainer actually wanted — per-result judgement, and the ability to interrupt a run mid-flight — are structurally impossible inside a deterministic script, whatever its branches say.
+
+**Claude Code agent teams.** Offers exactly the shared task list with automatic dependencies this design hand-rolls. Rejected on its own documentation: it is experimental behind a flag, costs "significantly more tokens", and its known limitation — *"teammates sometimes fail to mark tasks as completed, which blocks dependent tasks"* — reintroduces our cascade non-deterministically. The docs route "work with many dependencies / same-file edits" to subagents, which is precisely this repo's plan shape.
+
+## Consequences
+
+**Agent teams must stay off.** With `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` set, a *named* subagent silently launches as a teammate instead, and named dispatch is mandatory here — so enabling that flag would change this design's behaviour without any visible signal. The protocol requires the variable unset before dispatching anyone.
+
+**Naming is load-bearing, not stylistic.** Only a named dispatch produces the sibling roster a worker reads to find anyone addressable; an anonymous worker has no one to reach and silently degrades to returning its verdict alone. Verified empirically on Claude Code 2.1.235: a probe agent read its roster, messaged a sibling, and got a reply. `SendMessage` is also a deferred tool — a worker must load it with `ToolSearch` before its first use.
+
+**Renaming an agent breaks live sessions.** A session pins its agent registry at startup, so after `verifier.md` became `qa.md`, `dobby:qa` did not resolve in the session doing the migration, and the implementor kept running with its *old* toolset — without `SendMessage`, leaving half the fix conversation mute even though its definition on disk already declared it. Hosts without `/reload-plugins` have no remedy but a fresh session. This is consumer-visible and is why the change ships an upgrade note.
+
+**The fix conversation is not synchronous.** QA sends its findings and its turn ends; a subagent cannot wait for a reply. The peer auto-resumes on the message, but nothing closes the loop on its own — the Architect must reactivate QA to re-verify. Observed on the first real use during this very migration, and a correction the protocol's own prose does not yet make explicit.
+
+**The retired runtime could no longer run at all.** Its fingerprint guard called `new TextEncoder()`, which is undefined in the Workflow sandbox, so the script threw before dispatching a single agent; and once `dobby env` stopped reporting `workflowRecipe`, the script demanded an object the CLI no longer produced. By the midpoint of the migration, going back was not an available option.

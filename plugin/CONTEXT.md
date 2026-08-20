@@ -12,10 +12,12 @@ CLI at runtime (`bunx dobby …`), never imported.
 - `.claude-plugin/plugin.json` — the plugin manifest: name, version, description,
   author. What the marketplace and `claude plugin` commands read to install/update.
 - `agents/` — the five authoritative worker-agent definitions: `researcher.md`,
-  `test-author.md`, `implementor.md`, `reviewer.md`, `verifier.md`. Each prompt body
-  is edited here exactly once; frontmatter (`model`/`effort`) mirrors
-  `cli/src/workflow-recipe.ts`'s `baseline-v1` values for direct calls, and drift
-  tests keep both surfaces aligned.
+  `test-author.md`, `implementor.md`, `reviewer.md`, `qa.md`. Each prompt body is
+  edited here exactly once; frontmatter (`model`/`effort`) is the SOLE source of
+  that role's model/effort — there is no external recipe to mirror. `implementor.md`
+  runs the full quality gate on itself (`bunx dobby check --fix --baseline`, the
+  Exit gate) before handing a task off; `qa.md` proves behaviour only — never lint,
+  types, build, or the test suite.
 - `hooks/hooks.json` — auto-loaded when the plugin is enabled. The PostToolUse
   `Edit|Write` hook invokes the consumer's LOCAL
   `node_modules/.bin/dobby check --hook` behind a `dobby.config.json` guard (never
@@ -51,11 +53,14 @@ CLI at runtime (`bunx dobby …`), never imported.
 - **Skills** are invoked as `/dobby:<skill-name>` (the plugin name `dobby` + the
   directory name), matching CLAUDE.md's namespacing rule.
 - **Agents** are invoked as `subagent_type: dobby:<agent-name>` from a Task/Agent
-  dispatch, or applied by role inside the native build Workflow.
+  dispatch, named per the dispatch protocol
+  (`plugin/skills/execute/references/build-protocol.md`) the Architect follows
+  directly for every task.
 - **Hooks** need no invocation — `hooks/hooks.json` is auto-loaded whenever the
   plugin is enabled, and fires on every `Edit`/`Write` PostToolUse event.
 - Everything else (worktree lifecycle, `dobby check`/`up`/`down`/`dev`, `dobby env`
-  for the workflow recipe) is reached through `bunx dobby …`, never imported code.
+  for the environment snapshot and verification guide) is reached through
+  `bunx dobby …`, never imported code.
 
 ## Invariants
 
@@ -65,7 +70,8 @@ CLI at runtime (`bunx dobby …`), never imported.
   it) and the edit hook's legitimate `node_modules/.bin/dobby` guard.
 - **Skills carry no `model:`/`effort:` in frontmatter** — they inherit the
   interactive session's model/effort (ADR-0004). Only the five agent files under
-  `agents/` declare `model`/`effort`, mirroring `baseline-v1`.
+  `agents/` declare `model`/`effort`, each the sole source for its own role — there
+  is no external recipe to mirror.
 - **`SKILL.md` stays ≤500 lines** (`skills/create-skill/SKILL.md`'s own limit); the
   largest skill in this plugin today is `data-processing/SKILL.md` at 316 lines.
   Anything larger splits into `references/`.
@@ -78,14 +84,18 @@ CLI at runtime (`bunx dobby …`), never imported.
 
 ## What's intentionally NOT here
 
-- **The mechanical layer.** Environment detection, the quality gate, the run
-  lifecycle, and the workflow recipe are the `@kvnwolf/dobby` CLI's job
-  (`cli/`), consumed only through `bunx dobby …`. This plugin has no build step, no
-  config schema of its own, and adds no CLI command, config key, check, or gate —
-  including `trim-context` and `anti-slop`, which are inference-only sweeps.
-- **Tests.** Plugin behavior (agent frontmatter drift, the vendored comment
-  extractor, workflow-recipe alignment) is exercised from `cli/src/*.test.ts`
-  against these files; there is no test runner or test file under `plugin/` itself.
+- **The mechanical layer.** Environment detection, the quality gate (including the
+  implementor's Exit gate and the edit hook's type-error scan), and the run
+  lifecycle are the `@kvnwolf/dobby` CLI's job (`cli/`), consumed only through
+  `bunx dobby …`. This plugin has no build step, no config schema of its own, and
+  adds no CLI command, config key, check, or gate — including `trim-context` and
+  `anti-slop`, which are inference-only sweeps.
+- **Tests.** Plugin behavior is exercised from `cli/src/*.test.ts` against these
+  files: the vendored comment extractor, and (`build-protocol.test.ts`) the
+  dispatch protocol document's worker-naming, dependency-start, and Exit-gate
+  serialisation rules. Agent frontmatter's `model:`/`effort:` presence is checked
+  separately, by `dobby.config.json`'s `frontmatter-model-effort` `checks[]` extra.
+  There is no test runner or test file under `plugin/` itself.
 - **A `dobby.config.json` reader.** That file's mechanical keys (`checks[]`,
   `setup[]`, `teardown[]`, `tracker`, `release`) are read by the CLI, not by
   anything under `plugin/`.

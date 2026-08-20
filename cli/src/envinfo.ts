@@ -1,13 +1,10 @@
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { browserGuideFor } from "./browser-guide.ts";
 import { loadConfig } from "./config.ts";
 import { detectCapabilities } from "./detect.ts";
 import { resolveBin, resolveWorkroot, runCapture } from "./runner.ts";
 import { dbTasks } from "./tasks.ts";
-import {
-  resolveWorkflowRecipe,
-  type WorkflowRecipe,
-} from "./workflow-recipe.ts";
 
 // Top-level regexes (biome useTopLevelRegex — a literal inside a function recompiles
 // on every call).
@@ -30,6 +27,10 @@ const WHITESPACE_SPLIT_RE = /\s+/;
 export interface EnvSnapshot {
   // The current git branch, or null outside a repo / on a detached HEAD.
   branch: string | null;
+  // The verification guide for the detected environment: the vendored cmux-browser
+  // protocol when a cmux workspace is present, else the non-cmux (claude-in-chrome
+  // falling back to curl-only) instructions — never empty. See browser-guide.ts.
+  browserGuide: string;
   // The kit browser-pane surface ref (surface titled dobby-browser-<slug>), or null.
   browserPane: string | null;
   // Detected project capabilities (may be empty).
@@ -47,8 +48,6 @@ export interface EnvSnapshot {
   devUrl: string | null;
   // The kit run-pane surface ref (surface titled dobby-run-<slug>), or null.
   runPane: string | null;
-  // The fixed native-Claude role recipe and build-loop caps.
-  workflowRecipe: WorkflowRecipe;
   // The enclosing git worktree root (git's resolved top-level), or null outside a repo.
   worktree: string | null;
 }
@@ -65,6 +64,7 @@ export function collectEnv(root: string): EnvSnapshot {
   const devUrl = resolveDevUrl(root, workroot, capabilities);
   return {
     branch: workroot === null ? null : gitBranch(workroot),
+    browserGuide: browserGuideFor(cmux),
     browserPane: panes.browserPane,
     capabilities,
     cmux,
@@ -74,7 +74,6 @@ export function collectEnv(root: string): EnvSnapshot {
     dbTasks: [...dbTasks(capabilities).tasks.keys()],
     devUrl,
     runPane: panes.runPane,
-    workflowRecipe: resolveWorkflowRecipe(),
     worktree: workroot,
   };
 }

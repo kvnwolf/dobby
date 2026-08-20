@@ -13,7 +13,7 @@ Creates `dobby.config.json` at the **consumer repo root** (JSON — NOT in `.dob
 | `teardown` | array of commands (optional) | `dobby down` | EXTRA cleanup commands, run during teardown |
 | `checks` | array of `{ name, run }` (optional) | `dobby check` | EXTRA checks, run IN ADDITION to the inferred gate (biome, tsc, knip, build, vitest-if-capability) |
 
-`files` is the only always-present section. `setup` / `teardown` / `checks` are OPTIONAL overrides — omit them entirely for a repo whose inferred mechanics are correct (the common case). There is **no `run` key** — the dev/up/down lifecycle is inferred from the detected capabilities, never configured here. The native Workflow recipe does not belong here either: Dobby ships the fixed `baseline-v1` experiment and exposes it through `dobby env`; there are no profile, model, effort, retry, or concurrency keys to add to project config.
+`files` is the only always-present section. `setup` / `teardown` / `checks` are OPTIONAL overrides — omit them entirely for a repo whose inferred mechanics are correct (the common case). There is **no `run` key** — the dev/up/down lifecycle is inferred from the detected capabilities, never configured here. Worker policy does not belong here either: each agent's model and effort live in its own frontmatter under `plugin/agents/`, and there are no profile, model, effort, retry, or concurrency keys to add to project config.
 
 ## The optional `tracker` key
 

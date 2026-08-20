@@ -132,13 +132,28 @@ const SHORT_HASH_LENGTH = 8;
 // gate cache's CONSULT (turbo `--force` semantics): every selected step really
 // runs, and a green FULL gate is still recorded. `cwd` is the caller's directory;
 // the workroot is resolved from it and pinned as every child's cwd.
+//
+// `baselineRecord` is the GREEN BASELINE (baseline.ts), already resolved by
+// run.ts BEFORE this call (this module never reads baseline.ts's storage
+// itself — one-directional dependency the other way, baseline.ts -> check.ts,
+// via `collectFailingSuites` below): undefined when `--baseline` was not
+// requested (a plain gate, judged against the whole tree, exactly as before);
+// null when it WAS requested but no record exists (every suite counts, and the
+// run says so explicitly rather than passing in silence); an array (possibly
+// empty) of repo-relative suite paths when a record exists — suites in it are
+// dropped from the test step's failures before the summary and the exit code
+// are decided, so only what THIS run newly broke is reported. A recorded
+// baseline never reaches this parameter on a call that omitted `--baseline` —
+// the plain gate is never softened by it (the commit / pre-push forms of the
+// gate always pass undefined).
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: enumeration, not tangled logic — a flat switch dispatching 7 independent gate-step handlers (biome/tsc/knip/conventions/build/test/extra), several of which fatal-return from check(); extracting them would thread shared accumulators + fatal-return plumbing through 7 helpers and regress a load-bearing, tested executor
 export function check(
   files: string[],
   cwd: string,
   flags: CheckFlags,
   fix = false,
-  noCache = false
+  noCache = false,
+  baselineRecord?: string[] | null
 ): CheckReport {
   const root = resolveWorkroot(cwd);
   if (root === null) {
@@ -243,6 +258,21 @@ export function check(
   // Config `checks[]` extras are fail-fast among THEMSELVES: once one fails, the
   // remaining extras are skipped (the tool steps above always all ran).
   let extrasStopped = false;
+
+  // THE GREEN BASELINE (see the `baselineRecord` doc above `check()`). Absent
+  // (`undefined`) => baseline mode is OFF: the exemption set stays empty and no
+  // note is added — the plain gate is judged exactly as before. Requested but no
+  // record (`null`) => everything still counts (the exemption set stays empty),
+  // but the run says so explicitly rather than filtering — or passing — in
+  // silence. A record (`string[]`, possibly empty) => those suites are exempt.
+  const baselineMode = baselineRecord !== undefined;
+  const baselineExempt = new Set(baselineRecord ?? []);
+  if (baselineMode && baselineRecord === null) {
+    notes.push({
+      raw: null,
+      text: "baseline: no record found (run `dobby baseline record`) — every failing suite counts",
+    });
+  }
 
   // THE GATE CACHE (gate-cache.ts owns every byte of it; this is only the wiring).
   //
@@ -389,7 +419,7 @@ export function check(
           root,
           vitestConfigSpec(capabilities, dependencies)
         );
-        const tested = runTest(root, vitestCfg.args);
+        const tested = runTest(root, vitestCfg.args, baselineExempt);
         if (tested.note !== null) {
           notes.push(tested.note);
         }
@@ -454,11 +484,17 @@ export function check(
   //     move its `at` away from the run that actually proved the tree;
   //   - `--no-cache` DOES record (turbo `--force`): it skipped the consult, not the
   //     work, so its green is as real as any other.
+  //   - a BASELINE run never records, whatever its exit code: its 0 means "nothing
+  //     NEW broke", never "this tree is green" — a suite the baseline exempted can
+  //     still be red on disk. Recording it would hand the next PLAIN gate (the
+  //     commit / pre-push forms, which never pass `baselineRecord`) a green
+  //     verdict for a tree nobody actually cleared.
   // A write failure is a NOTE, never a verdict: dobby's bookkeeping must never be
   // able to fail a green gate.
   if (
     codeHash !== null &&
     !selective &&
+    !baselineMode &&
     gateCached === null &&
     exitCode === 0
   ) {
@@ -567,6 +603,12 @@ const HOOK_EXTENSIONS = new Set([
   "css",
 ]);
 
+// The extensions the edit-time TYPE analysis targets. Narrower than
+// HOOK_EXTENSIONS: tsc only ever emits diagnostics that land on a `.ts`/`.tsx`
+// source, so a non-TS edit (json/css/js) skips the tsc spawn entirely rather
+// than paying for a whole-program run that could only ever stay silent about it.
+const HOOK_TSC_EXTENSIONS = new Set(["ts", "tsx"]);
+
 // The PostToolUse hook payload (only the field the hook reads). Parsed
 // DEFENSIVELY — any missing/mistyped field folds to the silent-exit-0 path.
 interface HookPayload {
@@ -576,14 +618,16 @@ interface HookPayload {
 // The outcome of the edit-time hook (`dobby check --hook`):
 //   - { surface: false } — a guard tripped (unparsable payload / no file_path /
 //     missing file / not a git repo / no dobby.config.json marker / file outside
-//     the workroot / unsupported extension) OR biome applied every fix cleanly and
-//     the file breaks no convention. run.ts exits 0 with NOTHING surfaced — harness
-//     noise must never block an edit.
+//     the workroot / unsupported extension) OR biome applied every fix cleanly, the
+//     file breaks no convention, and the whole-program type check named no error ON
+//     THE EDITED FILE. run.ts exits 0 with NOTHING surfaced — harness noise (and a
+//     neighbour's half-written code, or a pre-existing error elsewhere) must never
+//     block an edit.
 //   - { surface: true, groups } — biome left unfixable findings after its SAFE
 //     auto-fix, and/or the tier-(b) conventions scan flagged the edited file (a
-//     stack consumer only). run.ts prints them to STDERR and exits 2 (the code
-//     Claude Code feeds back to the model on the channel it shows it — stderr, not
-//     stdout).
+//     stack consumer only), and/or tsc reported a type error ON THE EDITED FILE.
+//     run.ts prints them to STDERR and exits 2 (the code Claude Code feeds back to
+//     the model on the channel it shows it — stderr, not stdout).
 export type HookResult =
   | { surface: false }
   | { surface: true; groups: CheckGroup[] };
@@ -592,10 +636,14 @@ export type HookResult =
 // fixes to the edited file (mutating it on disk so formatting never bothers the
 // model), and report ONLY the findings biome could not fix — plus, for a stack
 // consumer, the tier-(b) convention findings about that one file (never fixable by
-// construction: no convention rule ships a rewrite). Every guard is a silent exit 0
-// (surface:false); the only surfaced outcome is unfixable findings.
+// construction: no convention rule ships a rewrite) — plus, for a TypeScript edit,
+// any tsc TYPE error whose file is the one just edited. TypeScript has no per-file
+// check (analysis is whole-program), so tsc always runs over the WHOLE project —
+// scope is enforced by filtering its OUTPUT down to the edited file's findings,
+// never by narrowing its input. Every guard is a silent exit 0 (surface:false); the
+// only surfaced outcome is unfixable findings.
 // `cwd` is the caller's directory (the bin passes process.cwd()); the workroot is
-// resolved from it and every biome spawn is pinned there.
+// resolved from it and every biome/tsc spawn is pinned there.
 export function checkHook(stdin: string | undefined, cwd: string): HookResult {
   const filePath = parseHookFilePath(stdin);
   if (filePath === null) {
@@ -662,7 +710,39 @@ export function checkHook(stdin: string | undefined, cwd: string): HookResult {
       groups.push(conventions);
     }
   }
+  // Whole-program type analysis, scoped down to the edited file's OWN findings.
+  const tscFindings = hookTscFindings(root, rel, ext);
+  if (tscFindings.length > 0) {
+    groups.push({ findings: tscFindings, tool: "tsc" });
+  }
   return groups.length > 0 ? { groups, surface: true } : { surface: false };
+}
+
+// Run tsc over the WHOLE project (TypeScript has no per-file check — the same
+// call the project-wide gate makes, `runTsc`) and return only the findings whose
+// `file` is `rel`, the edited file. Never narrows tsc's INPUT: a finding on the
+// edited file can depend on the rest of the program (e.g. a sibling's ambient
+// `declare`), so scope is enforced by filtering the OUTPUT.
+// Gated on the edit being a TS/TSX source (tsc never diagnoses anything else) and
+// on the project actually carrying a tsconfig.json — the run.test.ts hook
+// fixtures ship none, and that stays a silent no-op rather than tsc's bare-help
+// exit 1. `existsSync`d at the WORKROOT only (v1 has no monorepo/nested-tsconfig
+// inference — matches the rest of this file's single-project assumption).
+function hookTscFindings(root: string, rel: string, ext: string): Finding[] {
+  if (
+    !(HOOK_TSC_EXTENSIONS.has(ext) && existsSync(join(root, "tsconfig.json")))
+  ) {
+    return [];
+  }
+  const tscBin = binFrom(requireFromHere, "typescript", "tsc");
+  if (tscBin === null) {
+    return [];
+  }
+  const tsc = runTsc(root, tscBin);
+  if ("error" in tsc) {
+    return [];
+  }
+  return tsc.group.findings.filter((finding) => finding.file === rel);
 }
 
 // Pull `tool_input.file_path` out of the hook's stdin payload, DEFENSIVELY: an
@@ -1066,9 +1146,17 @@ function runBuild(
 // resolver invariant) — via a cheap `node --version` probe. When the fallback
 // runtime is used and vitest fails, the note names the runtime so a bun-runtime
 // failure is diagnosable rather than looking like a genuine test failure.
+// `baselineExempt` is the GREEN BASELINE's set of repo-relative suite paths
+// (baseline.ts) that were already failing before this task started — empty when
+// `check --baseline` was not requested, or when it was but no record exists (in
+// which case the caller has ALREADY pushed the "no record" note; here every
+// suite counts, same as a plain run). A suite in the set is dropped from the
+// parsed failures BEFORE the summary is built and BEFORE the exit code is
+// decided, so "only newly-failing suites are reported" holds for both.
 function runTest(
   root: string,
-  cfgArgs: string[]
+  cfgArgs: string[],
+  baselineExempt: ReadonlySet<string>
 ): { note: CheckNote | null; exitCode: number; spawned: boolean } {
   const bin = resolveConsumerBin(root, "vitest", "vitest");
   if (bin === null) {
@@ -1104,8 +1192,20 @@ function runTest(
   // error, 0 tests) appears EARLY in the report, so the tail truncated it out
   // behind a wall of passing tests (the field bug); the parsed summary names it
   // directly and stays token-lean.
-  const failures = parseVitestFailures(result.stdout, root);
-  if (failures !== null) {
+  const parsed = parseVitestFailures(result.stdout, root);
+  if (parsed !== null) {
+    // The baseline exemption: a suite already in the record predates this task,
+    // so it is dropped BEFORE the summary is built — the header count and the
+    // listed files answer for what is NEW, never what was inherited.
+    const failures =
+      baselineExempt.size === 0
+        ? parsed
+        : parsed.filter((failure) => !baselineExempt.has(failure.file));
+    if (failures.length === 0) {
+      // Every parsed failure predates this run's baseline record: nothing NEW
+      // broke, so the step reads as a pass — same shape as a genuinely green run.
+      return { exitCode: 0, note: null, spawned: true };
+    }
     return {
       exitCode,
       note: { raw: null, text: vitestSummary(failures, isNode, runtime) },
@@ -1124,6 +1224,49 @@ function runTest(
     note: { raw: rawOutputTail(result), text },
     spawned: true,
   };
+}
+
+// The suites failing RIGHT NOW — the SAME vitest resolution/spawn/parse path the
+// gate's own test step uses (`runTest` above), but standalone: `dobby baseline
+// record` (baseline.ts) needs the current failing set independent of a full gate
+// run, and this is the one-directional seam that lets it reuse the parser without
+// check.ts importing baseline.ts back (run.ts resolves the STORED record and
+// hands it to `check()`; baseline.ts calls this to PRODUCE one).
+//
+// Degrades to an EMPTY list rather than an error whenever nothing could actually
+// run — no vitest capability, no consumer binary installed, output that could not
+// be parsed: a repo a baseline can't examine is a repo it also has nothing to
+// report as failing. `record` always exits 0 regardless (baseline.ts): a record
+// is a fact, not a verdict.
+//
+// @public — consumed by baseline.ts's `record` subcommand.
+export function collectFailingSuites(root: string): string[] {
+  const { capabilities, dependencies } = scanCapabilities(root);
+  if (!capabilities.includes("vitest")) {
+    return [];
+  }
+  const bin = resolveConsumerBin(root, "vitest", "vitest");
+  if (bin === null) {
+    return [];
+  }
+  const vitestCfg = configArgs(
+    root,
+    vitestConfigSpec(capabilities, dependencies)
+  );
+  const { runtime } = resolveTestRuntime(root);
+  const result = runCapture(
+    runtime,
+    [bin, "run", "--reporter=json", ...vitestCfg.args],
+    { root }
+  );
+  if (result.error) {
+    return [];
+  }
+  const failures = parseVitestFailures(result.stdout, root);
+  if (failures === null) {
+    return [];
+  }
+  return [...new Set(failures.map((failure) => failure.file))].sort();
 }
 
 // Pick the runtime for the vitest step: prefer NODE (a cheap `node --version`

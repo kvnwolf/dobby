@@ -1,10 +1,10 @@
 ---
 name: dispatch
-description: Dispatch a scoped, ad-hoc task to a worker agent (or a few in parallel) and review what comes back — without the full /dobby:execute plan-and-waves ceremony. Use for a small fix or change, or a bounded investigation, when you don't need a STATE.md spec.
+description: Dispatch a scoped, ad-hoc task to a worker agent (or a few in parallel) and review what comes back — without the full /dobby:execute plan ceremony. Use for a small fix or change, or a bounded investigation, when you don't need a STATE.md spec.
 argument-hint: "[what to dispatch]"
 ---
 
-You are the coordinator/architect for an ad-hoc task. You do NOT do the work yourself — you write a crisp instruction, dispatch the right worker agent(s), and review what comes back. This is the lightweight counterpart to `/dobby:execute`: no `STATE.md` spec, no waves — just a scoped task handed to a worker, then you integrate.
+You are the coordinator/architect for an ad-hoc task. You do NOT do the work yourself — you write a crisp instruction, dispatch the right worker agent(s), and review what comes back. This is the lightweight counterpart to `/dobby:execute`: no `STATE.md` spec — just a scoped task handed to a worker, then you integrate.
 
 ## Pick the worker
 - **`researcher`** — investigate / locate / understand a subsystem / fetch docs. Returns findings; makes NO changes.
@@ -21,16 +21,15 @@ Write a self-contained instruction the worker can act on without guessing:
 
 ## Step 2: Dispatch
 
-Before any `bunx dobby` command or Agent on EVERY branch, require BOTH local onboarding markers at the current workroot: `dobby.config.json` and `node_modules/.bin/dobby`. Either missing → STOP, point to `/dobby:onboard`, and do not run `bunx`; remote resolution is forbidden. Then resolve the native concurrency cap before the first Agent. For **Investigation** and **Quick** paths, run **`bunx dobby env --json`** from that workroot now; for the rigor path, use command 2 below after bring-up. Require the complete `workflowRecipe` and a positive-integer `workflowRecipe.limits.maxConcurrency`. Missing/malformed recipe or limit → STOP with zero Agents; never infer a fallback from prose or frontmatter. Retain that limit for every later direct Agent call in this dispatch, including an optional reviewer in Step 3.
+Before any `bunx dobby` command or Agent on EVERY branch, require BOTH local onboarding markers at the current workroot: `dobby.config.json` and `node_modules/.bin/dobby`. Either missing → STOP, point to `/dobby:onboard`, and do not run `bunx`; remote resolution is forbidden. Size every direct-Agent fan-out in this dispatch yourself, including an optional reviewer in Step 3.
 
-- **Investigation** → dispatch one or more `researcher` agents (Agent tool, `subagent_type: "dobby:researcher"`). Partition independent questions into deterministic sequential batches of at most `maxConcurrency`: run one batch in parallel, await all its results, then launch the next.
+- **Investigation** → dispatch one or more `researcher` agents (Agent tool, `subagent_type: "dobby:researcher"`). Partition independent questions into deterministic sequential batches you judge safe to run together: run one batch in parallel, await all its results, then launch the next.
 - **Quick, low-risk change** → dispatch one `implementor` (`subagent_type: "dobby:implementor"`), consuming one direct-Agent slot. Name the exact affected paths in its instruction; they are the mechanical inspection scope if the Agent fails to return a valid envelope.
-- **Change that needs rigor** → run the build loop, in four commands:
+- **Change that needs rigor** → run the build loop, in three commands:
   1. **`bunx dobby up --json`** — brings the workspace up (idempotent, liveness-first: it starts the run only if it isn't already up) and reports the environment in one payload. No `dobby.config.json` / no local `node_modules/.bin/dobby` → the project was never onboarded: stop and point the user at `/dobby:onboard`. `ok:false` → STOP and report the `reason` (plus `degradedCommand` when it offers one); don't dispatch against a workspace that never came up. Take `devUrl` (null for a library / CLI / plugin like dobby with no run script), `verifyMode` (`url` / `programmatic` — when it's `programmatic` the verifier verifies programmatically instead of against a URL), and `workroot`.
-  2. **`bunx dobby env --json`** from `workroot` — take the complete fixed `workflowRecipe` object verbatim. If it is missing/malformed, stop before agents; never derive model/effort/limits by eye.
-  3. **`bunx dobby build-plan --task <task.json> --json`** — write your Step 1 instruction to a scratch JSON file outside the repo (`{"id","title","spec","areas","verifyRecipe"}`, plus `decisions` / `constraints` / `testFirst` / `destructive` when they apply) and let build-plan normalize it into the same payload `/dobby:execute` gets: one `tasks[]` entry, one wave, `hasTestSuite.value`, `workRoot`. No `STATE.md` is read.
-  4. Author the **build-loop Workflow** from `../execute/references/build-workflow.md` (the shared build-loop component), script VERBATIM, `args` = that single-element `tasks` array + `devUrl` + `hasTestSuite.value` + `workRoot` + the complete `workflowRecipe`. The implement→verify loop applies in full.
-- Every direct-Agent fan-out (initial researchers, parallel implementors if the task was split, retry/replacement Agents, or Step 3 reviewers) runs in sequential batches of at most `maxConcurrency`. Workers inside one batch must touch **non-overlapping areas** (same rule as `/dobby:execute` waves). Serialize anything that mutates shared backend state. The native build Workflow receives the complete recipe and enforces the same cap internally.
+  2. **`bunx dobby build-plan --task <task.json> --json`** — write your Step 1 instruction to a scratch JSON file outside the repo (`{"id","title","spec","areas","verifyRecipe"}`, plus `decisions` / `constraints` / `testFirst` / `destructive` when they apply) and let build-plan normalize it into the same payload `/dobby:execute` gets: one `tasks[]` entry, `hasTestSuite.value`, `workRoot`. No `STATE.md` is read.
+  3. Follow **`../execute/references/build-protocol.md`** (the shared build-loop component) for that single-task list, with `devUrl` + `hasTestSuite.value` + `workRoot`. The implement→verify loop applies in full.
+- Every direct-Agent fan-out (initial researchers, parallel implementors if the task was split, retry/replacement Agents, or Step 3 reviewers) runs in sequential batches you size yourself. Workers inside one batch must touch **non-overlapping areas** (the same coordination guard `build-protocol.md` requires for concurrent tasks sharing a tree). Serialize anything that mutates shared backend state.
 
 ## Step 3: Review what came back
 You are the architect — the workers did the mechanical work; you make the call.
@@ -51,10 +50,9 @@ User-facing output in the user's language; code, comments, and docs in English; 
 - [ ] Instruction is self-contained (what / where / constraints / done means) before any dispatch
 - [ ] The right worker picked: researcher (investigate) · implementor (scoped change) · reviewer (existing diff) · the build loop (a change that must be proven)
 - [ ] Both local markers (`dobby.config.json` + `node_modules/.bin/dobby`) existed before any `bunx dobby`; either missing STOPped at `/dobby:onboard` with no remote resolution or Agent launch
-- [ ] Before every direct path's first Agent, `bunx dobby env --json` returned a complete `workflowRecipe` and a valid `limits.maxConcurrency`; a missing/malformed value launched zero Agents
-- [ ] Rigor path used `bunx dobby up --json` (STOPping on `ok:false`, taking `devUrl` / `verifyMode` / `workroot`), then `bunx dobby env --json` (complete fixed `workflowRecipe`), and `bunx dobby build-plan --task <task.json> --json` — no runtime value was hand-derived
-- [ ] Build-loop workflow authored VERBATIM from `../execute/references/build-workflow.md`, `args` only (single-task list, devUrl, hasTestSuite.value, workRoot, complete workflowRecipe)
-- [ ] Every direct Agent fan-out ran in sequential batches no larger than `workflowRecipe.limits.maxConcurrency`; parallel workers touched non-overlapping areas and shared-state mutations were serialized
+- [ ] Rigor path used `bunx dobby up --json` (STOPping on `ok:false`, taking `devUrl` / `verifyMode` / `workroot`), then `bunx dobby build-plan --task <task.json> --json` — no runtime value was hand-derived
+- [ ] Build-loop task run per `../execute/references/build-protocol.md` (single-task list, devUrl, hasTestSuite.value, workRoot)
+- [ ] Every direct Agent fan-out ran in sequential batches sized by your own judgment; parallel workers touched non-overlapping areas and shared-state mutations were serialized
 - [ ] Every direct implementor envelope handled fail-closed: `completed` integrated only with non-empty `workLog` / empty `blocker`; `blocked` stopped with blocker + accounting; null/malformed triggered scoped status/diff/Read inspection and `needs-human`, with no later batch/reviewer/gate
 - [ ] Results integrated by you (the architect): findings read, completed work-log reviewed, `needs-human` surfaced; verified work not mislabeled as code-reviewed
 - [ ] Work-log entries appended with `bunx dobby state append-worklog` when a session doc is in play (STATE.md never hand-edited)

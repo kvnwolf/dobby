@@ -172,28 +172,14 @@ export { default } from "@kvnwolf/dobby/drizzle";
 
 ### `dobby env`
 
-Print a snapshot of the working environment — worktree root, branch, cmux workspace, detected capabilities, config presence, inferred `db:*` task names (`dbTasks`), dev URL, kit pane refs, and the fixed **Claude-native Workflow recipe**. Every fact is resolved locally (no network), and `env` always exits 0.
+Print a snapshot of the working environment — worktree root, branch, cmux workspace, browser verification guide, kit pane refs, detected capabilities, config presence, inferred `db:*` task names (`dbTasks`), and dev URL. Every fact is resolved locally (no network), and `env` always exits 0.
 
 ```sh
 dobby env             # key: value text
 dobby env --json      # the same facts as one JSON object
 ```
 
-`workflowRecipe` is always `baseline-v1`. It carries the deterministic fingerprint `fnv1a32:32afa935`, derived from the id, the five worker role policies in canonical order, both limits, and verification mode. The fingerprint is a compact drift detector, not a security hash; consumers can reject a recipe whose content no longer matches the known baseline without maintaining a second role table. The main-thread Architect uses the interactive session's manually selected model/effort and is deliberately outside this worker recipe. There is no profile picker and no project/global config, environment variable, session override, or CLI flag for models or limits during this seven-day experiment:
-
-| Role | Model | Reasoning |
-| --- | --- | --- |
-| researcher | `claude-sonnet-5` | `medium` |
-| test-author | `claude-opus-5` | `high` |
-| implementor | `claude-sonnet-5` | `high` |
-| reviewer | `claude-opus-5` | `high` |
-| verifier | `claude-sonnet-5` | `medium` |
-
-The fixed limits are `maxOuter: 2` and `maxConcurrency: 2`; verification is `mechanical-first`. `/dobby:execute` passes the complete `workflowRecipe` object unchanged to one native Workflow. Normal execute is optional test-author → implementor → verifier. A first verification failure may dispatch one implementor fix because a second verifier attempt remains; no fix may run after that final slot. There is no `maxReview`: the reviewer role remains in the recipe for direct dispatch and missing-work-log safety review, while holistic static review happens at the external PR boundary and must cover the current HEAD.
-
-The recipe also reports runtime capabilities. Native Workflow can apply model/effort while retaining `agentType`; build-role thread reuse remains unavailable and is not emulated with `claude -p`.
-
-Review the experiment after seven days of real use using Workflow telemetry: attempts, retries, first-attempt success, cap exhaustion, outcome, and mechanical-versus-model verification. Change the one canonical recipe only after that evidence; do not tune agent files independently.
+The JSON object carries `branch`, `browserGuide`, `browserPane`, `capabilities`, `cmux`, `config`, `dbTasks`, `devUrl`, `runPane`, and `worktree`. Every field folds to `null` / `false` / `[]` rather than throwing when its underlying tool or context is absent (no vite capability → `devUrl: null`; no cmux workspace → `browserPane`/`runPane`/`cmux: null`), which is why `env` always exits 0. Agent model/effort/reasoning live in each worker agent's own frontmatter (`plugin/agents/*.md`), not in this payload — there is no fixed recipe object to resolve here.
 
 ### `dobby check [file...]`
 
@@ -407,11 +393,11 @@ dobby state append-worklog --task 3 --file /tmp/worklog.md --json
 dobby state lint --json
 ```
 
-`init` writes the skeleton plus the `.gitignore` entry and refuses an existing document. `set` replaces **one** section body and preserves every other byte (unknown sections included); `## Goal` / `## Source` are write-once, `## Work log` is never settable — that is what `append-worklog` is for, and it demotes the entry's own `##` headings to `###` so the document keeps one heading level per depth. `lint` reports the structure (H1, the seven required sections present, canonical sections in order and unduplicated, gitignored). A legacy `## Execution profile` is an unknown section: Dobby tolerates and preserves it byte-for-byte, but `init` no longer creates it and the fixed recipe never reads it.
+`init` writes the skeleton plus the `.gitignore` entry and refuses an existing document. `set` replaces **one** section body and preserves every other byte (unknown sections included); `## Goal` / `## Source` are write-once, `## Work log` is never settable — that is what `append-worklog` is for, and it demotes the entry's own `##` headings to `###` so the document keeps one heading level per depth. `lint` reports the structure (H1, the seven required sections present, canonical sections in order and unduplicated, gitignored). A legacy `## Execution profile` is an unknown section: Dobby tolerates and preserves it byte-for-byte, but `init` no longer creates it and nothing reads it.
 
 ### `dobby build-plan`
 
-Derive the build-workflow plan from a spec's task table — mechanically, so waves and preconditions are never eyeballed.
+Derive the build plan from a spec's task table — mechanically, so the task list and preconditions are never eyeballed.
 
 ```sh
 dobby build-plan --json                       # from STATE.md's ## Spec
@@ -419,7 +405,7 @@ dobby build-plan --file docs/plan.md --json   # from another document
 dobby build-plan --task /tmp/one-task.json --json   # one ad-hoc task, no STATE.md
 ```
 
-The table is found by its **header row** (`#` / `Task` / `Depends on` / `Affected areas` / `Verify recipe`, with `Description`, `Test-first` and `Destructive` optional), so a non-task table inside the spec is skipped. The answer carries `tasks[]` (verbatim, as the workflow's arguments), `waves[[id…]]` (topological, area-disjoint, a destructive task alone in its wave, readiness refilled each round), `hasTestSuite`, `manualVerifySetup`, and `preconditions` — missing fields, dangling dependencies, cycles. **Failing preconditions exit 1 with the payload still on stdout**, so the caller can show exactly which task and which cell.
+The table is found by its **header row** (`#` / `Task` / `Depends on` / `Affected areas` / `Verify recipe`, with `Description`, `Test-first` and `Destructive` optional), so a non-task table inside the spec is skipped. The answer carries `tasks[]` — the per-task instruction data verbatim (`id`, `title`, `spec`, `decisions`, `constraints`, `areas[]`, `verifyRecipe`, `testFirst`, `destructive`, `dependsOn[]`), the exact shape `build-protocol.md` consumes — plus `hasTestSuite` (`{value, specSays, disagreement}`, the repo's own `vitest` capability against what the spec claims), `manualVerifySetup`, `preconditions` (`{missing, danglingDeps, cycles, ok}`), and `workRoot`. There is no wave grouping: `dependsOn` carries each row's dependency ids unchanged, so a task can start the moment its own dependencies are done, and a `destructive` task is flagged rather than isolated — the coordinator serializes it at dispatch time. **Failing preconditions exit 1 with the payload still on stdout**, so the caller can show exactly which task and which cell.
 
 ### `dobby scope preflight` · `dobby finish --preflight` · `dobby migrate`
 
@@ -558,7 +544,7 @@ An optional file at the repo root. Every field is optional — its presence mark
 | `tracker` | The issue backend for [`tracker` / `claim` / `goal parse`](#dobby-tracker--dobby-claim--dobby-goal-parse): `{ "type": "github" }` (the default when the key is absent), `{ "type": "linear", "team": "VON" }` (Linear has no repo-derivable team), or `{ "type": "local" }` (a plain `BACKLOG.md`). |
 | `release` | The release target — its presence is what makes [`dobby release`](#dobby-release) exist. `type` is required (`"npm"` or `"homebrew-cask"`); the rest is per-channel: `dir`, `smoke` (npm), `tap`, `cask`, `notaryProfile` (homebrew-cask), plus the shared `lockstep` and `surfaces`. |
 
-`tracker` and `release` are validated when the config is read. The fixed Workflow recipe deliberately does not belong in this project contract and is not selected or overridden per goal.
+`tracker` and `release` are validated when the config is read. Agent model/effort/reasoning are not project config — they live in each worker agent's own frontmatter (`plugin/agents/*.md`), not in `dobby.config.json`.
 
 ## Inferred defaults per capability
 
