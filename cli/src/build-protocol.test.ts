@@ -371,6 +371,31 @@ describe("the dispatch protocol — scheduling", () => {
       "otherwise one task's gate judges another's half-written code"
     ).toBe(true);
   });
+
+  it("never dispatches two tasks whose Affected areas overlap at the same time", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /affected areas|\bareas\b/i,
+        /overlap|share|same/i,
+        /wait|exactly as if it depended|not (?:be )?dispatch|never dispatch/i
+      ),
+      "overlapping writers must be serialised like a dependency, not raced"
+    ).toBe(true);
+  });
+
+  it("does not let Exit-gate serialisation stand in for the area-overlap check", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /exit gate/i,
+        /judg/i,
+        /overlap|concurrent|same time/i,
+        NEGATION
+      ),
+      "gate serialisation protects the gate's verdict, not the shared tree from concurrent edits"
+    ).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

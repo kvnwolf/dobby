@@ -136,13 +136,15 @@ const SHORT_HASH_LENGTH = 8;
 // `baselineRecord` is the GREEN BASELINE (baseline.ts), already resolved by
 // run.ts BEFORE this call (this module never reads baseline.ts's storage
 // itself — one-directional dependency the other way, baseline.ts -> check.ts,
-// via `collectFailingSuites` below): undefined when `--baseline` was not
+// via `collectFailingTests` below): undefined when `--baseline` was not
 // requested (a plain gate, judged against the whole tree, exactly as before);
 // null when it WAS requested but no record exists (every suite counts, and the
 // run says so explicitly rather than passing in silence); an array (possibly
-// empty) of repo-relative suite paths when a record exists — suites in it are
-// dropped from the test step's failures before the summary and the exit code
-// are decided, so only what THIS run newly broke is reported. A recorded
+// empty) of opaque per-TEST identity tokens (`testIdentity` below —
+// file+fullName, never inspected outside this module) when a record exists —
+// tests in it are dropped from the test step's failures before the summary and
+// the exit code are decided, so only what THIS run newly broke is reported,
+// including a brand-new failure inside an already-red file. A recorded
 // baseline never reaches this parameter on a call that omitted `--baseline` —
 // the plain gate is never softened by it (the commit / pre-push forms of the
 // gate always pass undefined).
@@ -1146,13 +1148,16 @@ function runBuild(
 // resolver invariant) — via a cheap `node --version` probe. When the fallback
 // runtime is used and vitest fails, the note names the runtime so a bun-runtime
 // failure is diagnosable rather than looking like a genuine test failure.
-// `baselineExempt` is the GREEN BASELINE's set of repo-relative suite paths
-// (baseline.ts) that were already failing before this task started — empty when
-// `check --baseline` was not requested, or when it was but no record exists (in
-// which case the caller has ALREADY pushed the "no record" note; here every
-// suite counts, same as a plain run). A suite in the set is dropped from the
-// parsed failures BEFORE the summary is built and BEFORE the exit code is
-// decided, so "only newly-failing suites are reported" holds for both.
+// `baselineExempt` is the GREEN BASELINE's set of per-TEST identity tokens
+// (baseline.ts — `file<SEP>fullName`, opaque outside this module) that were
+// already failing before this task started — empty when `check --baseline` was
+// not requested, or when it was but no record exists (in which case the caller
+// has ALREADY pushed the "no record" note; here every suite counts, same as a
+// plain run). Exemption is per TEST, not per FILE: a suite already in the
+// record only drops the SPECIFIC failing tests it recorded, so a NEW failure in
+// an already-red file still surfaces. A failure is dropped from the parsed set
+// BEFORE the summary is built and BEFORE the exit code is decided, so "only
+// newly-failing tests are reported" holds for both.
 function runTest(
   root: string,
   cfgArgs: string[],
@@ -1194,13 +1199,17 @@ function runTest(
   // directly and stays token-lean.
   const parsed = parseVitestFailures(result.stdout, root);
   if (parsed !== null) {
-    // The baseline exemption: a suite already in the record predates this task,
+    // The baseline exemption: a TEST already in the record predates this task,
     // so it is dropped BEFORE the summary is built — the header count and the
-    // listed files answer for what is NEW, never what was inherited.
+    // listed files answer for what is NEW, never what was inherited. Keyed on
+    // file+test identity (not file alone), so a second, brand-new failure in an
+    // already-red file is never swallowed along with the one the record named.
     const failures =
       baselineExempt.size === 0
         ? parsed
-        : parsed.filter((failure) => !baselineExempt.has(failure.file));
+        : parsed.filter(
+            (failure) => !baselineExempt.has(testIdentity(failure))
+          );
     if (failures.length === 0) {
       // Every parsed failure predates this run's baseline record: nothing NEW
       // broke, so the step reads as a pass — same shape as a genuinely green run.
@@ -1226,12 +1235,20 @@ function runTest(
   };
 }
 
-// The suites failing RIGHT NOW — the SAME vitest resolution/spawn/parse path the
-// gate's own test step uses (`runTest` above), but standalone: `dobby baseline
-// record` (baseline.ts) needs the current failing set independent of a full gate
-// run, and this is the one-directional seam that lets it reuse the parser without
-// check.ts importing baseline.ts back (run.ts resolves the STORED record and
-// hands it to `check()`; baseline.ts calls this to PRODUCE one).
+// The TESTS failing RIGHT NOW, each named by its identity token
+// (`testIdentity` below — file+fullName, opaque outside this module) — the SAME
+// vitest resolution/spawn/parse path the gate's own test step uses (`runTest`
+// above), but standalone: `dobby baseline record` (baseline.ts) needs the
+// current failing set independent of a full gate run, and this is the
+// one-directional seam that lets it reuse the parser without check.ts
+// importing baseline.ts back (run.ts resolves the STORED record and hands it
+// to `check()`; baseline.ts calls this to PRODUCE one).
+//
+// Per-TEST, not per-file: a record built from file paths alone could not later
+// tell "this file's recorded failure is still the same one" from "a second,
+// new failure just joined it" — the exact gap that let a green baseline hide a
+// new break in an already-red suite. baseline.ts stores these tokens verbatim
+// and derives the human-facing file list from `testIdentityFile`.
 //
 // Degrades to an EMPTY list rather than an error whenever nothing could actually
 // run — no vitest capability, no consumer binary installed, output that could not
@@ -1240,7 +1257,7 @@ function runTest(
 // is a fact, not a verdict.
 //
 // @public — consumed by baseline.ts's `record` subcommand.
-export function collectFailingSuites(root: string): string[] {
+export function collectFailingTests(root: string): string[] {
   const { capabilities, dependencies } = scanCapabilities(root);
   if (!capabilities.includes("vitest")) {
     return [];
@@ -1266,7 +1283,32 @@ export function collectFailingSuites(root: string): string[] {
   if (failures === null) {
     return [];
   }
-  return [...new Set(failures.map((failure) => failure.file))].sort();
+  return [...new Set(failures.map((failure) => testIdentity(failure)))].sort();
+}
+
+// The separator joining a failure's file and test name into one opaque
+// identity token. A NUL byte: it can occur in neither a file path nor a JS
+// test name, so the join is always unambiguously reversible by
+// `testIdentityFile`. Kept file-private — nothing outside this module needs to
+// construct or split a token itself; baseline.ts only stores and compares them
+// verbatim, and reads the file back out through `testIdentityFile`.
+const TEST_IDENTITY_SEPARATOR = "\u0000";
+
+// A failing test's identity: its file plus its full name (empty for a
+// file-level load failure, where no individual test ever ran) — the unit the
+// baseline exemption and the record are keyed on, so a NEW failure inside an
+// already-red file is never conflated with the one already on record.
+function testIdentity(failure: { file: string; name: string }): string {
+  return `${failure.file}${TEST_IDENTITY_SEPARATOR}${failure.name}`;
+}
+
+// The file half of an identity token — what baseline.ts shows a human (`dobby
+// baseline record`'s text/`--json` output lists files, not raw test tokens).
+//
+// @public — consumed by baseline.ts.
+export function testIdentityFile(identity: string): string {
+  const index = identity.indexOf(TEST_IDENTITY_SEPARATOR);
+  return index === -1 ? identity : identity.slice(0, index);
 }
 
 // Pick the runtime for the vitest step: prefer NODE (a cheap `node --version`
@@ -1349,24 +1391,36 @@ function hermeticityNote(root: string): string | null {
 // bounded so a wholesale failure stays token-lean. Overflow collapses to `…N more`.
 const VITEST_FILE_CAP = 10;
 
-// One parsed vitest failure: the failed test FILE (repo-relative), a one-line
-// summary (its first failure message / load error), and the first in-repo stack
-// frame as `file:line` (null when the message carried no in-repo frame).
+// One parsed vitest failure — now per TEST, not per file: the failed test's
+// FILE (repo-relative), its full NAME (empty string for a file-level load
+// error, where no individual test ever ran — that shape's identity is the file
+// alone), a one-line summary (its failure message / the load error), and the
+// first in-repo stack frame as `file:line` (null when the message carried no
+// in-repo frame). `testIdentity` (above) is what turns a pair of these fields
+// into the baseline's comparison key.
 interface VitestFailure {
   file: string;
   frame: string | null;
+  name: string;
   summary: string;
 }
 
 // The vitest --reporter=json shape (Jest-compatible), only the fields this parser
 // reads. `testResults[]` = one entry per test FILE; a file-level LOAD failure sets
 // `status: "failed"` with an EMPTY `assertionResults` and a `message`, while an
-// individual test failure lands in `assertionResults[].failureMessages`.
+// individual test failure lands in `assertionResults[].failureMessages`, named by
+// `fullName` (ancestor describe blocks + the test's own title, joined by vitest's
+// own json reporter) or, failing that, `title`.
 interface VitestReport {
   testResults?: VitestFileResult[];
 }
 interface VitestFileResult {
-  assertionResults?: { status?: string; failureMessages?: string[] }[];
+  assertionResults?: {
+    failureMessages?: string[];
+    fullName?: string;
+    status?: string;
+    title?: string;
+  }[];
   message?: string;
   name?: string;
   status?: string;
@@ -1374,35 +1428,58 @@ interface VitestFileResult {
 
 // Render the parsed vitest failures (A1) as a multi-line note: the `test: N
 // suite(s) failed — <first file>` header (naming the fallback runtime when node was
-// absent), then one capped line per failed file, then a `…N more` tail. Rendered as
+// absent), then one capped line per failed FILE, then a `…N more` tail. Grouped
+// back down to one line per unique file — `failures` may carry several rows for
+// the same file (one per failing test in it) now that identity is per-test, but
+// the summary stays a per-FILE orientation, same shape as before. Rendered as
 // a single note block (run.ts prints `note.text` verbatim when `raw` is null).
 function vitestSummary(
   failures: VitestFailure[],
   isNode: boolean,
   runtime: string
 ): string {
-  const firstFile = failures[0]?.file ?? "unknown";
+  const perFile = firstPerFile(failures);
+  const firstFile = perFile[0]?.file ?? "unknown";
   const runtimeHint = isNode
     ? ""
     : ` — ran under ${runtime} (no node found; vitest under this runtime can mis-resolve some deps)`;
-  const header = `test: ${failures.length} suite(s) failed — ${firstFile}${runtimeHint}`;
-  const shown = failures.slice(0, VITEST_FILE_CAP);
+  const header = `test: ${perFile.length} suite(s) failed — ${firstFile}${runtimeHint}`;
+  const shown = perFile.slice(0, VITEST_FILE_CAP);
   const lines = shown.map((failure) => {
     const frame = failure.frame === null ? "" : ` (${failure.frame})`;
     return `  ${failure.file} — ${failure.summary}${frame}`;
   });
-  const overflow = failures.length - shown.length;
+  const overflow = perFile.length - shown.length;
   if (overflow > 0) {
     lines.push(`  …${overflow} more`);
   }
   return [header, ...lines].join("\n");
 }
 
-// Parse vitest's --reporter=json stdout into per-file failures (A1). Returns null
+// Collapse per-test failures down to the first one seen for each unique file,
+// preserving order of first appearance — display stays per-FILE (a "N suite(s)
+// failed" count and orientation line) even though identity underneath is now
+// per-test.
+function firstPerFile(failures: VitestFailure[]): VitestFailure[] {
+  const seen = new Set<string>();
+  const result: VitestFailure[] = [];
+  for (const failure of failures) {
+    if (seen.has(failure.file)) {
+      continue;
+    }
+    seen.add(failure.file);
+    result.push(failure);
+  }
+  return result;
+}
+
+// Parse vitest's --reporter=json stdout into per-TEST failures (A1). Returns null
 // when the JSON can't be parsed OR carries no failed suite — the caller then falls
 // back to the raw-output tail (the true findingless crash: vitest died before it
-// could report). Covers BOTH failure shapes: a file-level load error (the `message`)
-// and individual failed tests (the first `failureMessages`).
+// could report). Covers BOTH failure shapes: a file-level load error (one row,
+// empty name — the `message`) and EVERY individual failed test in a file (one row
+// each, named by `fullName`/`title` — not just the first, so a second failure
+// alongside an already-recorded one is never invisible to the baseline exemption).
 //
 // PURE and PRIVATE — reached only through the vitest step. Exercised in CI via a
 // STUB vitest bin (a fake `node_modules/vitest` that exits nonzero writing
@@ -1424,31 +1501,69 @@ function parseVitestFailures(
   }
   const failures: VitestFailure[] = [];
   for (const file of report.testResults) {
-    if (file.status !== "failed") {
-      continue;
+    if (file.status === "failed") {
+      failures.push(...failuresForFile(file, root));
     }
-    const rawName = typeof file.name === "string" ? file.name : "";
-    const relFile = rawName === "" ? "<unknown>" : relativize(root, rawName);
-    const assertions = Array.isArray(file.assertionResults)
-      ? file.assertionResults
-      : [];
-    const failed = assertions.find(
-      (assertion) =>
-        assertion.status === "failed" &&
-        Array.isArray(assertion.failureMessages) &&
-        assertion.failureMessages.length > 0
-    );
-    const detail = stripAnsi(
-      failed?.failureMessages?.[0] ??
-        (typeof file.message === "string" ? file.message : "")
-    );
-    failures.push({
-      file: relFile,
-      frame: firstInRepoFrame(detail, root),
-      summary: summarize(detail),
-    });
   }
   return failures.length > 0 ? failures : null;
+}
+
+// One failed file's rows: a single file-level-load-error row (empty name — no
+// individual test ever ran, so identity is the file alone) OR one row per
+// INDIVIDUAL failing test — never just the first, so a second failure landing
+// alongside an already-recorded one survives the parse to be seen as new by
+// the baseline exemption.
+function failuresForFile(
+  file: VitestFileResult,
+  root: string
+): VitestFailure[] {
+  const rawName = typeof file.name === "string" ? file.name : "";
+  const relFile = rawName === "" ? "<unknown>" : relativize(root, rawName);
+  const assertions = Array.isArray(file.assertionResults)
+    ? file.assertionResults
+    : [];
+  const failedAssertions = assertions.filter(
+    (assertion) =>
+      assertion.status === "failed" &&
+      Array.isArray(assertion.failureMessages) &&
+      assertion.failureMessages.length > 0
+  );
+  if (failedAssertions.length === 0) {
+    const detail = stripAnsi(
+      typeof file.message === "string" ? file.message : ""
+    );
+    return [
+      {
+        file: relFile,
+        frame: firstInRepoFrame(detail, root),
+        name: "",
+        summary: summarize(detail),
+      },
+    ];
+  }
+  return failedAssertions.map((assertion) => {
+    const detail = stripAnsi(assertion.failureMessages?.[0] ?? "");
+    return {
+      file: relFile,
+      frame: firstInRepoFrame(detail, root),
+      name: assertionName(assertion),
+      summary: summarize(detail),
+    };
+  });
+}
+
+// A failing assertion's display name: `fullName` (ancestor describe blocks +
+// the test's own title, joined by vitest's json reporter) when present,
+// falling back to the bare `title`, and finally to empty (matching a
+// file-level load error's identity when neither field is usable).
+function assertionName(assertion: {
+  fullName?: string;
+  title?: string;
+}): string {
+  if (typeof assertion.fullName === "string" && assertion.fullName !== "") {
+    return assertion.fullName;
+  }
+  return typeof assertion.title === "string" ? assertion.title : "";
 }
 
 // vitest's PLACEHOLDER error message. `STACK_TRACE_ERROR` is the pre-allocated

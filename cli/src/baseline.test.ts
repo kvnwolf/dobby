@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -25,7 +25,9 @@ useSpawnBudget();
 //      control (that suite really is red);
 //   3. a suite that breaks AFTER the record IS reported, and only it — even when
 //      the baselined suite's failure has changed message meanwhile (the record
-//      is per SUITE, which is what "only newly-failing suites" means);
+//      is per TEST — file + full name — which is what "only newly-failing
+//      tests are reported" means; a message change on the SAME test is still
+//      the same identity, still exempt);
 //   4. NO record at all means everything counts, said EXPLICITLY — the run names
 //      the missing baseline instead of passing (or filtering) in silence;
 //   5. a plain `dobby check` is NEVER softened by a record — the commit and
@@ -33,7 +35,14 @@ useSpawnBudget();
 //   6. a `--baseline` run that suppressed a failure records no green input in
 //      the gate cache, so the next plain Gate is not served a green nothing
 //      ever earned;
-//   7. `--baseline` is a registered flag OF `check` (usage + allowlist).
+//   7. `--baseline` is a registered flag OF `check` (usage + allowlist);
+//   8. identity is per TEST, not per FILE (the P1 this file exists to pin) — a
+//      SECOND, NEW failing test landing in an already-red file is reported,
+//      even though the file itself was already in the record, and even when
+//      the per-file COUNT of failing tests stays the same (one test fixed,
+//      a different one breaks);
+//   9. an OLD-format record (bare suite paths, pre-dating per-test identity)
+//      never crashes the gate — it is treated as no record at all.
 //
 // INDEPENDENT SOURCES for every expected value here:
 //   - Which suites fail, and with WHICH message, is DICTATED by this file: the
@@ -48,9 +57,13 @@ useSpawnBudget();
 //   - "Only the new one" is asserted on the gate's OWN failure summary, which
 //     names each failed suite by its repo-relative path — the baselined path must
 //     be ABSENT from the whole output, not merely deprioritised.
-//   - Where the record is STORED is deliberately NOT asserted: the baseline is
-//     observed only through the commands that write and read it, so the storage
-//     layout stays free to change without touching this contract.
+//   - Where the record is STORED is deliberately NOT asserted for anything a
+//     command can still WRITE: the baseline is observed only through the
+//     commands that write and read it, so the storage layout stays free to
+//     change without touching this contract. Slice 9 is the one exception —
+//     it plants a file BY HAND, because no command written against the current
+//     format can produce the shape it needs to exist: a record from before
+//     per-test identity.
 //
 // Why `--no-cache` on almost every `check` here: the stub's reporter payload
 // lives OUTSIDE the repo, so making a suite fail does not change the tree the
@@ -87,7 +100,18 @@ interface FailedSuite {
 //
 // Returns the repo root plus `failing(...)`: the switch this file uses to decide
 // which suites are red at any moment.
+// A single NAMED failing test, for the slices that need per-test (not just
+// per-file) identity: two of these sharing a `file` are two DIFFERENT tests in
+// the same suite, distinguished by `name` — the field the fix in this file is
+// about (vitest's `fullName`, carried by every real assertionResult).
+interface NamedFailure {
+  file: string;
+  message: string;
+  name: string;
+}
+
 function makeBaselineRepo(): {
+  failingTests: (tests: NamedFailure[]) => void;
   repo: string;
   failing: (suites: FailedSuite[]) => void;
 } {
@@ -172,7 +196,35 @@ function makeBaselineRepo(): {
     );
   };
 
-  return { failing, repo };
+  // The per-TEST twin of `failing` above: each entry becomes its own
+  // `assertionResults` row, named by `fullName` (the field vitest's real json
+  // reporter carries and this fix now reads) — grouped back under one
+  // `testResults` entry PER FILE, exactly as vitest itself would report
+  // several failing tests living in the same suite file.
+  const failingTests = (tests: NamedFailure[]): void => {
+    const byFile = new Map<string, NamedFailure[]>();
+    for (const test of tests) {
+      const forFile = byFile.get(test.file) ?? [];
+      forFile.push(test);
+      byFile.set(test.file, forFile);
+    }
+    writeFileSync(
+      reportPath,
+      JSON.stringify({
+        testResults: [...byFile.entries()].map(([file, forFile]) => ({
+          assertionResults: forFile.map((test) => ({
+            failureMessages: [test.message],
+            fullName: test.name,
+            status: "failed",
+          })),
+          name: join(repo, file),
+          status: "failed",
+        })),
+      })
+    );
+  };
+
+  return { failing, failingTests, repo };
 }
 
 // The two suites this file talks about, and the messages they fail with — all of
@@ -188,6 +240,20 @@ const ALPHA_LATER: FailedSuite = {
 const BETA: FailedSuite = {
   file: "src/beta.test.ts",
   message: "AssertionError: expected 1 to be 2",
+};
+
+// Two DISTINCT named tests living in the SAME file — the shape the P1 fix is
+// about. Suite-path identity alone cannot tell these apart; test identity
+// (file + `fullName`) can.
+const ALPHA_TEST_A: NamedFailure = {
+  file: "src/alpha.test.ts",
+  message: "AssertionError: expected 3 to be 4",
+  name: "alpha › test A",
+};
+const ALPHA_TEST_B: NamedFailure = {
+  file: "src/alpha.test.ts",
+  message: "AssertionError: expected 10 to be 11",
+  name: "alpha › test B",
 };
 
 // --- observers --------------------------------------------------------------
@@ -437,5 +503,85 @@ describe("run() — the --baseline flag is registered for check", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("unknown flag --baseline");
     expect(result.stderr).toContain("dobby env");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 8 (the P1 this file exists to pin): identity is per TEST, not per
+// FILE. A green baseline that filtered on the suite path alone would drop a
+// SECOND, brand-new failure landing in an already-red file right alongside
+// the one it recorded — replacing a genuinely broken run with a false green.
+//
+// The record ONLY ever names test A (`failingTests([ALPHA_TEST_A])`); test B
+// never appears in it. Whatever the gate does with a same-file, different-test
+// failure, it can only be told apart from "the recorded failure, unchanged" by
+// its NAME — which is exactly what this slice is proving is now consulted.
+// ---------------------------------------------------------------------------
+describe("run() — check --baseline reports a NEW failing test even inside an already-red file", () => {
+  it("names the file and fails the gate when a second test breaks alongside the recorded one", async () => {
+    const { repo, failingTests } = makeBaselineRepo();
+    failingTests([ALPHA_TEST_A]);
+    const recorded = await run(["baseline", "record"], repo);
+    expect(recorded.exitCode).toBe(0);
+    failingTests([ALPHA_TEST_A, ALPHA_TEST_B]);
+
+    const result = await run(["check", "--baseline", "--no-cache"], repo);
+    // The old (file-keyed) behaviour dropped the WHOLE file's failures because
+    // src/alpha.test.ts was in the record — exit 0, no mention of the suite at
+    // all. The fix must fail the gate and still name the file.
+    expect(result.exitCode).toBe(1);
+    expect(combined(result)).toContain("src/alpha.test.ts");
+    expect(combined(result)).toContain("test: 1 suite(s) failed");
+  });
+
+  it("still reports the file when the recorded test itself got FIXED but a different one in it broke (count-per-file unchanged)", async () => {
+    // The count-based trap the fix must avoid: exactly ONE failing test in the
+    // file both before (A) and after (B) the record — a comparison keyed on
+    // "how many failures does this file have" would see no change and stay
+    // silent. Identity, not arithmetic, is what has to catch this.
+    const { repo, failingTests } = makeBaselineRepo();
+    failingTests([ALPHA_TEST_A]);
+    await run(["baseline", "record"], repo);
+    failingTests([ALPHA_TEST_B]);
+
+    const result = await run(["check", "--baseline", "--no-cache"], repo);
+    expect(result.exitCode).toBe(1);
+    expect(combined(result)).toContain("src/alpha.test.ts");
+  });
+
+  it("stays silent when the SAME named test is still the only one failing (keep-working case)", async () => {
+    const { repo, failingTests } = makeBaselineRepo();
+    failingTests([ALPHA_TEST_A]);
+    await run(["baseline", "record"], repo);
+    failingTests([ALPHA_TEST_A]);
+
+    const result = await run(["check", "--baseline", "--no-cache"], repo);
+    expect(result.exitCode).toBe(0);
+    expect(combined(result)).not.toContain("src/alpha.test.ts");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 9: a record written by the format that predates this fix (bare suite
+// paths, no per-test identity — planted directly at `.dobby/baseline.json`,
+// since no command still writes that shape) must not crash the gate. It is
+// treated exactly like NO record at all: everything counts, and the run says
+// the baseline is missing rather than half-trusting a shape it can no longer
+// interpret precisely.
+// ---------------------------------------------------------------------------
+describe("run() — an old-format baseline record is treated as absent", () => {
+  it("does not crash, counts the failure, and says the baseline is missing", async () => {
+    const { repo, failing } = makeBaselineRepo();
+    failing([ALPHA]);
+    mkdirSync(join(repo, ".dobby"), { recursive: true });
+    writeFileSync(
+      join(repo, ".dobby", "baseline.json"),
+      JSON.stringify({ suites: ["src/alpha.test.ts"] })
+    );
+
+    const result = await run(["check", "--baseline", "--no-cache"], repo);
+    expect(result.exitCode).toBe(1);
+    expect(combined(result)).toContain("src/alpha.test.ts");
+    expect(missingBaselineNote(combined(result))).toBe(true);
   });
 });

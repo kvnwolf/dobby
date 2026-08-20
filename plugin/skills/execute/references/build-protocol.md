@@ -22,7 +22,12 @@ Before dispatching anyone, confirm the session's `CLAUDE_CODE_EXPERIMENTAL_AGENT
 
 ## Start a task as soon as it can run
 
-There is no fixed batch boundary to wait on. A task starts the moment every task it depends on — its `Depends on` ids from the plan — has reached `done`; not before, and not held back to line up with anything else. The moment a task's dependencies are satisfied, dispatch its workers immediately, alongside whatever other tasks are already in flight. A destructive task (one that mutates shared backend state during its proof) is the one exception: dispatch it alone, with nothing else touching the shared backend at the same time, because two destructive proofs racing each other corrupt both.
+There is no fixed batch boundary to wait on. A task starts the moment every task it depends on — its `Depends on` ids from the plan — has reached `done` AND nothing already in flight shares any of its `Affected areas`; not before, and not held back to line up with a batch that doesn't exist. The moment both hold, dispatch its workers immediately, alongside whatever other tasks are already in flight.
+
+Two exceptions hold a task back even once its dependencies clear:
+
+- **Overlapping writers.** `dobby build-plan` emits each task's `areas` — compare a ready task's `Affected areas` against every task currently in flight before dispatching it. If they share so much as one area, the ready task waits for the in-flight one to finish, exactly as if it depended on it, rather than starting alongside it. Two implementors mid-edit on the same file is not a hypothetical: without this check, their edits overwrite or interleave each other in the shared tree, and a gate run against that tree judges a mix of both tasks' unfinished code, not either task cleanly.
+- **A destructive task** (one that mutates shared backend state during its proof) is dispatched alone, with nothing else touching the shared backend at the same time, because two destructive proofs racing each other corrupt both.
 
 ## The per-task loop
 
@@ -69,6 +74,8 @@ With no fixed batch to keep tasks apart, several tasks' workers are routinely mi
 Only one implementor may run the Exit gate — `bunx dobby check --fix --baseline`, defined in `dobby:implementor` — against the shared tree at a time. Everything else about a task keeps running in parallel with its siblings: its test-author step, its implementation, its QA proof. Only the gate itself is serialised, because the gate judges the WHOLE tree, and two implementors racing their gates would have one task's verdict contaminated by a sibling's half-written edit sitting in the same working tree at that moment.
 
 Hold this as a single turn: when an implementor is ready to run its gate, let it go if no one else currently holds the turn; otherwise it waits, and the next implementor to finish its own gate hands the turn on. A task never blocks on this queue for longer than it takes the tasks ahead of it to finish their own gate — its implementation work, and every other task's work, keeps moving the whole time.
+
+This queue protects only the gate's JUDGEMENT — it stops a gate run from being contaminated by a sibling's half-written edit sitting in the tree at that moment. It does nothing to stop two implementors from editing the same file concurrently in the first place; that overlap is prevented earlier, at dispatch, by the area-overlap check above. Don't mistake gate serialisation for a substitute — a task whose areas overlap an in-flight task's must not be dispatched at all, gate queue or not.
 
 ## When a task dies, don't stop everything
 
