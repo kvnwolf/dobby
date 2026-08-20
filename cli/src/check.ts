@@ -142,17 +142,17 @@ const SHORT_HASH_LENGTH = 8;
 // run says so explicitly rather than passing in silence); an array (possibly
 // empty, possibly carrying the SAME token more than once) of opaque per-TEST
 // identity tokens (`testIdentity` below — file+fullName, never inspected
-// outside this module) when a record exists. Two DIFFERENT tests can share one
-// identity token — vitest does not forbid duplicate titles in the same file —
-// so the array is a MULTISET, not a set: it is tallied into per-identity
-// counts (`buildExemptionCounts` below) and each occurrence exempts exactly
-// ONE matching failure from the current run, in encounter order. A count of 1
-// against 2 current failures under that identity exempts one and reports the
-// other as new — the same "only what THIS run newly broke is reported" rule a
-// unique identity already got, now holding even when identity alone cannot
-// tell two tests apart. A recorded baseline never reaches this parameter on a
-// call that omitted `--baseline` — the plain gate is never softened by it (the
-// commit / pre-push forms of the gate always pass undefined).
+// outside this module) when a record exists. `splitBaselineRecord` (below)
+// is what actually turns this array into `runTest`'s exemption budget — see
+// its own doc for why a per-identity COUNT alone cannot close the gap a
+// duplicated `fullName` opens, and what the AMBIGUOUS-FILE marker tokens
+// mixed into this same array (`ambiguousFileToken`) do about it. This
+// parameter's own SHAPE — `string[] | null | undefined` — deliberately never
+// changed to carry that mechanism: it stays exactly what it always was so
+// run.ts, which resolves and forwards it unexamined, needs no changes either.
+// A recorded baseline never reaches this parameter on a call that omitted
+// `--baseline` — the plain gate is never softened by it (the commit /
+// pre-push forms of the gate always pass undefined).
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: enumeration, not tangled logic — a flat switch dispatching 7 independent gate-step handlers (biome/tsc/knip/conventions/build/test/extra), several of which fatal-return from check(); extracting them would thread shared accumulators + fatal-return plumbing through 7 helpers and regress a load-bearing, tested executor
 export function check(
   files: string[],
@@ -267,16 +267,18 @@ export function check(
   let extrasStopped = false;
 
   // THE GREEN BASELINE (see the `baselineRecord` doc above `check()`). Absent
-  // (`undefined`) => baseline mode is OFF: the exemption counts stay empty and
-  // no note is added — the plain gate is judged exactly as before. Requested
-  // but no record (`null`) => everything still counts (the exemption counts
-  // stay empty), but the run says so explicitly rather than filtering — or
-  // passing — in silence. A record (`string[]`, possibly empty, possibly
-  // repeating a token) => tallied into per-identity counts (see
-  // `buildExemptionCounts`), so a duplicated identity exempts only as many
-  // current failures as were actually recorded under it.
+  // (`undefined`) => baseline mode is OFF: the exemption counts and the
+  // ambiguous-file set stay empty and no note is added — the plain gate is
+  // judged exactly as before. Requested but no record (`null`) => everything
+  // still counts (both stay empty), but the run says so explicitly rather
+  // than filtering — or passing — in silence. A record (`string[]`, possibly
+  // empty, possibly repeating a token) => split by `splitBaselineRecord` into
+  // per-identity counts AND the set of files an ambiguous marker names — see
+  // its doc for what each half does and why counting alone cannot close the
+  // P1 this mechanism exists for.
   const baselineMode = baselineRecord !== undefined;
-  const baselineExempt = buildExemptionCounts(baselineRecord ?? []);
+  const { ambiguousFiles: baselineAmbiguousFiles, counts: baselineExempt } =
+    splitBaselineRecord(baselineRecord ?? []);
   if (baselineMode && baselineRecord === null) {
     notes.push({
       raw: null,
@@ -429,7 +431,12 @@ export function check(
           root,
           vitestConfigSpec(capabilities, dependencies)
         );
-        const tested = runTest(root, vitestCfg.args, baselineExempt);
+        const tested = runTest(
+          root,
+          vitestCfg.args,
+          baselineExempt,
+          baselineAmbiguousFiles
+        );
         if (tested.note !== null) {
           notes.push(tested.note);
         }
@@ -1159,7 +1166,7 @@ function runBuild(
 // `baselineExempt` is the GREEN BASELINE's per-TEST identity tokens
 // (baseline.ts — `file<SEP>fullName`, opaque outside this module) that were
 // already failing before this task started, tallied into a COUNT per identity
-// (`buildExemptionCounts`) — empty when `check --baseline` was not requested,
+// (`splitBaselineRecord`) — empty when `check --baseline` was not requested,
 // or when it was but no record exists (in which case the caller has ALREADY
 // pushed the "no record" note; here every suite counts, same as a plain run).
 // Exemption is per TEST, not per FILE: a suite already in the record only
@@ -1167,13 +1174,33 @@ function runBuild(
 // already-red file still surfaces. It is also per OCCURRENCE, not per distinct
 // identity: two tests can share one identity token (vitest allows duplicate
 // titles), so a count of 1 recorded against 2 current failures under that
-// token exempts only one of them — the other is new and surfaces. A failure is
-// dropped from the parsed set BEFORE the summary is built and BEFORE the exit
-// code is decided, so "only newly-failing tests are reported" holds for both.
+// token exempts only one of them — the other is new and surfaces THE MOMENT
+// the record itself could actually tell them apart (see `baselineAmbiguousFiles`
+// below for the case it structurally cannot). A failure is dropped from the
+// parsed set BEFORE the summary is built and BEFORE the exit code is decided,
+// so "only newly-failing tests are reported" holds for both.
+//
+// `baselineAmbiguousFiles` is the set of FILES `splitBaselineRecord` pulled out
+// of the same record as structurally untrustworthy (see `ambiguousFilesIn`):
+// at record time, two tests in that file shared one identity token regardless
+// of which was failing then — vitest does not forbid duplicate `fullName`s, so
+// a token alone can never prove "the same test is still red" versus "a
+// DIFFERENT, same-named test just broke". A count can't rescue this: if the
+// recorded test gets fixed while its same-named twin starts failing, the
+// current failure count under that token stays IDENTICAL to what was
+// recorded, so a pure count would exempt the new break outright (the exact
+// false-green the counting-only fix left open). So every failure in an
+// ambiguous file is refused exemption OUTRIGHT, never just the duplicated
+// identity — the whole file's record cannot be trusted — and `vitestSummary`
+// annotates the line so a developer sees WHY it stayed red, not just that it
+// did (rename the duplicate to restore exemption). Worst case: a false RED
+// (a still-fixed test relisted until its file's ambiguity clears); never a
+// false green — the asymmetry this whole gate exists to preserve.
 function runTest(
   root: string,
   cfgArgs: string[],
-  baselineExempt: ReadonlyMap<string, number>
+  baselineExempt: ReadonlyMap<string, number>,
+  baselineAmbiguousFiles: ReadonlySet<string>
 ): { note: CheckNote | null; exitCode: number; spawned: boolean } {
   const bin = resolveConsumerBin(root, "vitest", "vitest");
   if (bin === null) {
@@ -1219,13 +1246,19 @@ function runTest(
     // The budget is spent PER OCCURRENCE (`remaining`, a scratch copy of the
     // counts): two current failures sharing one identity are told apart by how
     // many were recorded under it, not by the token alone — the Nth occurrence
-    // beyond the recorded count is never exempt.
+    // beyond the recorded count is never exempt. A failure whose FILE is in
+    // `baselineAmbiguousFiles` skips the budget entirely and always surfaces
+    // (see the doc above `runTest`) — the file's record cannot be trusted to
+    // exempt anything, so it never gets the chance to.
     const failures =
-      baselineExempt.size === 0
+      baselineExempt.size === 0 && baselineAmbiguousFiles.size === 0
         ? parsed
         : (() => {
             const remaining = new Map(baselineExempt);
             return parsed.filter((failure) => {
+              if (baselineAmbiguousFiles.has(failure.file)) {
+                return true;
+              }
               const identity = testIdentity(failure);
               const budget = remaining.get(identity) ?? 0;
               if (budget > 0) {
@@ -1242,7 +1275,10 @@ function runTest(
     }
     return {
       exitCode,
-      note: { raw: null, text: vitestSummary(failures, isNode, runtime) },
+      note: {
+        raw: null,
+        text: vitestSummary(failures, isNode, runtime, baselineAmbiguousFiles),
+      },
       spawned: true,
     };
   }
@@ -1290,15 +1326,23 @@ function runTest(
 // report as failing. `record` always exits 0 regardless (baseline.ts): a record
 // is a fact, not a verdict.
 //
-// @public — consumed by baseline.ts's `record` subcommand.
-export function collectFailingTests(root: string): string[] {
+// @public — consumed by baseline.ts's `record` subcommand. Only caller: the
+// return shape is free to carry whatever `record` needs, since nothing else
+// in the codebase depends on it (unlike `check()`'s own `baselineRecord`
+// parameter below, which run.ts also touches and which stays a plain
+// `string[] | null` on purpose — see `ambiguousFileToken`).
+export function collectFailingTests(root: string): {
+  ambiguousFiles: string[];
+  tests: string[];
+} {
+  const empty = { ambiguousFiles: [], tests: [] };
   const { capabilities, dependencies } = scanCapabilities(root);
   if (!capabilities.includes("vitest")) {
-    return [];
+    return empty;
   }
   const bin = resolveConsumerBin(root, "vitest", "vitest");
   if (bin === null) {
-    return [];
+    return empty;
   }
   const vitestCfg = configArgs(
     root,
@@ -1311,15 +1355,17 @@ export function collectFailingTests(root: string): string[] {
     { root }
   );
   if (result.error) {
-    return [];
+    return empty;
   }
-  const failures = parseVitestFailures(result.stdout, root);
-  if (failures === null) {
-    return [];
+  const report = parseVitestReport(result.stdout);
+  if (report === null) {
+    return empty;
   }
-  return failures
+  const tests = failuresFromReport(report, root)
     .map((failure) => testIdentity(failure))
     .sort((a, b) => a.localeCompare(b));
+  const ambiguousFiles = ambiguousFilesIn(report, root);
+  return { ambiguousFiles, tests };
 }
 
 // The separator joining a failure's file and test name into one opaque
@@ -1340,6 +1386,9 @@ function testIdentity(failure: { file: string; name: string }): string {
 
 // The file half of an identity token — what baseline.ts shows a human (`dobby
 // baseline record`'s text/`--json` output lists files, not raw test tokens).
+// Also correct on an AMBIGUOUS-FILE marker token (`ambiguousFileToken` below)
+// — it is built with the exact same `file<SEP>…` shape, so splitting on the
+// first separator recovers the file from either kind of token unchanged.
 //
 // @public — consumed by baseline.ts.
 export function testIdentityFile(identity: string): string {
@@ -1347,18 +1396,76 @@ export function testIdentityFile(identity: string): string {
   return index === -1 ? identity : identity.slice(0, index);
 }
 
-// Tally a (possibly duplicate-carrying) list of identity tokens into a count
-// per token — the exemption budget `runTest` spends one occurrence at a time.
-// This is the fix for the P1 this module closes: identity alone cannot tell
-// two DIFFERENT tests apart when they share one token (vitest does not forbid
-// duplicate `fullName`s in a file), but the COUNT can — one recorded against
-// two currently failing under that token means one of them is new.
-function buildExemptionCounts(record: readonly string[]): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const identity of record) {
-    counts.set(identity, (counts.get(identity) ?? 0) + 1);
+// A marker NAME (never a real vitest `fullName`, which vitest builds from
+// `describe`/`it` titles — ordinary source text, never a leading NUL) that
+// means "this FILE's baseline record is ambiguous", not "a test named this
+// failed". Minted per-file by `ambiguousFileToken` and folded into the SAME
+// opaque `tests` multiset `collectFailingTests`/baseline.ts already pass
+// around as a plain `string[]` — deliberately NOT a new field on the stored
+// record or a new parameter on `check()`, so `readBaselineSuites`'s and
+// `check()`'s public shapes stay exactly what they were and run.ts needs no
+// change at all. An OLDER dobby reading a record containing this token simply
+// treats it as one more test identity that never matches any current
+// failure — it exempts nothing under it and is otherwise inert, so the
+// marker degrades safely in both directions.
+const AMBIGUOUS_FILE_MARKER = `${TEST_IDENTITY_SEPARATOR}ambiguous-file`;
+
+// Mint the marker token for one file — the write-side half of the mechanism
+// above. `baseline.ts` calls this to add one marker per ambiguous file to the
+// token list it writes; it never constructs the marker shape itself, keeping
+// the format an implementation detail of this module.
+//
+// @public — consumed by baseline.ts's `record` subcommand.
+export function ambiguousFileToken(file: string): string {
+  return `${file}${AMBIGUOUS_FILE_MARKER}`;
+}
+
+// The inverse of `ambiguousFileToken`: the file it names when `token` IS one,
+// else null (an ordinary test identity, however its name is spelled).
+function ambiguousFileFromToken(token: string): string | null {
+  return token.endsWith(AMBIGUOUS_FILE_MARKER)
+    ? token.slice(0, -AMBIGUOUS_FILE_MARKER.length)
+    : null;
+}
+
+// Split the raw baseline record's opaque token multiset into what `runTest`
+// needs: a per-real-identity exemption COUNT, and the set of FILES an
+// ambiguous marker names. This is the actual fix for the P1 this module
+// exists to close — an earlier round tried to close it with counting alone
+// (`buildExemptionCounts`, since folded in here): tallying occurrences per
+// identity DOES separate "one recorded, still one failing" from "one
+// recorded, now two failing under that name" when the SAME identity produces
+// two SIMULTANEOUS current failures. It cannot separate "the recorded test
+// got fixed, its same-named twin started failing" — the current failure count
+// under that identity is unchanged from what was recorded, so a pure count
+// exempts the new failure outright. That is only detectable at RECORD time,
+// from the file's full test list, not from counting later — see
+// `ambiguousFilesIn`. So every real identity recorded against an ambiguous
+// file is set aside here too, not just the duplicated one: the file's record
+// cannot be trusted to exempt ANYTHING, and `runTest` refuses every one of its
+// current failures accordingly (a false RED at worst, never a false green).
+function splitBaselineRecord(record: readonly string[]): {
+  ambiguousFiles: Set<string>;
+  counts: Map<string, number>;
+} {
+  const ambiguousFiles = new Set<string>();
+  const realTokens: string[] = [];
+  for (const token of record) {
+    const file = ambiguousFileFromToken(token);
+    if (file !== null) {
+      ambiguousFiles.add(file);
+      continue;
+    }
+    realTokens.push(token);
   }
-  return counts;
+  const counts = new Map<string, number>();
+  for (const token of realTokens) {
+    if (ambiguousFiles.has(testIdentityFile(token))) {
+      continue;
+    }
+    counts.set(token, (counts.get(token) ?? 0) + 1);
+  }
+  return { ambiguousFiles, counts };
 }
 
 // Pick the runtime for the vitest step: prefer NODE (a cheap `node --version`
@@ -1486,7 +1593,8 @@ interface VitestFileResult {
 function vitestSummary(
   failures: VitestFailure[],
   isNode: boolean,
-  runtime: string
+  runtime: string,
+  ambiguousFiles: ReadonlySet<string>
 ): string {
   const perFile = firstPerFile(failures);
   const firstFile = perFile[0]?.file ?? "unknown";
@@ -1497,7 +1605,15 @@ function vitestSummary(
   const shown = perFile.slice(0, VITEST_FILE_CAP);
   const lines = shown.map((failure) => {
     const frame = failure.frame === null ? "" : ` (${failure.frame})`;
-    return `  ${failure.file} — ${failure.summary}${frame}`;
+    // "Say it out loud" — a file the recorded baseline could not trust (two
+    // tests sharing one identity at record time, see `ambiguousFilesIn`)
+    // reports here exactly as if nothing were baselined for it. Without this
+    // suffix that reads as an inexplicable false red; with it, a developer
+    // can find the duplicate name and rename it to restore exemption.
+    const ambiguous = ambiguousFiles.has(failure.file)
+      ? " [baseline ambiguous: duplicate test name recorded here — not exempted, rename to disambiguate]"
+      : "";
+    return `  ${failure.file} — ${failure.summary}${frame}${ambiguous}`;
   });
   const overflow = perFile.length - shown.length;
   if (overflow > 0) {
@@ -1540,22 +1656,85 @@ function parseVitestFailures(
   stdout: string,
   root: string
 ): VitestFailure[] | null {
+  const report = parseVitestReport(stdout);
+  if (report === null) {
+    return null;
+  }
+  const failures = failuresFromReport(report, root);
+  return failures.length > 0 ? failures : null;
+}
+
+// The JSON-parse + shape-check half of the above, split out so
+// `collectFailingTests` can reach the RAW report too — it needs
+// `ambiguousFilesIn`'s view of every assertion (not just the failed ones
+// `failuresFromReport` extracts), and re-parsing the same string a second
+// time (rather than re-spawning vitest) costs nothing and cannot diverge.
+function parseVitestReport(stdout: string): VitestReport | null {
   let report: VitestReport;
   try {
     report = JSON.parse(stdout) as VitestReport;
   } catch {
     return null;
   }
-  if (!Array.isArray(report.testResults)) {
-    return null;
-  }
+  return Array.isArray(report.testResults) ? report : null;
+}
+
+// Every individual failing test's row, across every FAILED file in the
+// report — the shared extraction `parseVitestFailures` (the gate's own test
+// step) and `collectFailingTests` (`baseline record`) both build on.
+function failuresFromReport(
+  report: VitestReport,
+  root: string
+): VitestFailure[] {
   const failures: VitestFailure[] = [];
-  for (const file of report.testResults) {
+  for (const file of report.testResults ?? []) {
     if (file.status === "failed") {
       failures.push(...failuresForFile(file, root));
     }
   }
-  return failures.length > 0 ? failures : null;
+  return failures;
+}
+
+// Which FAILED files' test lists carry a DUPLICATE name — two (or more)
+// entries in `assertionResults` sharing one `fullName`/`title`, REGARDLESS of
+// which are currently passing or failing. This is deliberately NOT "two
+// failures share an identity" (that is merely the special case where both
+// duplicates happen to be red at the same instant `record` runs): a file
+// where one of the two duplicates is passing at record time is EXACTLY the
+// shape that broke the earlier counting-only fix — the recorded (failing) one
+// gets fixed, its passing twin starts failing, and the current failure count
+// under that one shared identity stays 1, identical to what was recorded. A
+// pure count cannot tell those two situations apart; only knowing at record
+// time that the name was never unique in this file can. `splitBaselineRecord`
+// (via the `ambiguousFileToken` markers `baseline.ts` mixes into the record)
+// is what makes that knowledge outlive this one run.
+function ambiguousFilesIn(report: VitestReport, root: string): string[] {
+  const ambiguous = new Set<string>();
+  for (const file of report.testResults ?? []) {
+    if (file.status !== "failed") {
+      continue;
+    }
+    const rawName = typeof file.name === "string" ? file.name : "";
+    if (rawName === "") {
+      continue;
+    }
+    const relFile = relativize(root, rawName);
+    const seen = new Set<string>();
+    for (const assertion of file.assertionResults ?? []) {
+      const name = assertionName(assertion);
+      // An empty name is the file-level-load-error shape (no individual test
+      // ran), which never repeats within one file — never a duplicate.
+      if (name === "") {
+        continue;
+      }
+      if (seen.has(name)) {
+        ambiguous.add(relFile);
+        break;
+      }
+      seen.add(name);
+    }
+  }
+  return [...ambiguous].sort((a, b) => a.localeCompare(b));
 }
 
 // One failed file's rows: a single file-level-load-error row (empty name — no

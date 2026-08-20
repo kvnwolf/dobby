@@ -1,6 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { collectFailingTests, testIdentityFile } from "./check.ts";
+import {
+  ambiguousFileToken,
+  collectFailingTests,
+  testIdentityFile,
+} from "./check.ts";
 import type { CommandContext, CommandResult } from "./command.ts";
 import { ensureExcluded } from "./gate-cache.ts";
 import { requireWorkroot } from "./runner.ts";
@@ -13,8 +17,26 @@ import { requireWorkroot } from "./runner.ts";
 // TESTS — not merely newly-failing FILES, so a second failure landing in an
 // already-red suite still surfaces: the run() dispatcher resolves it before
 // calling `check()`, so this module has no reverse dependency on check.ts beyond
-// `collectFailingTests`/`testIdentityFile` (the one-directional edge:
-// baseline.ts -> check.ts).
+// `collectFailingTests`/`testIdentityFile`/`ambiguousFileToken` (the
+// one-directional edge: baseline.ts -> check.ts).
+//
+// AMBIGUOUS FILES. Vitest does not forbid two tests sharing one `fullName` in
+// a file, so `file+fullName` alone cannot always tell "the recorded test is
+// still red" from "a DIFFERENT, same-named test just broke" — the second one
+// getting silently exempted is the P1 this record exists to close. Per-token
+// COUNTS (kept in the stored multiset, see `BaselineFile` below) close the
+// half of it where both duplicates are failing AT THE SAME TIME the record is
+// taken. They cannot close the other half: if the RECORDED one later gets
+// fixed while its same-named twin starts failing, the current failure count
+// under that shared identity is unchanged from what was recorded, so a pure
+// count would exempt the new failure outright. That half is only detectable
+// at record time, from the file's FULL test list (not just what is failing
+// right now) — `collectFailingTests` does this (`ambiguousFilesIn`, check.ts)
+// and this module mints one marker token per ambiguous file
+// (`ambiguousFileToken`) into the SAME array real identities travel in, so
+// `check --baseline`'s `splitBaselineRecord` can refuse exemption for that
+// file's failures OUTRIGHT — a false RED at worst (a still-fixed test relisted
+// until the duplicate name is renamed), never a false green.
 //
 // WHY A SEPARATE FILE FROM THE GATE CACHE. `gate-cache.json` records only GREEN
 // verdicts (codeHash -> proven-green): a repo with pre-existing red suites has
@@ -39,15 +61,24 @@ function baselinePath(root: string): string {
 }
 
 // The stored shape: a sorted list of opaque per-TEST identity tokens — exactly
-// what `collectFailingTests` (check.ts) returns. Deliberately NOT
-// de-duplicated: it is a MULTISET, one entry per failing test at record time.
-// Two DIFFERENT tests can share one identity token (vitest does not forbid two
-// tests with the same `fullName` in a file) — collapsing to a Set would make a
-// single recorded occurrence exempt every current failure under that token
-// forever, hiding a brand-new failure behind an already-fixed one with the
-// same name. `check --baseline` (check.ts) tallies the list back into a count
-// per identity and exempts only that many occurrences, so a duplicated
-// identity is safe: one recorded, two failing now still surfaces one as new.
+// what `collectFailingTests` (check.ts) returns, PLUS zero or more
+// AMBIGUOUS-FILE marker tokens (`ambiguousFileToken`) mixed into the same
+// list. Deliberately NOT de-duplicated: it is a MULTISET, one entry per
+// failing test at record time. Two DIFFERENT tests can share one identity
+// token (vitest does not forbid two tests with the same `fullName` in a
+// file) — collapsing to a Set would make a single recorded occurrence exempt
+// every current failure under that token forever, hiding a brand-new failure
+// behind an already-fixed one with the same name. `check --baseline`
+// (`splitBaselineRecord`, check.ts) tallies the list back into a count per
+// identity and exempts only that many occurrences — which is enough when both
+// duplicates are failing SIMULTANEOUSLY at record time, but NOT enough when
+// the recorded one later gets fixed while its same-named twin starts failing
+// (the count under that shared identity never changes, so a pure count would
+// exempt the new failure). That is exactly what the marker tokens are for:
+// a file flagged ambiguous at record time (`ambiguousFilesIn`, check.ts —
+// decided from the file's FULL test list, not just what is failing right now)
+// gets every real count recorded against it set aside too, never just the
+// duplicated one — see `splitBaselineRecord`'s doc in check.ts.
 //
 // The key is named `tests`, not `suites`: a record written by the PREVIOUS
 // format (a bare list of suite paths, no test identity) stored it under
@@ -141,8 +172,15 @@ export function runBaseline(context: CommandContext): CommandResult {
   }
   // The registry validates the subcommand token before dispatch — `record` is
   // the only one it registers — so reaching here always means `record`.
-  const tests = collectFailingTests(root);
-  const failure = writeBaselineTests(root, tests);
+  const { ambiguousFiles, tests } = collectFailingTests(root);
+  // AMBIGUOUS files (`ambiguousFilesIn`, check.ts) get one marker token each
+  // (`ambiguousFileToken`) folded into the SAME opaque array the real test
+  // identities travel in — see `BaselineFile` above for why the stored shape
+  // never grew a second field for this. `check --baseline` is what actually
+  // acts on the marker (`splitBaselineRecord`, check.ts); this command states
+  // the fact and moves on — a record never renders a verdict, ambiguous or not.
+  const tokens = [...tests, ...ambiguousFiles.map(ambiguousFileToken)];
+  const failure = writeBaselineTests(root, tokens);
   // The human-facing report stays per-FILE (`suites`) even though the STORED
   // record is per-test — a list of failing tests one-per-line would be far
   // noisier for what `record`'s output is for: orienting a human on which
@@ -150,20 +188,42 @@ export function runBaseline(context: CommandContext): CommandResult {
   const suites = [
     ...new Set(tests.map((test) => testIdentityFile(test))),
   ].sort();
+  // AMBIGUOUS suites are also named explicitly — "say it out loud" the moment
+  // the record is taken, not only later when `check --baseline` goes
+  // unexpectedly red over them. They are a SUBSET of `suites` above (an
+  // ambiguous file always has at least one currently-failing duplicate — see
+  // `ambiguousFilesIn`), never a disjoint list.
+  const ambiguousSuites = [...ambiguousFiles].sort();
   if (context.options.json === true) {
-    return { error: failure ?? undefined, exitCode: 0, json: { suites } };
+    return {
+      error: failure ?? undefined,
+      exitCode: 0,
+      json: { ambiguousSuites, suites },
+    };
   }
-  return { error: failure ?? undefined, exitCode: 0, text: recordText(suites) };
+  return {
+    error: failure ?? undefined,
+    exitCode: 0,
+    text: recordText(suites, ambiguousSuites),
+  };
 }
 
-function recordText(suites: string[]): string {
-  if (suites.length === 0) {
-    return "baseline recorded: no failing suites\n";
+function recordText(suites: string[], ambiguousSuites: string[]): string {
+  const lines =
+    suites.length === 0
+      ? ["baseline recorded: no failing suites"]
+      : [
+          `baseline recorded: ${suites.length} failing suite(s)`,
+          ...suites.map((suite) => `  ${suite}`),
+        ];
+  if (ambiguousSuites.length > 0) {
+    lines.push(
+      "",
+      `baseline: ${ambiguousSuites.length} suite(s) are ambiguous (duplicate test name) — check --baseline will never exempt them until renamed:`,
+      ...ambiguousSuites.map((suite) => `  ${suite}`)
+    );
   }
-  const lines = suites.map((suite) => `  ${suite}`);
-  return [`baseline recorded: ${suites.length} failing suite(s)`, ...lines]
-    .join("\n")
-    .concat("\n");
+  return `${lines.join("\n")}\n`;
 }
 
 function fail(error: string): CommandResult {
