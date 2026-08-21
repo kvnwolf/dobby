@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import pkg from "../package.json";
 import { runAdr } from "./adr.ts";
 import { runArtifactLint } from "./artifact-lint.ts";
+import { readBaselineSuites, runBaseline } from "./baseline.ts";
 import { runBuildPlan } from "./buildplan.ts";
 import { type CheckGroup, type CheckNote, check, checkHook } from "./check.ts";
 import type {
@@ -84,6 +85,7 @@ const OPTION_LINES = [
   "  --hook          check: edit-time PostToolUse mode (payload on stdin)",
   "  --pre-push      check: git pre-push backstop mode (ref lines on stdin)",
   "  --no-cache      check: ignore the gate cache — run every step (a green full gate is still recorded)",
+  "  --baseline      check: judge only against the green baseline (see `dobby baseline record`) — reports only newly-failing test suites",
   "  --dry-run       dev / build / db:* / up / down: print the resolved action plan without executing it",
   "  -v, --version   Print the dobby version and exit",
 ];
@@ -168,6 +170,14 @@ const COMMANDS: Readonly<Record<string, CommandEntry>> = {
     handler: runArtifactLint,
     subcommands: { verify: ["file", "focus"] },
   },
+  baseline: {
+    flags: JSON_FLAG,
+    handler: runBaseline,
+    // `dobby baseline record` — the green baseline (baseline.ts): names the
+    // suites failing right now and stores the record `check --baseline`
+    // consults. No other subcommand exists yet.
+    subcommands: { record: [] },
+  },
   brief: {
     flags: JSON_FLAG,
     handler: runArtifactLint,
@@ -193,6 +203,10 @@ const COMMANDS: Readonly<Record<string, CommandEntry>> = {
       // Bypass the gate cache's CONSULT (turbo `--force` semantics): every step
       // runs, and a green FULL gate is still recorded for the next run.
       "no-cache",
+      // Judge against the green baseline (`dobby baseline record`): a suite
+      // already in the record is dropped from the test step's failures, so only
+      // what this run newly broke is reported. Never softens a plain gate.
+      "baseline",
     ],
   },
   claim: { flags: ["json", "issue"], handler: runClaim },
@@ -473,6 +487,7 @@ export async function run(
       options: {
         adapter: { type: "string" },
         "await-review": { type: "boolean" },
+        baseline: { type: "boolean" },
         bench: { type: "boolean" },
         "body-file": { type: "string" },
         build: { type: "boolean" },
@@ -611,6 +626,20 @@ export async function run(
       // stdin) instead of only through a real `git push`.
       return prePushCheck(cwd, stdin);
     }
+    // `--baseline` (the green baseline, baseline.ts): resolved HERE, before
+    // check() is called, so check.ts never has to import baseline.ts's storage —
+    // the one-directional dependency stays baseline.ts -> check.ts (via
+    // `collectFailingSuites`), never the other way. `undefined` when the flag is
+    // absent (a plain gate, never softened by any record); `null` when it is
+    // present but no record resolves (no git repo, or `readBaselineSuites` finds
+    // none) — check() then says so explicitly rather than filtering in silence;
+    // otherwise the recorded suite list.
+    let baselineRecord: string[] | null | undefined;
+    if (options.baseline === true) {
+      const baselineRoot = resolveWorkroot(cwd);
+      baselineRecord =
+        baselineRoot === null ? null : readBaselineSuites(baselineRoot);
+    }
     // Positionals after "check" are file args (per-file fast path); none = the
     // project-wide gate (subset by the selective flags). `--fix` applies biome's
     // SAFE fixes first (project-wide, or over the named files) so the pre-commit
@@ -625,7 +654,8 @@ export async function run(
       cwd,
       checkFlags,
       Boolean(fix),
-      options["no-cache"] === true
+      options["no-cache"] === true,
+      baselineRecord
     );
     if (!report.ok) {
       return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
@@ -776,10 +806,6 @@ export async function run(
 // print as a comma-separated list or the literal "none"; config prints
 // "true"/"false".
 function formatEnvText(snapshot: EnvSnapshot): string {
-  const recipe = snapshot.workflowRecipe;
-  const roleSummary = Object.entries(recipe.roles)
-    .map(([role, policy]) => `${role}=${policy.model}/${policy.reasoning}`)
-    .join(", ");
   return [
     `cmux: ${scalar(snapshot.cmux)}`,
     `worktree: ${scalar(snapshot.worktree)}`,
@@ -790,11 +816,10 @@ function formatEnvText(snapshot: EnvSnapshot): string {
     `devUrl: ${scalar(snapshot.devUrl)}`,
     `runPane: ${scalar(snapshot.runPane)}`,
     `browserPane: ${scalar(snapshot.browserPane)}`,
-    `workflowRecipe.id: ${recipe.id}`,
-    `workflowRecipe.fingerprint: ${recipe.fingerprint}`,
-    `workflowRecipe.limits: outer=${recipe.limits.maxOuter}, concurrency=${recipe.limits.maxConcurrency}`,
-    `workflowRecipe.roles: ${roleSummary}`,
-    `workflowRecipe.verification: ${recipe.verification}`,
+    // The full multi-line guide belongs in --json (its own consumable field);
+    // the human form gets a one-line summary so every other field stays on its
+    // own `key: value` line.
+    `browserGuide: ${snapshot.browserGuide.length} chars (see --json for the full guide)`,
   ]
     .join("\n")
     .concat("\n");

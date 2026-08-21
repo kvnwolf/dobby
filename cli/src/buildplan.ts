@@ -7,23 +7,21 @@ import { readSection } from "./state.ts";
 
 // `dobby build-plan` — the build-workflow plan, derived MECHANICALLY from the
 // spec's task table. It exists because the coordinator used to READ that table by
-// eye and then invent, per session, the four things below — a judgment call over
+// eye and then invent, per session, the three things below — a judgment call over
 // a grid, made once per plan, with no way to check the answer:
 //
-//   - `tasks[]` — the workflow `args` VERBATIM (`{id, title, spec, decisions,
+//   - `tasks[]` — the per-task instruction data VERBATIM (`{id, title, spec, decisions,
 //     constraints, areas[], verifyRecipe, testFirst}` + `destructive` +
 //     `dependsOn[]`), the exact shape
-//     `plugin/skills/execute/references/build-workflow.md` consumes. The
+//     `plugin/skills/execute/references/build-protocol.md` consumes. The
 //     coordinator merges `devUrl` itself (research R4), so it is NOT emitted here.
-//     `dependsOn` is the `Depends on` cell's ids: `waves` says WHEN a task runs,
-//     `dependsOn` says WHO it waits for — a different question, and the one the
-//     build run asks to SKIP a task whose dependency ended needs-human.
-//   - `waves[][]` — the parallel batches: topological over `Depends on`, and
-//     within one batch no two tasks share an Affected area. Readiness is REFILLED
-//     each round (a task deferred by an area clash rejoins the next wave next to
-//     the newly unblocked ones) rather than frozen into fixed topological levels,
-//     which is what keeps a clash from serializing the whole tail of a plan. A
-//     DESTRUCTIVE task gets a wave to itself (spec Decision 15).
+//     `dependsOn` is the `Depends on` cell's ids, carried UNCHANGED — the ONLY
+//     thing that says WHO a task waits for; there is NO wave grouping saying
+//     WHEN it runs (the plan used to cut `tasks` into topological batches here;
+//     it no longer does, per spec Decision "a failed task must stop only what
+//     genuinely depends on it"). A task can therefore start the moment its own
+//     `dependsOn` are done, and a DESTRUCTIVE task is flagged rather than
+//     isolated — the Architect serializes it himself at dispatch time.
 //   - `preconditions` — the refusal verdict: empty required cells, dependencies
 //     on tasks the table does not contain, and dependency cycles. Not ok → exit 1,
 //     WITH the payload still on stdout (the `up --json` convention: the verdict
@@ -74,11 +72,9 @@ const NONE = "none";
 // coordinator's judgment (research R4), never guessed from a table cell.
 //
 // `dependsOn` carries the row's dependency ids AS THE SPEC WROTE THEM (`—`/empty
-// → none), and it is the SAME list this module schedules from — the edges are
-// the task's own field rather than a parallel structure beside it, so an id the
-// waves order a task under and the id its dependent reads can never drift apart.
-// That identity is load-bearing downstream: the build run matches `dependsOn`
-// against the ids in `waves` to decide whether a blocker actually passed.
+// → none) — the ONLY thing that says who a task waits for, now that there is no
+// wave grouping to say WHEN it runs. The build run reads `dependsOn` directly to
+// decide whether a task's blocker passed.
 interface PlanTask {
   areas: string[];
   constraints: string;
@@ -126,7 +122,6 @@ interface BuildPlan {
   manualVerifySetup: string[] | typeof NONE;
   preconditions: Preconditions;
   tasks: PlanTask[];
-  waves: string[][];
   workRoot: string;
 }
 
@@ -185,7 +180,6 @@ function assemble(
     manualVerifySetup: gates.manualVerifySetup,
     preconditions: judge(tasks),
     tasks,
-    waves: schedule(tasks),
     workRoot: root,
   };
 }
@@ -587,64 +581,6 @@ function collectSteps(lines: string[], from: number): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Waves — topological order, refilled each round, area-disjoint within a wave
-// ---------------------------------------------------------------------------
-
-// The batches, in execution order. Each round takes the tasks whose dependencies
-// have all RUN (readiness is recomputed, never frozen into levels) and fills one
-// wave from them; a task left out by an area clash is simply still ready next
-// round, alongside whatever the finished wave unblocked. A wave is never empty
-// while a ready task exists, so the loop always terminates: it stops either with
-// everything scheduled or with an unschedulable remainder (a cycle or a dangling
-// dependency) that `preconditions` names.
-function schedule(planned: PlanTask[]): string[][] {
-  const remaining = [...planned];
-  const done = new Set<string>();
-  const waves: string[][] = [];
-  while (remaining.length > 0) {
-    const ready = remaining.filter((task) =>
-      task.dependsOn.every((dep) => done.has(dep))
-    );
-    if (ready.length === 0) {
-      break;
-    }
-    const wave = nextWave(ready);
-    for (const task of wave) {
-      done.add(task.id);
-      remaining.splice(remaining.indexOf(task), 1);
-    }
-    waves.push(wave.map((task) => task.id));
-  }
-  return waves;
-}
-
-// One wave out of the ready set, in table order: a task joins unless it touches an
-// area a task already in the wave touches. A DESTRUCTIVE task takes the wave
-// ALONE — it mutates shared state, so nothing may verify against that state
-// concurrently (spec Decision 15).
-function nextWave(ready: PlanTask[]): PlanTask[] {
-  const wave: PlanTask[] = [];
-  const claimed = new Set<string>();
-  for (const task of ready) {
-    if (task.destructive) {
-      if (wave.length === 0) {
-        return [task];
-      }
-      continue;
-    }
-    const areas = task.areas.map((area) => area.toLowerCase());
-    if (areas.some((area) => claimed.has(area))) {
-      continue;
-    }
-    wave.push(task);
-    for (const area of areas) {
-      claimed.add(area);
-    }
-  }
-  return wave;
-}
-
-// ---------------------------------------------------------------------------
 // Preconditions — what makes a spec unplannable
 // ---------------------------------------------------------------------------
 
@@ -663,7 +599,7 @@ function judge(planned: PlanTask[]): Preconditions {
 }
 
 // The three cells a task cannot execute without: WHAT to build, WHERE it lands
-// (the wave grouping is computed from it), and HOW it is verified. A description
+// (the Affected areas the task touches), and HOW it is verified. A description
 // is NOT required — the title stands in for it.
 function missingFields(planned: PlanTask[]): MissingField[] {
   const missing: MissingField[] = [];
@@ -762,12 +698,8 @@ function refusalMessage(preconditions: Preconditions): string {
 // The human form (no `--json`): the plan at a glance. The machine payload is the
 // real surface — a skill always passes `--json` — so this stays a summary.
 function renderPlan(plan: BuildPlan): string {
-  const waves = plan.waves.map(
-    (wave, index) => `${index + 1}) ${wave.join(", ")}`
-  );
   return [
-    `tasks: ${plan.tasks.length}`,
-    `waves: ${waves.length === 0 ? NONE : waves.join("  ")}`,
+    `tasks: ${plan.tasks.map((task) => task.id).join(", ") || NONE}`,
     `hasTestSuite: ${plan.hasTestSuite.value}${suiteNote(plan.hasTestSuite)}`,
     `manualVerifySetup: ${renderSetup(plan.manualVerifySetup)}`,
     `workRoot: ${plan.workRoot}`,
@@ -825,13 +757,31 @@ const AFFIRMATIVE: ReadonlySet<string> = new Set([
   "✔",
 ]);
 
-// A comma-separated cell as its members, with the "nothing here" spellings
-// dropped — so `—` yields [] rather than a dependency on a task named "—".
-function splitList(cell: string): string[] {
+// A comma-separated cell as its raw members: edge emphasis stripped, trimmed,
+// blank fragments (a trailing comma's leftover) dropped — but every OTHER
+// spelling kept, the `NO_VALUE` ones included. This is the exact string a
+// dependency or an area BECOMES once build-plan reads the cell, and it is the
+// single source of truth for that: `spec lint`'s `Affected areas` check
+// (`artifact-lint.ts`'s `splitAreaList`) imports this directly instead of
+// re-deriving its own emphasis rules, so the string it validates and the
+// string this file emits can never drift apart again. `splitList` below
+// layers the NO_VALUE filter on top, for the cells where "nothing here" is a
+// legitimate answer — areas has no such answer, so `spec lint` keeps every
+// member this returns, `—` included, and judges it instead of dropping it.
+export function splitCellMembers(cell: string): string[] {
   return cell
     .split(",")
     .map((value) => stripEmphasis(value))
-    .filter((value) => !NO_VALUE.has(value.toLowerCase()));
+    .filter((value) => value !== "");
+}
+
+// A comma-separated cell as its members, with the "nothing here" spellings
+// ALSO dropped — so `—` yields [] rather than a dependency on a task named
+// "—". Layered on `splitCellMembers` above; see it for what a member IS.
+function splitList(cell: string): string[] {
+  return splitCellMembers(cell).filter(
+    (value) => !NO_VALUE.has(value.toLowerCase())
+  );
 }
 
 function isAffirmative(cell: string): boolean {

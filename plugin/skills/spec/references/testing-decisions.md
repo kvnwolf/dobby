@@ -35,7 +35,7 @@ The test-author writes tests from the spec and this section ONLY — never from 
 
 ## Manual verify setup (feeds execute's pre-verification gate)
 
-Automated verification runs against the live app but CANNOT log itself in, seed data, or flip feature flags. So decide at spec time whether **this plan's** verification requires manually-prepared state — an authenticated session, seeded rows, an enabled flag — that a human must put in place before any `dobby:verifier` runs. Derive the answer from the interview's roles/routes answers: **an authed route in scope is a real need**; a purely public/anonymous change is not.
+Automated verification runs against the live app but CANNOT log itself in, seed data, or flip feature flags. So decide at spec time whether **this plan's** verification requires manually-prepared state — an authenticated session, seeded rows, an enabled flag — that a human must put in place before any `dobby:qa` runs. Derive the answer from the interview's roles/routes answers: **an authed route in scope is a real need**; a purely public/anonymous change is not.
 
 Record it in the Testing Decisions as an explicit field. **The label `Manual verify setup:` is machine-read** — `dobby build-plan` extracts it from this section into `manualVerifySetup` (either the string `none` or the list of steps) and `dobby spec lint` fails the spec when the line is missing — so write it verbatim, never paraphrased into prose:
 

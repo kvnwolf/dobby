@@ -35,16 +35,12 @@ Write down, per hunk: **their intent**, **our intent**, and whether the two are 
 
 ## Step 3: Resolve each hunk — delegate, never edit inline
 
-Before `bunx` or the first Agent, require BOTH local onboarding markers at the
-current workroot: `dobby.config.json` and `node_modules/.bin/dobby`. If either is
+Before the first Agent, require BOTH local onboarding markers at the current
+workroot: `dobby.config.json` and `node_modules/.bin/dobby`. If either is
 absent, STOP, point to `/dobby:onboard`, and do not run `bunx dobby`; remote
-package resolution is forbidden. Only then run `bunx dobby env --json`, require
-the complete `workflowRecipe`, and validate its positive-integer
-`limits.maxConcurrency`. Missing/malformed data means STOP with zero Agents;
-never guess a cap from prose or frontmatter. Retain the limit for every retry or
-fix Agent later in this conflict operation.
+package resolution is forbidden.
 
-The architect does not edit conflicted files. Dispatch `dobby:implementor` (Agent tool, `subagent_type: "dobby:implementor"`) with, per hunk: the file + marker location, **both recovered intents**, and the resolution rule below. Batch all hunks in one file (and trivially-related files) into ONE implementor call. Partition independent implementors into deterministic sequential batches of at most `workflowRecipe.limits.maxConcurrency`: launch one batch in parallel only for **non-overlapping** files (same rule as `/dobby:execute` waves), await it fully, then launch the next. Retries and replacements consume a slot; serialize anything touching shared state.
+The architect does not edit conflicted files. Dispatch `dobby:implementor` (Agent tool, `subagent_type: "dobby:implementor"`) with, per hunk: the file + marker location, **both recovered intents**, and the resolution rule below. Batch all hunks in one file (and trivially-related files) into ONE implementor call. Size the fan-out yourself: partition independent implementors into deterministic sequential batches you judge safe to run together, launch one batch in parallel only for **non-overlapping** files (same rule as `/dobby:execute` waves), await it fully, then launch the next. Retries and replacements consume a slot; serialize anything touching shared state.
 
 The resolution rule the implementor applies to each hunk:
 
@@ -92,10 +88,9 @@ Interact with the user in their language. Code, comments, commit messages, and A
 - [ ] Current state established: operation in flight (`git status`) and the exact conflicting files (`--diff-filter=U`) identified — never guessed
 - [ ] Per hunk, BOTH sides' intent recovered from commits/PRs/issues and stated in one sentence each; nothing resolved whose purpose is unclear
 - [ ] Both local markers (`dobby.config.json` + `node_modules/.bin/dobby`) existed before `bunx`; either missing STOPped at `/dobby:onboard` without remote resolution or Agent launch
-- [ ] Complete `workflowRecipe` and valid `limits.maxConcurrency` resolved through `bunx dobby env --json` before the first Agent; missing/malformed data launched zero Agents
 - [ ] Every hunk resolved by `dobby:implementor` (architect edited no conflicted file): compatible → both intents preserved; incompatible → merge-goal side chosen and trade-off recorded; no invented behaviour
 - [ ] Every initial/fix implementor envelope handled fail-closed: `completed` integrated; `blocked` stopped with blocker + work-log accounting; null/malformed triggered file-scoped status/diff/diff-check/marker inspection and `needs-human`, before gate/stage/continue
-- [ ] Independent implementors, retries, and fix Agents ran in sequential batches no larger than the resolved limit; parallel files did not overlap and shared-state mutations were serialized
+- [ ] Independent implementors, retries, and fix Agents ran in sequential batches sized by your own judgment; parallel files did not overlap and shared-state mutations were serialized
 - [ ] Project's discovered checks (`dobby.config.json`) run green; failures fixed via implementor, never weakened or skipped
 - [ ] Merge/rebase NOT aborted; resolved files staged; commit handed to `/dobby:commit`; rebases looped to completion
 - [ ] Any incompatible-hunk trade-off surfaced as an ADR candidate for `/dobby:wrap`

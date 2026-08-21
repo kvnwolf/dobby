@@ -553,7 +553,7 @@ const SESSION_COMMANDS: readonly UsageCommand[] = [
     name: "state",
   },
   {
-    description: "Emit the build-workflow task plan (waves, preconditions)",
+    description: "Emit the build-workflow task plan (tasks, preconditions)",
     name: "build-plan",
   },
   {
@@ -652,6 +652,11 @@ export function usageCommands(
       description:
         "Run the quality gate (biome, tsc, knip, build, test); file args = biome-only fast path",
       name: "check [file...]",
+    },
+    {
+      description:
+        "Record the green baseline (suites already failing) that `check --baseline` judges against",
+      name: "baseline record",
     },
   ];
 

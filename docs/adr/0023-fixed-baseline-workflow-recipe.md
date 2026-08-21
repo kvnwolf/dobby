@@ -1,6 +1,6 @@
 # 0023. Run a fixed baseline Workflow recipe before adding budgets
 
-**Status:** accepted — supersedes [ADR-0022](./0022-native-workflow-budget-policy.md)'s selectable profiles, escalation policy, and `STATE.md` execution-profile section.
+**Status:** superseded by [ADR-0029](./0029-subagent-dispatch-replaces-the-native-workflow.md) — the native Workflow, the recipe and its fingerprint are gone; each agent's model and effort now live in its own frontmatter. Supersedes [ADR-0022](./0022-native-workflow-budget-policy.md)'s selectable profiles, escalation policy, and `STATE.md` execution-profile section.
 
 ADR-0022 proved that Claude Code's native Workflow can apply model and effort per `agent()` invocation, bound loops and concurrency, and return honest telemetry without `claude -p`. Its three-profile selection system had not yet earned its operational surface, however. Project/global/session configuration, precedence, profile selection, and escalation rules would make every task carry policy ceremony before field data showed that more than one recipe was useful.
 

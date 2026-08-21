@@ -1,6 +1,5 @@
 import type { ChildProcess } from "node:child_process";
 import {
-  appendFileSync,
   copyFileSync,
   type Dirent,
   existsSync,
@@ -8,13 +7,18 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { detectCapabilities, scanCapabilities } from "./detect.ts";
-import { discoverPanes, resolveDevUrl } from "./envinfo.ts";
+import { resolveDevUrl } from "./envinfo.ts";
+import {
+  DEV_START_COMMAND,
+  detectEnvironment,
+  type Environment,
+  killFromPidfile,
+} from "./environment.ts";
 import {
   installPrePushHook,
   type PrePushHookAction,
@@ -28,7 +32,6 @@ import {
   resolveWorkroot,
   runCapture,
   runInherit,
-  spawnBackground,
   spawnDetached,
 } from "./runner.ts";
 import {
@@ -50,10 +53,6 @@ const GLOB_META_RE = /[*?]/;
 const DATABASE_URL_LINE_RE = /^\s*DATABASE_URL\s*=/;
 const DATABASE_URL_UNPOOLED_LINE_RE = /^\s*DATABASE_URL_UNPOOLED\s*=/;
 const POOLER_HOST_RE = /^([^.]+)\./;
-const SURFACE_REF_RE = /surface:\S+/;
-const PANE_REF_RE = /pane:\S+/;
-const TRAILING_SLASH_RE = /\/$/;
-const PS_ETIME_RE = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/;
 
 // The action-command executors (the inferred `db:*` tasks, `update`, and
 // `up`/`down`/`dev`). They are the IMPURE counterpart to the pure planners in
@@ -491,7 +490,7 @@ function executeDbCommand(
 //     SIGINT/SIGTERM to dobby, tear the whole group down and exit with the MAIN's
 //     code. Inherited stdio — it streams and lives until the group exits. NOT
 //     CI-tested (spawns real servers) — covered by the wrap-stage human smoke + the
-//     verifier's live recipe.
+//     QA's live recipe.
 // ---------------------------------------------------------------------------
 
 // A dev command whose bin is RESOLVED to a spawnable path: a consumer-local
@@ -877,7 +876,7 @@ export function runUpdate(cwd: string): UpdateReport {
 // (through the `--dry-run` render), while the real execution (curl liveness probe,
 // `bunx neonctl` branch create/delete, the cmux pane orchestration with its
 // runtime surface-ref capture, the detached spawn) needs a live server / cmux /
-// neonctl and is covered by the verifier's live recipe + the wrap-stage human
+// neonctl and is covered by the QA's live recipe + the wrap-stage human
 // smoke — NOT CI (mirroring how `dev`'s streaming path is handled). The cmux stdout
 // ref format is runtime-unverified, so the orchestration carries the spec-mandated
 // discovery-diff fallback. The ONE execution property CI does pin is the pane-vs-
@@ -1051,7 +1050,7 @@ const DEGRADED_UP_COMMAND = "DOBBY_SKIP_INSTALL=1 bunx dobby up";
 
 // Assemble the machine report from what the caller resolved. `verifyMode` and
 // `degradedCommand` are DERIVED here so every path agrees on them: a devUrl means
-// the verifier can hit a URL (else it verifies programmatically), and the degraded
+// QA can hit a URL (else it verifies programmatically), and the degraded
 // command is attached to install-phase failures alone.
 function upFacts(parts: {
   browserPane?: string | null;
@@ -1084,6 +1083,10 @@ function upFacts(parts: {
 interface UpContext {
   cmux: string | null;
   devUrl: string | null;
+  // The resolved adapter — carries the actual run/browser-surface mechanics (see
+  // environment.ts). `cmux` above stays as its own field for plan-rendering / report
+  // data (`UpAction`, `UpFacts`), unchanged in shape from before the seam.
+  environment: Environment;
   neon: { apiKey: string; projectId: string } | null;
   slug: string;
   workroot: string;
@@ -1110,9 +1113,11 @@ export function runUp(
   opts: { dryRun: boolean; machineReport?: boolean }
 ): UpReport {
   const machineReport = opts.machineReport === true;
-  // The cmux workspace id — resolved ONCE (independent of the app gate) so it feeds
-  // the workspace rename, the plan, and every report arm alike.
-  const cmux = process.env.CMUX_WORKSPACE_ID || null;
+  // The environment — resolved ONCE (independent of the app gate) so it feeds the
+  // workspace rename, the plan, and every report arm alike. `cmux` is its
+  // CMUX_WORKSPACE_ID-derived identity, unchanged in shape from the old direct read.
+  const environment = detectEnvironment();
+  const { cmux } = environment;
 
   let workroot: string;
   try {
@@ -1146,7 +1151,7 @@ export function runUp(
     upFacts({
       ...parts,
       browserPane: machineReport
-        ? discoverPanes(workroot, cmux).browserPane
+        ? environment.discoverPanes(workroot).browserPane
         : null,
       cmux,
       slug,
@@ -1192,7 +1197,13 @@ export function runUp(
         },
       };
     }
-    const resolved = resolveUpContext(cwd, workroot, slug, capabilities);
+    const resolved = resolveUpContext(
+      cwd,
+      workroot,
+      slug,
+      capabilities,
+      environment
+    );
     if (!resolved.ok) {
       return {
         error: resolved.error,
@@ -1234,12 +1245,11 @@ export function runUp(
     };
   }
 
-  // (1b) Rename the cmux WORKSPACE to the goal slug — WHENEVER cmux is present, after
-  // the setup phase and BEFORE the no-app gate, so a no-app project's workspace is
-  // still renamed. Idempotent by nature (re-running `up` re-renames to the same title).
-  if (cmux !== null) {
-    renameCmuxWorkspace(workroot, cmux, slug);
-  }
+  // (1b) Rename the workspace to the goal slug — after the setup phase and BEFORE
+  // the no-app gate, so a no-app project's workspace is still renamed. A no-op for
+  // an environment with no workspace concept (terminal). Idempotent by nature
+  // (re-running `up` re-renames to the same title).
+  environment.renameWorkspace(workroot, slug);
 
   // (2) The no-app gate — the graceful no-op, reached only after the setup phase.
   if (!hasApp) {
@@ -1252,7 +1262,13 @@ export function runUp(
   }
 
   // (3) The run phase (a neon project with missing creds fails hard).
-  const resolved = resolveUpContext(cwd, workroot, slug, capabilities);
+  const resolved = resolveUpContext(
+    cwd,
+    workroot,
+    slug,
+    capabilities,
+    environment
+  );
   if (!resolved.ok) {
     return {
       error: resolved.error,
@@ -1282,10 +1298,10 @@ function resolveUpContext(
   cwd: string,
   workroot: string,
   slug: string,
-  capabilities: string[]
+  capabilities: string[],
+  environment: Environment
 ): { ok: false; error: string } | { ok: true; context: UpContext } {
   const devUrl = resolveDevUrl(cwd, workroot, capabilities);
-  const cmux = process.env.CMUX_WORKSPACE_ID || null;
 
   // Neon isolation: BOTH creds must be present in the worktree's .env.local, or up
   // fails hard — refusing to fall back to the shared main database.
@@ -1302,13 +1318,18 @@ function resolveUpContext(
     neon = { apiKey: creds.apiKey, projectId: creds.projectId };
   }
 
-  return { context: { cmux, devUrl, neon, slug, workroot }, ok: true };
+  return {
+    context: {
+      cmux: environment.cmux,
+      devUrl,
+      environment,
+      neon,
+      slug,
+      workroot,
+    },
+    ok: true,
+  };
 }
-
-// The `bunx dobby dev` command `up` starts — via a cmux pane (typed into the run
-// pane) or a detached spawn. One literal, shared by the plan and the real run so
-// they can never diverge.
-const DEV_START_COMMAND = "bunx dobby dev";
 
 // The ordered `up` plan derived from the resolved decisions: probe → neon branch
 // (when neon) → start (the cmux RUN pane XOR the detached run) → liveness wait →
@@ -1386,9 +1407,7 @@ function executeUp(context: UpContext): UpOutcome {
     context.devUrl !== null &&
     probeLiveness(context.workroot, context.devUrl)
   ) {
-    if (context.cmux !== null) {
-      ensureBrowserPane(context, context.cmux);
-    }
+    context.environment.ensureBrowserSurface(context);
     return { exitCode: 0, failure: null, reason: null };
   }
 
@@ -1407,9 +1426,7 @@ function executeUp(context: UpContext): UpOutcome {
   // the server boot is that pane's purpose), else spawn detached. A failed detached
   // spawn fails `up` NOW (never entering the liveness wait for a server that never
   // started); the cmux path is owned by cmux and unaffected.
-  if (context.cmux !== null) {
-    ensureRunPane(context, context.cmux);
-  } else if (!startDetached(context)) {
+  if (!context.environment.ensureRunSurface(context)) {
     return {
       exitCode: 1,
       failure: "could not start `bunx dobby dev` — see .dobby/dev.log",
@@ -1434,9 +1451,7 @@ function executeUp(context: UpContext): UpOutcome {
   // (5) The app responds → open the browser pane on the devUrl. Deliberately AFTER
   // the wait: created alongside the boot it would render a 404 until the server came
   // up (the field annoyance this ordering fixes).
-  if (context.cmux !== null) {
-    ensureBrowserPane(context, context.cmux);
-  }
+  context.environment.ensureBrowserSurface(context);
   return { exitCode: 0, failure: null, reason: null };
 }
 
@@ -1588,224 +1603,6 @@ function togglePooler(uri: string, pooled: boolean): string {
 }
 
 // ---------------------------------------------------------------------------
-// cmux workspace rename (up) — the workspace title IS the goal identity.
-// ---------------------------------------------------------------------------
-
-// Rename the cmux WORKSPACE to the plain goal `title` (the slug) so the user can tell
-// which workspace belongs to which goal at a glance. Workspace-scoped like the pane
-// commands, so `--workspace` is passed explicitly (matching createNamedPane's new-pane
-// / list-panes style). Idempotent by nature (re-running re-renames to the same title).
-// Best-effort — a cmux failure never blocks the run. NOT CI-tested.
-function renameCmuxWorkspace(
-  workroot: string,
-  cmux: string,
-  title: string
-): void {
-  runCapture("cmux", ["rename-workspace", "--workspace", cmux, title], {
-    root: workroot,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// cmux pane orchestration (up) — the two kit panes, created in TIME order.
-//
-// The RUN terminal opens at START time (its purpose is watching the server boot);
-// the BROWSER pane opens only once liveness confirms the devUrl responds — a pane
-// created alongside the boot renders a 404 until the server is up. On the ALREADY-LIVE
-// short-circuit only the BROWSER pane is reconciled: up starts nothing there, so a
-// missing run pane is left missing rather than recreated + sent a second `dobby dev`.
-//
-// Each pane is created INDEPENDENTLY (`new-pane --direction right`, right of Claude)
-// rather than by splitting its sibling: cmux's `new-split` carries no `--type`, so
-// a browser pane can only be born from `new-pane`, and the old surface-targeted
-// `new-split down` (run BELOW browser) would have forced the browser to exist first.
-//
-// Both are create-missing-only (spec up step 1): a surviving kit pane is REUSED by
-// its discovered surface ref, never duplicated. Surface refs are captured from cmux
-// stdout with the spec-mandated discovery-diff fallback (the stdout ref format is
-// runtime-unverified). NOT CI-tested for the real cmux; the ORDERING is.
-// ---------------------------------------------------------------------------
-
-// Ensure the RUN terminal exists and is running `dobby dev`: reuse a surviving
-// `dobby-run-<slug>` pane, else create it right of Claude, rename it, and send the
-// workroot-pinned start line. Called ONLY on the FRESH-START path (where up owns the
-// start), at START time — never gated on liveness. The already-live short-circuit
-// deliberately does NOT call this: sending the start line to an app that already
-// answers would double-start the dev server (see executeUp step 1).
-function ensureRunPane(context: UpContext, cmux: string): void {
-  if (discoverPanes(context.workroot, cmux).runPane !== null) {
-    return;
-  }
-  const runRef = createNamedPane(
-    context,
-    cmux,
-    ["--direction", "right"],
-    `dobby-run-${context.slug}`
-  );
-  // No ref → the pane can't be targeted; nothing to send into.
-  if (runRef === null) {
-    return;
-  }
-  runCapture(
-    "cmux",
-    [
-      "send",
-      "--surface",
-      runRef,
-      `cd ${context.workroot} && ${DEV_START_COMMAND}\n`,
-    ],
-    {
-      root: context.workroot,
-    }
-  );
-}
-
-// Ensure the BROWSER pane exists on the devUrl: reuse a surviving
-// `dobby-browser-<slug>` pane, else create it right of Claude and rename it. Called
-// ONLY when the app is confirmed live (the already-up short-circuit, or after the
-// liveness wait succeeded) — never while the server is still booting.
-function ensureBrowserPane(context: UpContext, cmux: string): void {
-  if (discoverPanes(context.workroot, cmux).browserPane !== null) {
-    return;
-  }
-  createNamedPane(
-    context,
-    cmux,
-    [
-      "--type",
-      "browser",
-      ...(context.devUrl === null ? [] : ["--url", context.devUrl]),
-      "--direction",
-      "right",
-    ],
-    `dobby-browser-${context.slug}`
-  );
-}
-
-// Create a cmux pane (`new-pane --workspace <id> <args…>`), resolve its surface ref
-// (stdout token, discovery-diff fallback) and rename it `title`. Returns the ref, or
-// null when it can't be resolved (nothing to rename or target).
-function createNamedPane(
-  context: UpContext,
-  cmux: string,
-  args: string[],
-  title: string
-): string | null {
-  const before = listAllSurfaces(context.workroot, cmux);
-  const created = runCapture(
-    "cmux",
-    ["new-pane", "--workspace", cmux, ...args],
-    { root: context.workroot }
-  );
-  const ref =
-    captureSurfaceRef(created.stdout) ??
-    diffNewSurface(before, listAllSurfaces(context.workroot, cmux));
-  if (ref === null) {
-    return null;
-  }
-  runCapture("cmux", ["rename-tab", "--surface", ref, title], {
-    root: context.workroot,
-  });
-  return ref;
-}
-
-// The first `surface:<ref>` token in cmux stdout, or null (format runtime-unverified).
-function captureSurfaceRef(stdout: string): string | null {
-  return SURFACE_REF_RE.exec(stdout)?.[0] ?? null;
-}
-
-// Every surface ref in the cmux workspace — the discovery-diff fallback input.
-// Tolerant: any failure yields an empty set.
-function listAllSurfaces(workroot: string, cmux: string): Set<string> {
-  const refs = new Set<string>();
-  const panes = runCapture("cmux", ["list-panes", "--workspace", cmux], {
-    root: workroot,
-  });
-  if (panes.status !== 0) {
-    return refs;
-  }
-  for (const line of panes.stdout.split("\n")) {
-    const paneRef = PANE_REF_RE.exec(line)?.[0];
-    if (paneRef === undefined) {
-      continue;
-    }
-    const surfaces = runCapture(
-      "cmux",
-      ["list-pane-surfaces", "--workspace", cmux, "--pane", paneRef],
-      { root: workroot }
-    );
-    if (surfaces.status !== 0) {
-      continue;
-    }
-    for (const surfaceLine of surfaces.stdout.split("\n")) {
-      const ref = SURFACE_REF_RE.exec(surfaceLine)?.[0];
-      if (ref !== undefined) {
-        refs.add(ref);
-      }
-    }
-  }
-  return refs;
-}
-
-// The one surface present in `after` but not `before` (the just-created pane).
-function diffNewSurface(
-  before: Set<string>,
-  after: Set<string>
-): string | null {
-  for (const ref of after) {
-    if (!before.has(ref)) {
-      return ref;
-    }
-  }
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Detached start (up, no cmux) — hand `dobby dev` to the OS, keep the handles.
-// ---------------------------------------------------------------------------
-
-// Spawn `dobby dev` DETACHED with output to <workroot>/.dobby/dev.log and its pid
-// to <workroot>/.dobby/dev.pid (so a later `down` can signal the group), ensuring
-// .dobby/ is gitignored. Returns true when the spawn took (pid written), false when
-// the spawn failed (no pidfile) so `up` can fail fast instead of waiting on liveness
-// for a server that never started. NOT CI-tested.
-function startDetached(context: UpContext): boolean {
-  const dobbyDir = join(context.workroot, ".dobby");
-  mkdirSync(dobbyDir, { recursive: true });
-  ensureGitignored(context.workroot, ".dobby/");
-  const pid = spawnBackground("bunx", ["dobby", "dev"], {
-    logPath: join(dobbyDir, "dev.log"),
-    root: context.workroot,
-  });
-  if (pid === undefined) {
-    return false;
-  }
-  writeFileSync(join(dobbyDir, "dev.pid"), `${pid}\n`);
-  return true;
-}
-
-// Append `entry` to <workroot>/.gitignore when absent (idempotent). Best-effort.
-function ensureGitignored(workroot: string, entry: string): void {
-  const path = join(workroot, ".gitignore");
-  let raw = "";
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    // No .gitignore yet — created below.
-  }
-  const bare = entry.replace(TRAILING_SLASH_RE, "");
-  const present = raw.split("\n").some((line) => {
-    const trimmed = line.trim();
-    return trimmed === entry || trimmed === bare;
-  });
-  if (present) {
-    return;
-  }
-  const prefix = raw === "" || raw.endsWith("\n") ? "" : "\n";
-  appendFileSync(path, `${prefix}${entry}\n`);
-}
-
-// ---------------------------------------------------------------------------
 // `dobby down` — teardown: close kit panes, kill the detached run, delete the neon
 // branch, run teardown[] extras.
 // ---------------------------------------------------------------------------
@@ -1834,10 +1631,11 @@ export type DownReport =
   | { ok: true; kind: "plan"; plan: DownPlan }
   | { ok: true; kind: "ran"; exitCode: number; failure: string | null };
 
-// The decisions a real `down` needs (cmux for pane discovery, the neon API key for
-// the delete). Derived once, shared with the plan.
+// The decisions a real `down` needs (the resolved environment for pane discovery,
+// the neon API key for the delete). Derived once, shared with the plan.
 interface DownContext {
   cmux: string | null;
+  environment: Environment;
   neonApiKey: string | null;
   slug: string;
   workroot: string;
@@ -1859,7 +1657,9 @@ export function runDown(cwd: string, opts: { dryRun: boolean }): DownReport {
 
   const slug = basename(workroot);
   const capabilities = detectCapabilities(cwd);
-  const cmux = process.env.CMUX_WORKSPACE_ID || null;
+  // Resolved ONCE — the single CMUX_WORKSPACE_ID read this command makes.
+  const environment = detectEnvironment();
+  const { cmux } = environment;
   const loaded = loadConfig(cwd);
   const config = loaded?.ok ? loaded.config : null;
   const neonCreds = capabilities.includes("neon")
@@ -1902,6 +1702,7 @@ export function runDown(cwd: string, opts: { dryRun: boolean }): DownReport {
   }
   const context: DownContext = {
     cmux,
+    environment,
     neonApiKey: neonCreds?.apiKey ?? null,
     slug,
     workroot,
@@ -1922,9 +1723,12 @@ function executeDown(
   for (const action of actions) {
     switch (action.kind) {
       case "cmux-close":
-        closeKitPanes(context);
+        context.environment.closeSurfaces(context.workroot);
         break;
       case "kill-pidfile":
+        // NOT gated on the current environment — a stale pidfile from an earlier
+        // terminal run must still be cleaned up even under a cmux `down` (see
+        // environment.ts's `killFromPidfile` for why this stays a direct call).
         killFromPidfile(
           join(context.workroot, action.pidRel),
           context.workroot
@@ -1948,125 +1752,6 @@ function executeDown(
     }
   }
   return { exitCode, failure };
-}
-
-// Discover and close the kit panes (`cmux close-surface --surface <ref>` each).
-// Live cmux IPC; a no-op when nothing is discoverable. NOT CI-tested.
-function closeKitPanes(context: DownContext): void {
-  if (context.cmux === null) {
-    return;
-  }
-  const panes = discoverPanes(context.workroot, context.cmux);
-  for (const ref of [panes.browserPane, panes.runPane]) {
-    if (ref !== null) {
-      runCapture("cmux", ["close-surface", "--surface", ref], {
-        root: context.workroot,
-      });
-    }
-  }
-}
-
-// Kill the detached run's process GROUP (SIGTERM to -pid) when the pid is still alive
-// AND `ownsDetachedRun` confirms both the command-line signature AND the start-time
-// (see below); either way remove the pidfile (a stale pid is cleaned up silently). The
-// ownership check guards against pid reuse: a recycled pid can pass `isAlive` (EPERM
-// counts even another user's process alive), so we never signal a group that isn't ours.
-function killFromPidfile(pidPath: string, workroot: string): void {
-  let pid: number;
-  try {
-    pid = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
-  } catch {
-    return;
-  }
-  if (
-    Number.isInteger(pid) &&
-    isAlive(pid) &&
-    ownsDetachedRun(pid, workroot, pidPath)
-  ) {
-    try {
-      process.kill(-pid, "SIGTERM");
-    } catch {
-      // The group already vanished — nothing to signal.
-    }
-  }
-  rmSync(pidPath, { force: true });
-}
-
-// Whether `pid` names a live process (`kill(pid, 0)`): ESRCH → dead, EPERM → alive
-// (exists but unsignalable).
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
-// Whether `pid` is OUR detached run — requires BOTH (a) the command-line signature
-// (`dobby dev`, since it was spawned as `bunx dobby dev`) AND (b) a start-time match:
-// the process must have started no later than the pidfile was written (+ tolerance).
-// (a) alone is insufficient — the signature matches ANY dobby dev, including another
-// worktree's (parallel goals are the kit's normal mode), so a recycled pid now running
-// an UNRELATED workspace's dev group would still match. The start-time guard closes
-// that: a process that came up AFTER we recorded this pid can't be the one we recorded.
-// `ps` is a system tool → bare. Any failure — failed/empty `ps`, a non-matching command,
-// an unstat-able pidfile, or an unparseable etime — is treated as NOT ours (the pid is
-// stale → signal nothing; the caller still removes the file).
-function ownsDetachedRun(
-  pid: number,
-  workroot: string,
-  pidPath: string
-): boolean {
-  const command = runCapture("ps", ["-o", "command=", "-p", String(pid)], {
-    root: workroot,
-  });
-  if (
-    command.error ||
-    command.status !== 0 ||
-    !command.stdout.includes("dobby dev")
-  ) {
-    return false;
-  }
-  // (b) Start-time guard against pid REUSE across worktrees. pidfile mtime ≈ when we
-  // recorded the pid; the process's `ps` etime gives its start (now − elapsed). Owned
-  // only when the process is no NEWER than the pidfile write, within a 15s tolerance.
-  let pidfileMtimeMs: number;
-  try {
-    pidfileMtimeMs = statSync(pidPath).mtimeMs;
-  } catch {
-    return false;
-  }
-  const etime = runCapture("ps", ["-o", "etime=", "-p", String(pid)], {
-    root: workroot,
-  });
-  if (etime.error || etime.status !== 0) {
-    return false;
-  }
-  const elapsedSeconds = parseEtimeSeconds(etime.stdout);
-  if (elapsedSeconds === null) {
-    return false;
-  }
-  const processStartMs = Date.now() - elapsedSeconds * 1000;
-  const toleranceMs = 15_000;
-  return processStartMs <= pidfileMtimeMs + toleranceMs;
-}
-
-// Parse `ps -o etime=` elapsed time to whole seconds. Grammar `[[dd-]hh:]mm:ss` (each
-// field one-or-more digits; days optional, hours optional). Deterministic — any shape
-// outside the grammar returns null (the caller treats that as NOT ours). Pure; kept
-// private because the only reachable caller is the kill path, which is a documented
-// non-CI boundary (a real matching process can't be conjured through the run() seam).
-function parseEtimeSeconds(raw: string): number | null {
-  const match = PS_ETIME_RE.exec(raw.trim());
-  if (match === null || match[3] === undefined || match[4] === undefined) {
-    return null;
-  }
-  const days = match[1] === undefined ? 0 : Number(match[1]);
-  const hours = match[2] === undefined ? 0 : Number(match[2]);
-  const minutes = Number(match[3]);
-  const seconds = Number(match[4]);
-  return ((days * 24 + hours) * 60 + minutes) * 60 + seconds;
 }
 
 // Delete the neon isolation branch (a missing branch is idempotently fine). NOT

@@ -20,7 +20,7 @@ Before interrogating, dispatch a `researcher` agent (Agent tool, `subagent_type:
 
 **Facts are YOUR job, never the user's — and fact-finding never blocks the interview.** Mid-interview, when a claim needs checking against the code, delegate it: anything substantial goes to a `researcher`, never to the user — the codebase can answer it, and the reading stays off your context. Then keep going: a pending dispatch is just an unsettled prerequisite in the design tree, so ONLY the questions downstream of that fact wait for the report — the rest of the frontier is asked right now (Step 4). Fold the findings in when they land, and open the questions they unblock in the next round.
 
-**Bound researcher fan-out.** When two or more independent facts are ready to investigate, use the local recipe only if both `dobby.config.json` and `node_modules/.bin/dobby` exist: run `bunx dobby env --json`, validate `workflowRecipe.limits.maxConcurrency`, and launch deterministic batches no larger than that value. In a standalone or unonboarded interview, serialize researchers one at a time instead; never let `bunx` fetch an unrelated remote package. Retries and replacements count against the same bound.
+**Size researcher fan-out yourself.** When two or more independent facts are ready to investigate, launch deterministic sequential batches you judge safe to run together, await each batch, then launch the next. Retries and replacements count against the same batch.
 
 ## Step 4: Interview — frontier rounds
 
@@ -119,7 +119,7 @@ Interview in the user's language. Write the Decisions summary (and anything pers
 - [ ] Every question was self-contained (its own context restated INSIDE the question, single topic) — no bundled/general multi-decision questions
 - [ ] Any answer orphaned by a same-round sibling was discarded out loud and re-asked next round with the corrected premise
 - [ ] Mid-interview facts went to a `researcher` without stalling the interview — only downstream questions waited
-- [ ] Concurrent researcher calls honored `workflowRecipe.limits.maxConcurrency`; standalone/unonboarded interviews serialized them without remote `bunx` resolution
+- [ ] Concurrent researcher calls ran in sequential batches sized by your own judgment
 - [ ] Every decision resting on a shared-primitive behavior verified against code before close (proactively, not user-forced)
 - [ ] Resolved domain terms offered as `CONTEXT.md` candidates at handoff (offer-then-approve); approved ones flagged in the Decisions summary
 - [ ] Decisions summary produced, with new-term / ADR-candidate flags

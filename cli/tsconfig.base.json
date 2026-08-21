@@ -18,6 +18,8 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "incremental": true,
+    "tsBuildInfoFile": "${configDir}/.dobby/tsconfig.tsbuildinfo"
   }
 }

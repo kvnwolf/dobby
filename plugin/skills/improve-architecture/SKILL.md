@@ -12,15 +12,9 @@ From `$ARGUMENTS`: a module, a subsystem, or the whole repo. If blank, ask what 
 
 ## Step 2: Map the structure (researcher)
 
-Before `bunx` or the first Agent, require BOTH local onboarding markers at the
-current workroot: `dobby.config.json` and `node_modules/.bin/dobby`. If either is
-absent, STOP, point to `/dobby:onboard`, and do not run `bunx dobby`; never use
-remote resolution as onboarding. Only then run `bunx dobby env --json`, require
-the complete `workflowRecipe`, and validate its positive-integer
-`limits.maxConcurrency`. Missing/malformed data means STOP with zero Agents;
-never infer a fallback.
+Before the first Agent dispatch, require BOTH local onboarding markers at the current workroot: `dobby.config.json` and `node_modules/.bin/dobby`. If either is absent, STOP, point to `/dobby:onboard`, and do not run `bunx dobby`; remote resolution is forbidden.
 
-Dispatch `researcher` agent(s) (Agent tool, `subagent_type: "dobby:researcher"`) to map the target — modules, their public interfaces, the import graph, where logic actually lives. For a whole-repo pass, partition independent areas into deterministic sequential batches of at most `workflowRecipe.limits.maxConcurrency`: launch one batch in parallel, await all its results, then launch the next. Retries and replacement Agents consume a slot. They return grounded findings with paths; you don't grep in the main thread.
+Dispatch `researcher` agent(s) (Agent tool, `subagent_type: "dobby:researcher"`) to map the target — modules, their public interfaces, the import graph, where logic actually lives. For a whole-repo pass, size the fan-out yourself: partition independent areas into deterministic sequential batches you judge safe to run together, launch one batch in parallel, await all its results, then launch the next. Retries and replacement Agents consume a slot. They return grounded findings with paths; you don't grep in the main thread.
 
 ## Step 3: Assess against the principles
 
@@ -63,7 +57,6 @@ Interact in the user's language; write the HTML report's prose in English; keep 
 ## Acceptance checklist
 
 - [ ] Both local markers (`dobby.config.json` + `node_modules/.bin/dobby`) existed before `bunx`; either missing STOPped at `/dobby:onboard` without remote resolution or Agent launch
-- [ ] `bunx dobby env --json` resolved a complete recipe and valid `limits.maxConcurrency` before the first Agent; malformed/missing data launched zero Agents
-- [ ] Researcher fan-out ran in sequential batches no larger than the resolved limit; retries/replacements counted and areas within a batch were independent
+- [ ] Researcher fan-out ran in sequential batches sized by your own judgment; retries/replacements counted and areas within a batch were independent
 - [ ] The report implementor ran only after all research batches completed, so it never overlapped the mapping fan-out
 - [ ] Report envelope handled fail-closed before open/handoff: coherent `completed` plus exact-path `test -s`/Read integrated; `blocked` reported blocker + accounting; null/malformed inspected the temp artifact and ended `needs-human` without `/dobby:scope`
