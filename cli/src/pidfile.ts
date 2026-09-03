@@ -306,13 +306,14 @@ export function liveRegisteredPid(workroot: string): number | null {
 // captured by rename, not only of the registry's canonical path. `pidPath` is
 // also what `ownsDetachedRun` stats for the pidfile's mtime; a POSIX rename
 // preserves a file's mtime, so asking about the renamed copy answers exactly
-// what asking about the original would have.
+// what asking about the original would have. Only a positive "owned" verdict
+// counts here — both "not-owned" and the inconclusive "unknown" fall through
+// to null, exactly as an outright false always has for every caller of this
+// function (the tri-state distinction only matters to `clearOwnPidfile`'s own
+// sidecar sweep, which asks `ownershipVerdict` directly).
 function livePidAt(pidPath: string, workroot: string): number | null {
   const pid = readPidAt(pidPath);
-  if (
-    pid === null ||
-    !(isAlive(pid) && ownsDetachedRun(pid, workroot, pidPath))
-  ) {
+  if (pid === null || ownershipVerdict(pid, workroot, pidPath) !== "owned") {
     return null;
   }
   return pid;
@@ -346,14 +347,20 @@ function readPidAt(path: string): number | null {
  * (`.stale.<our-pid>.<attempt>` — no longer only a rare double-fault: since
  * review round 3, `restoreOrKeep` deliberately LEAVES a captured registration
  * behind when a restore back to `dev.pid` fails), but NEVER by filename alone:
- * a sidecar is removed here only when its CONTENT is either our own pid or
- * classifies as dead/foreign (`livePidAt` reading null) — a captured live,
- * OWNED registration that belongs to somebody ELSE is left exactly where it is
- * (review round 3 follow-up, greptile P1 restated one call site over: deleting
- * it here would drop it exactly as invisibly as the original bug). That one is
- * left for `down`'s own sweep (`listStaleSidecars` + `killFromPidfile`) to find
- * and act on — the only path allowed to sign off on a live, owned pid that
- * isn't ours.
+ * a sidecar is removed here only when its CONTENT is either our own pid, or
+ * `ownershipVerdict` POSITIVELY classifies the pid it names as "not-owned"
+ * (dead — `isAlive` false — or a `ps` command line that provably isn't a
+ * dobby run). Everything else stays: a positively "owned" pid protects a live
+ * peer's only registration exactly as before (review round 3 follow-up,
+ * greptile P1 restated one call site over — deleting it here would drop it
+ * exactly as invisibly as the original bug); an "unknown" verdict — `ps`
+ * failing outright, or answering an elapsed time that will not parse — says
+ * NOTHING about the pid, and review round 4's greptile P1 is exactly this:
+ * reading that silence as "not owned" deletes a live peer's only registration
+ * just as surely as the round 3 bug did. Either kept case is left for `down`'s
+ * own sweep (`listStaleSidecars` + `killFromPidfile`) to find and act on later
+ * — the only path allowed to sign off on a live pid that isn't ours, and one
+ * that removes every sidecar it finds regardless of what it names.
  *
  * @public — self-teardown for `dobby dev`.
  */
@@ -366,9 +373,28 @@ export function clearOwnPidfile(workroot: string): void {
       continue;
     }
     const capturedPid = readPidAt(sidecarPath);
-    const belongsToSomeoneElseAndLive =
-      capturedPid !== process.pid && livePidAt(sidecarPath, workroot) !== null;
-    if (!belongsToSomeoneElseAndLive) {
+    if (capturedPid === process.pid) {
+      rmSync(sidecarPath, { force: true });
+      continue;
+    }
+    // No pid to compare against `capturedPid` (empty or unparseable content) —
+    // never our business to adjudicate: an EMPTY sidecar can still be a peer's
+    // in-flight write about to land on the same inode (`classifyCapture`'s
+    // first branch), so treat it exactly like an inconclusive probe below and
+    // leave it for `down`'s sweep.
+    const verdict =
+      capturedPid === null
+        ? "unknown"
+        : ownershipVerdict(capturedPid, workroot, sidecarPath);
+    // Only a POSITIVE "not-owned" (dead, or a `ps` command line that is
+    // provably not a dobby run) earns removal here. "owned" protects a live
+    // peer's only registration; "unknown" — `ps` failing or answering an
+    // elapsed time that doesn't parse — says nothing at all, and reading
+    // silence as absence would delete that same live peer's registration.
+    // Either way the sidecar stays on disk for `down`'s own sweep
+    // (`listStaleSidecars` + `killFromPidfile`), which removes every sidecar
+    // regardless of what it names.
+    if (verdict === "not-owned") {
       rmSync(sidecarPath, { force: true });
     }
   }
@@ -420,12 +446,15 @@ function ensureGitignored(workroot: string, entry: string): void {
 
 // Kill the detached run's process (SIGTERM to the bare `pid`, NOT the process group
 // `-pid`: a model-launched `dobby dev` is not guaranteed to lead a process group, and
-// `dev`'s own SIGTERM handler already tears its child group down) when the pid is still
-// alive AND `ownsDetachedRun` confirms both the command-line signature AND the start-time
-// (see below); either way remove the pidfile (a stale pid is cleaned up silently).
-// Returns whether a live, owned process was actually signalled. The ownership check
-// guards against pid reuse: a recycled pid can pass `isAlive` (EPERM counts even another
-// user's process alive), so we never signal a process that isn't ours.
+// `dev`'s own SIGTERM handler already tears its child group down) when `ownershipVerdict`
+// POSITIVELY answers "owned" (see below); either way remove the pidfile (a stale pid, or
+// one this probe cannot classify, is cleaned up silently — `down`'s sweep signals only a
+// positively-owned pid but always removes the file). Returns whether a live, owned
+// process was actually signalled. The ownership check guards against pid reuse: a
+// recycled pid can pass `isAlive` (EPERM counts even another user's process alive), so we
+// never signal a process that isn't ours — and an INCONCLUSIVE probe (`ps` failing, or an
+// elapsed time that won't parse) is treated exactly like "not owned" here: never signalled,
+// same as before this file gained a third verdict.
 export function killFromPidfile(pidPath: string, workroot: string): boolean {
   let pid: number;
   try {
@@ -435,8 +464,7 @@ export function killFromPidfile(pidPath: string, workroot: string): boolean {
   }
   const owned =
     Number.isInteger(pid) &&
-    isAlive(pid) &&
-    ownsDetachedRun(pid, workroot, pidPath);
+    ownershipVerdict(pid, workroot, pidPath) === "owned";
   if (owned) {
     try {
       process.kill(pid, "SIGTERM");
@@ -459,59 +487,93 @@ function isAlive(pid: number): boolean {
   }
 }
 
-// Whether `pid` is OUR detached run — requires BOTH (a) the command-line signature
-// (a `dobby dev` run, in any legitimate launch shape — see `DOBBY_DEV_COMMAND_RE`) AND
-// (b) a start-time match: the process must have started no later than the pidfile was
-// written (+ tolerance).
+// The three answers an ownership probe can give: positively "owned" (both the
+// command-line signature AND the start-time match below), positively
+// "not-owned" (the pid is dead, or `ps` names a process that provably is not a
+// dobby run, or one whose start time provably falls outside the tolerance),
+// or "unknown" — `ps` itself could not be believed (missing, refused, or
+// answering an elapsed time that will not parse) — REVIEW ROUND 4, greptile
+// P1: an "unknown" verdict says NOTHING about the pid, and a caller that folds
+// it into "not owned" risks discarding a live peer's only registration
+// (`clearOwnPidfile`'s sidecar sweep — the only caller that acts differently
+// on "unknown" than it would on "not-owned"; every other caller below still
+// treats anything short of "owned" as not-ours, unchanged from before this
+// type existed).
+type OwnershipVerdict = "owned" | "not-owned" | "unknown";
+
+// `isAlive` short-circuits first — a dead pid is a positive "not-owned" verdict
+// on its own, and there is no reason to shell out to `ps` about a pid that is
+// already provably gone.
+function ownershipVerdict(
+  pid: number,
+  workroot: string,
+  pidPath: string
+): OwnershipVerdict {
+  if (!isAlive(pid)) {
+    return "not-owned";
+  }
+  return ownsDetachedRun(pid, workroot, pidPath);
+}
+
+// Whether `pid` (already known alive) is OUR detached run — requires BOTH (a) the
+// command-line signature (a `dobby dev` run, in any legitimate launch shape — see
+// `DOBBY_DEV_COMMAND_RE`) AND (b) a start-time match: the process must have started no
+// later than the pidfile was written (+ tolerance).
 // (a) alone is insufficient — the signature matches ANY dobby dev, including another
 // worktree's (parallel goals are the kit's normal mode), so a recycled pid now running
 // an UNRELATED workspace's dev group would still match. The start-time guard closes
 // that: a process that came up AFTER we recorded this pid can't be the one we recorded.
-// `ps` is a system tool → bare. Any failure — failed/empty `ps`, a non-matching command,
-// an unstat-able pidfile, or an unparseable etime — is treated as NOT ours (the pid is
-// stale → signal nothing; the caller still removes the file).
+// `ps` is a system tool → bare. A `ps` that FAILS or answers something this function
+// cannot parse says NOTHING about the pid — "unknown", never "not-owned": review round 4,
+// greptile P1, closed here at the source so every caller inherits the fix. Only a `ps`
+// that ANSWERS is entitled to a positive verdict either way — a command line that is
+// provably not a dobby run ("not-owned"), or a start time provably inside/outside the
+// tolerance ("owned"/"not-owned").
 function ownsDetachedRun(
   pid: number,
   workroot: string,
   pidPath: string
-): boolean {
+): OwnershipVerdict {
   const command = runCapture("ps", ["-o", "command=", "-p", String(pid)], {
     root: workroot,
   });
-  if (
-    command.error ||
-    command.status !== 0 ||
-    !DOBBY_DEV_COMMAND_RE.test(command.stdout)
-  ) {
-    return false;
+  if (command.error || command.status !== 0 || command.stdout.trim() === "") {
+    return "unknown";
+  }
+  if (!DOBBY_DEV_COMMAND_RE.test(command.stdout)) {
+    return "not-owned";
   }
   // (b) Start-time guard against pid REUSE across worktrees. pidfile mtime ≈ when we
   // recorded the pid; the process's `ps` etime gives its start (now − elapsed). Owned
   // only when the process is no NEWER than the pidfile write, within a 15s tolerance.
+  // An unstat-able pidfile is left as a positive "not-owned" — unlike the `ps` failures
+  // above, nothing here is inconclusive: the file this probe was asked about is simply
+  // gone, and the spec scopes the new "unknown" verdict to the `ps` probes only.
   let pidfileMtimeMs: number;
   try {
     pidfileMtimeMs = statSync(pidPath).mtimeMs;
   } catch {
-    return false;
+    return "not-owned";
   }
   const etime = runCapture("ps", ["-o", "etime=", "-p", String(pid)], {
     root: workroot,
   });
   if (etime.error || etime.status !== 0) {
-    return false;
+    return "unknown";
   }
   const elapsedSeconds = parseEtimeSeconds(etime.stdout);
   if (elapsedSeconds === null) {
-    return false;
+    return "unknown";
   }
   const processStartMs = Date.now() - elapsedSeconds * 1000;
   const toleranceMs = 15_000;
-  return processStartMs <= pidfileMtimeMs + toleranceMs;
+  return processStartMs <= pidfileMtimeMs + toleranceMs ? "owned" : "not-owned";
 }
 
 // Parse `ps -o etime=` elapsed time to whole seconds. Grammar `[[dd-]hh:]mm:ss` (each
 // field one-or-more digits; days optional, hours optional). Deterministic — any shape
-// outside the grammar returns null (the caller treats that as NOT ours). Pure; kept
+// outside the grammar returns null (the caller treats that as "unknown", never a
+// positive verdict either way). Pure; kept
 // private because the only reachable caller is the kill path, which is a documented
 // non-CI boundary (a real matching process can't be conjured through the run() seam).
 function parseEtimeSeconds(raw: string): number | null {

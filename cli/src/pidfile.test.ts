@@ -1654,3 +1654,349 @@ function makeNoAppRepo(track: string[]): string {
     track,
   });
 }
+
+// ===========================================================================
+// REVIEW ROUND 4 — an INCONCLUSIVE ownership check never deletes a sidecar.
+//
+// A `dobby dev` clears its own registration on the way down, and with it the
+// sidecars its own reclaim left behind (`dev.pid.stale.<own-pid>.*`). One of
+// those sidecars can hold a CAPTURED live peer — the registration this run
+// renamed aside in the instant another run wrote it (round 3's capture shape) —
+// and then the sidecar is the only file on disk naming that peer.
+//
+// Dropping it therefore has to be EARNED. `ps` failing (nonzero exit, no `ps`
+// on PATH at all, a permission refusal) or answering an elapsed time that is
+// not a time does not say "this pid is not a live dobby run" — it says NOTHING,
+// and a teardown that reads silence as absence deletes a live peer's only
+// registration. The contract: an INCONCLUSIVE check KEEPS the sidecar; only a
+// check that positively classifies the pid — DEAD (`kill(pid, 0)` → ESRCH) or
+// FOREIGN (`ps` answers a command line that is not a dobby dev run) — removes
+// it. `down`'s sweep above is untouched: it removes every sidecar regardless.
+//
+// SEAM: a REAL `dobby dev` child, because this teardown runs inside the run's
+// own exit path and nowhere else — the in-process `run()` seam never reaches
+// it. Nothing from the implementation is imported: the sidecar is placed on
+// disk by its documented name and every verdict is read off the filesystem and
+// off a real peer process after the run has EXITED.
+//
+// ORDER MATTERS: the sidecar is read only once the dev child has exited, never
+// merely once `dev.pid` has vanished. Between those two moments a teardown that
+// deletes the sidecar has not necessarily got there yet, and the window would
+// report a deleted sidecar as a kept one.
+//
+// INDEPENDENT SOURCES for every expected value below:
+//   - "an inconclusive check keeps it, a positive one removes it" is the review
+//     finding's own words; `dev.pid.stale.<own-pid>.*` is the spec's spelling.
+//   - The sidecar's NAME carries the dev child's pid (the run whose teardown
+//     scans for it) while its CONTENT is a DIFFERENT pid — the live peer's —
+//     exactly as a capture produces, so the pid acted on can only come from the
+//     file's bytes.
+//   - The peer is a real `sleep 300` spawned WITHOUT `detached`, and its pid is
+//     the one the OS gave the child WE spawned. Nothing recomputes it.
+//   - `garbage` is not an elapsed time under the POSIX `[[dd-]hh:]mm:ss` form —
+//     read off that format by hand, never off dobby's parser.
+//   - `2147483647` (2^31-1) is above any live pid on darwin/linux: DEAD by
+//     construction. It is paired here with the FAILING `ps` stub on purpose —
+//     the spec names ESRCH as a positive dead verdict in its own right, so this
+//     case proves "inconclusive keeps" is not the weaker "a failing `ps` keeps
+//     everything". (Pairing it with the foreign stub would leave that open.)
+//   - `registered` and `started` are carried in every report so a failing `ps`
+//     that broke the run's STARTUP would read as a harness fault in the message
+//     instead of passing itself off as a behaviour verdict.
+// ===========================================================================
+
+// A dobby dev run's command line in its published form — one of the four launch
+// shapes pinned above, used here so the ONLY inconclusive half is the timing.
+const BUNX_DEV_COMMAND = "bunx dobby dev";
+
+// What a `ps` that answers the command probe but cannot be believed about the
+// start time reports for `-o etime=`: not a POSIX elapsed time at all.
+const UNPARSEABLE_ETIME = "garbage";
+
+// The observation names the round-4 cases report, in the order their array
+// carries them.
+const SIDECAR_OBSERVATIONS =
+  "observed [registered, started, landed, cleared, sidecarExists, sidecarHoldsPeer, peerAlive]";
+
+// The shorter report of the cases where the sidecar must GO: what it held is
+// moot once it is gone.
+const REMOVAL_OBSERVATIONS =
+  "observed [registered, started, landed, cleared, sidecarExists";
+
+// What one real `dev` run left behind after being stopped with a sidecar of its
+// own name on disk.
+interface SidecarTeardown {
+  cleared: boolean;
+  landed: boolean;
+  registered: boolean;
+  sidecarExists: boolean;
+  sidecarHolds: string | undefined;
+  started: boolean;
+}
+
+describe("run() — dev teardown and the sidecars it cannot classify", () => {
+  const dirs: string[] = [];
+  let child: ChildProcess | undefined;
+  let devChild: ChildProcess | undefined;
+  let originalCmux: string | undefined;
+  let portless: PortlessRun | undefined;
+
+  beforeEach(async () => {
+    originalCmux = process.env[CMUX];
+    Reflect.deleteProperty(process.env, CMUX);
+    portless = await makePortlessRun(dirs);
+  });
+
+  afterEach(async () => {
+    restoreEnv(CMUX, originalCmux);
+    // Never leak the captured peer, the dev run, or the dev run's children.
+    child?.kill("SIGKILL");
+    child = undefined;
+    killGroup(devChild);
+    devChild = undefined;
+    await stopPortless(portless);
+    portless = undefined;
+  });
+
+  afterAll(() => {
+    cleanupDirs(dirs);
+    dirs.length = 0;
+  });
+
+  it.skipIf(!hasBun())(
+    "keeps a sidecar naming a live peer when ps cannot answer about it at all",
+    async () => {
+      child = startLongLivedProcess();
+      const peer = pidOf(child);
+      const observed = await devTeardownWithSidecar({
+        adopt: (proc) => {
+          devChild = proc;
+        },
+        binDir: makeBlindPsStub(dirs),
+        portless,
+        sidecarPid: String(peer),
+        track: dirs,
+      });
+
+      const report = [
+        observed.registered,
+        observed.started,
+        observed.landed,
+        observed.cleared,
+        observed.sidecarExists,
+        observed.sidecarHolds === String(peer),
+        isRunning(peer),
+      ];
+
+      expect(
+        report,
+        `${SIDECAR_OBSERVATIONS} = ${JSON.stringify(report)}`
+      ).toEqual([true, true, true, true, true, true, true]);
+    }
+  );
+
+  it.skipIf(!hasBun())(
+    "keeps a sidecar naming a live peer when ps reports an elapsed time it cannot read",
+    async () => {
+      child = startLongLivedProcess();
+      const peer = pidOf(child);
+      const observed = await devTeardownWithSidecar({
+        adopt: (proc) => {
+          devChild = proc;
+        },
+        binDir: makeUntimedPsStub(dirs),
+        portless,
+        sidecarPid: String(peer),
+        track: dirs,
+      });
+
+      const report = [
+        observed.registered,
+        observed.started,
+        observed.landed,
+        observed.cleared,
+        observed.sidecarExists,
+        observed.sidecarHolds === String(peer),
+        isRunning(peer),
+      ];
+
+      expect(
+        report,
+        `${SIDECAR_OBSERVATIONS} = ${JSON.stringify(report)}`
+      ).toEqual([true, true, true, true, true, true, true]);
+    }
+  );
+
+  it.skipIf(!hasBun())(
+    "removes a sidecar whose process ps reports as something other than a dobby run",
+    async () => {
+      child = startLongLivedProcess();
+      const peer = pidOf(child);
+      const observed = await devTeardownWithSidecar({
+        adopt: (proc) => {
+          devChild = proc;
+        },
+        binDir: makeForeignPsStub(dirs),
+        portless,
+        sidecarPid: String(peer),
+        track: dirs,
+      });
+
+      const report = [
+        observed.registered,
+        observed.started,
+        observed.landed,
+        observed.cleared,
+        observed.sidecarExists,
+        // …and the foreign process itself is left strictly alone: dropping the
+        // FILE is never signalling what it happened to name.
+        isRunning(peer),
+      ];
+
+      expect(
+        report,
+        `${REMOVAL_OBSERVATIONS}, peerAlive] = ${JSON.stringify(report)}`
+      ).toEqual([true, true, true, true, false, true]);
+    }
+  );
+
+  it.skipIf(!hasBun())(
+    "removes a sidecar naming a pid that is gone, even when ps cannot answer",
+    async () => {
+      const observed = await devTeardownWithSidecar({
+        adopt: (proc) => {
+          devChild = proc;
+        },
+        binDir: makeBlindPsStub(dirs),
+        portless,
+        sidecarPid: UNREACHABLE_PID,
+        track: dirs,
+      });
+
+      const report = [
+        observed.registered,
+        observed.started,
+        observed.landed,
+        observed.cleared,
+        observed.sidecarExists,
+      ];
+
+      expect(
+        report,
+        `${REMOVAL_OBSERVATIONS}] = ${JSON.stringify(report)}`
+      ).toEqual([true, true, true, true, false]);
+    }
+  );
+});
+
+// --- review round 4 fixtures ------------------------------------------------
+
+// Start a real `dev`, wait until it is REGISTERED and the app has actually come
+// up, drop a sidecar carrying this run's own pid in its NAME and `sidecarPid` in
+// its BYTES, then stop the run the way a human would and report what its
+// teardown left behind.
+//
+// The sidecar is written AFTER the run is up, so it can only be found by the
+// teardown's own scan, and it is READ only after the child has EXITED — by then
+// every filesystem effect of the teardown has landed, which "the registration is
+// gone" alone does not guarantee.
+async function devTeardownWithSidecar(opts: {
+  adopt: (proc: ChildProcess) => void;
+  binDir: string;
+  portless: PortlessRun | undefined;
+  sidecarPid: string;
+  track: string[];
+}): Promise<SidecarTeardown> {
+  const log = viteLog(opts.track);
+  const repo = makeIsolatedViteRepo(opts.track, viteRecordingSleeper(log));
+  const pidfile = join(repo, PIDFILE_REL);
+
+  const devRun = spawnDev(repo, opts.portless, opts.binDir);
+  opts.adopt(devRun);
+  drain(devRun);
+  const devPid = pidOf(devRun);
+
+  const registered = await until(
+    () => readTrimmed(pidfile) === String(devPid),
+    REGISTER_WAIT_MS
+  );
+  // The registry file appearing is not the run being up — see the lifecycle case
+  // above: the app's own bin recording ONE invocation is.
+  const started = await until(
+    () => logLines(log).length === 1,
+    REGISTER_WAIT_MS
+  );
+
+  const sidecar = writeSidecar(repo, `${devPid}.1`, opts.sidecarPid);
+
+  devRun.kill("SIGTERM");
+  await exited(devRun, EXIT_WAIT_MS);
+  // `exited` resolves on the exit EVENT or on its ceiling, and only the first
+  // says the teardown is finished. Asserted rather than assumed: a run still
+  // alive here could have its sidecar read in the 50ms window between clearing
+  // its registration and getting to the sidecars, reporting a doomed file as a
+  // kept one.
+  const landed = devRun.exitCode !== null || devRun.signalCode !== null;
+  const cleared = await until(() => !existsSync(pidfile), EXIT_WAIT_MS);
+
+  return {
+    cleared,
+    landed,
+    registered,
+    sidecarExists: existsSync(sidecar),
+    sidecarHolds: readTrimmed(sidecar),
+    started,
+  };
+}
+
+// A stub `ps` that FAILS every probe, for every pid and every column — the shape
+// of a `ps` that is missing, refused, or simply broken. It says nothing about
+// any process, which is the whole point.
+function makeBlindPsStub(track: string[]): string {
+  const binDir = mkStubBinDir(track);
+  mkStubBin(
+    binDir,
+    "ps",
+    `#!/bin/sh
+exit 1
+`
+  );
+  return binDir;
+}
+
+// A stub `ps` that answers the COMMAND probe with a dobby dev run and the ETIME
+// probe with something that is not an elapsed time: the process may well be a
+// live peer, and how long it has been up is unknowable.
+function makeUntimedPsStub(track: string[]): string {
+  const binDir = mkStubBinDir(track);
+  mkStubBin(
+    binDir,
+    "ps",
+    `#!/bin/sh
+case "$*" in
+  *command*) printf '%s\\n' '${BUNX_DEV_COMMAND}' ; exit 0 ;;
+  *etime*) printf '%s\\n' '  ${UNPARSEABLE_ETIME}' ; exit 0 ;;
+esac
+exit 1
+`
+  );
+  return binDir;
+}
+
+// A stub `ps` that answers, for any pid, a process that is emphatically not a
+// dobby run: the one POSITIVE way an ownership check says "not mine".
+function makeForeignPsStub(track: string[]): string {
+  const binDir = mkStubBinDir(track);
+  mkStubBin(
+    binDir,
+    "ps",
+    `#!/bin/sh
+case "$*" in
+  *command*) printf '%s\\n' '${FOREIGN_COMMAND}' ; exit 0 ;;
+  *etime*) printf '%s\\n' '  ${FRESH_ETIME}' ; exit 0 ;;
+esac
+exit 1
+`
+  );
+  return binDir;
+}
