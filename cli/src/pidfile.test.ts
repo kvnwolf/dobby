@@ -1,5 +1,14 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -353,13 +362,16 @@ describe("run() — dev command (the run process registers itself)", () => {
   let devChild: ChildProcess | undefined;
   let devTwin: ChildProcess | undefined;
   let originalCmux: string | undefined;
+  let portless: PortlessRun | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     originalCmux = process.env[CMUX];
     Reflect.deleteProperty(process.env, CMUX);
+    // One isolated portless world per test — see PORTLESS ISOLATION below.
+    portless = await makePortlessRun(dirs);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     restoreEnv(CMUX, originalCmux);
     // Never leak a `sleep`, a `dev`, or a `dev`'s own children out of the suite.
     child?.kill("SIGKILL");
@@ -368,6 +380,9 @@ describe("run() — dev command (the run process registers itself)", () => {
     devChild = undefined;
     killGroup(devTwin);
     devTwin = undefined;
+    // The dev children are down FIRST, so nothing can re-start what this stops.
+    await stopPortless(portless);
+    portless = undefined;
   });
 
   afterAll(() => {
@@ -405,12 +420,7 @@ describe("run() — dev command (the run process registers itself)", () => {
     registerPid(repo, String(pid));
     const binDir = makePsStub(dirs, { command: OWNED_COMMAND, pid });
 
-    devChild = spawn("bun", devArgv(), {
-      cwd: repo,
-      detached: true,
-      env: { ...process.env, PATH: stubPath(binDir) },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    devChild = spawnDev(repo, portless, binDir);
     const outcome = await collect(devChild, REGISTER_WAIT_MS);
 
     expect([
@@ -468,21 +478,26 @@ describe("run() — dev command (the run process registers itself)", () => {
   it.skipIf(!hasBun())(
     "registers its own pid while running and clears the registry when it is stopped",
     async () => {
-      const repo = makeViteRepo(dirs, SLEEPING_VITE);
+      const log = viteLog(dirs);
+      const repo = makeViteRepo(dirs, viteRecordingSleeper(log));
       // A STALE registration the run must overwrite with its own pid.
       const pidfile = registerPid(repo, UNREACHABLE_PID);
 
-      devChild = spawn("bun", devArgv(), {
-        cwd: repo,
-        detached: true,
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      devChild = spawnDev(repo, portless);
       const devPid = pidOf(devChild);
       drain(devChild);
 
       const registered = await until(
         () => readTrimmed(pidfile) === String(devPid),
+        REGISTER_WAIT_MS
+      );
+      // The registry file appearing is NOT the run being up: a `dev` that
+      // registers and then dies at once (portless refusing to start, say)
+      // satisfies the line above for an instant, which is exactly how this case
+      // passed on a runner where nothing ever started. The app's own bin
+      // recording ONE invocation is what says the run actually came up.
+      const started = await until(
+        () => logLines(log).length === 1,
         REGISTER_WAIT_MS
       );
       // Asked of git itself, so any ignore spelling counts.
@@ -492,7 +507,12 @@ describe("run() — dev command (the run process registers itself)", () => {
       await exited(devChild, EXIT_WAIT_MS);
       const cleared = await until(() => !existsSync(pidfile), EXIT_WAIT_MS);
 
-      expect([registered, ignored, cleared]).toEqual([true, true, true]);
+      expect([registered, started, ignored, cleared]).toEqual([
+        true,
+        true,
+        true,
+        true,
+      ]);
     }
   );
 
@@ -528,8 +548,8 @@ describe("run() — dev command (the run process registers itself)", () => {
       const pidfile = join(repo, PIDFILE_REL);
 
       // Back to back in ONE tick: neither run gets a head start.
-      const runA = spawnDev(repo, binDir);
-      const runB = spawnDev(repo, binDir);
+      const runA = spawnDev(repo, portless, binDir);
+      const runB = spawnDev(repo, portless, binDir);
       devChild = runA;
       devTwin = runB;
       const first = watchDev(runA);
@@ -581,7 +601,7 @@ describe("run() — dev command (the run process registers itself)", () => {
       const repo = makeIsolatedViteRepo(dirs, SLEEPING_VITE);
       const pidfile = registerPid(repo, UNREACHABLE_PID);
 
-      const devRun = spawnDev(repo);
+      const devRun = spawnDev(repo, portless);
       devChild = devRun;
       drain(devRun);
       const devPid = pidOf(devRun);
@@ -613,7 +633,7 @@ describe("run() — dev command (the run process registers itself)", () => {
         pid: foreignPid,
       });
 
-      const devRun = spawnDev(repo, binDir);
+      const devRun = spawnDev(repo, portless, binDir);
       devChild = devRun;
       drain(devRun);
       const devPid = pidOf(devRun);
@@ -656,7 +676,9 @@ let appFixtures = 0;
 // one name make the second run fail on portless's registry instead of dobby's —
 // including across suite runs, when a killed run leaves its registration behind.
 // The cases that start REAL, CONCURRENT runs need that isolation; the older ones
-// keep the shared name they were written with.
+// keep the shared name they were written with. (PORTLESS ISOLATION below now
+// gives every test its own portless state dir too, so a name can no longer
+// collide across tests either — this stays as the belt to that pair of braces.)
 function makeIsolatedViteRepo(track: string[], viteScript: string): string {
   appFixtures += 1;
   const repo = makeScratchRepo({
@@ -723,17 +745,184 @@ exit 1
 }
 
 // A real `dobby dev` child in `repo`, detached (so `killGroup` can take its
-// whole tree down), optionally with a stub-bin dir prepended to its PATH.
-function spawnDev(repo: string, binDir?: string): ChildProcess {
+// whole tree down), inside the test's own portless world, optionally with a
+// stub-bin dir prepended to its PATH. EVERY real-`dev` spawn in this file goes
+// through here, so none of them can miss the isolation below.
+function spawnDev(
+  repo: string,
+  portless: PortlessRun | undefined,
+  binDir?: string
+): ChildProcess {
+  const env = { ...process.env, ...portlessTestEnv(requirePortless(portless)) };
   return spawn("bun", devArgv(), {
     cwd: repo,
     detached: true,
-    env:
-      binDir === undefined
-        ? process.env
-        : { ...process.env, PATH: stubPath(binDir) },
+    env: binDir === undefined ? env : { ...env, PATH: stubPath(binDir) },
     stdio: ["ignore", "pipe", "pipe"],
   });
+}
+
+// --- portless isolation -----------------------------------------------------
+//
+// A real `dev` spawns `portless run <vite>`, and portless's DEFAULT proxy port
+// is 443 — privileged. With no TTY (a CI runner) portless cannot ask for sudo,
+// so it prints "Proxy is not running and no TTY is available for sudo." and
+// EXITS 1 before it ever reaches the app: the run dies the moment it starts.
+// This machine hides that, because a root-owned portless daemon started by some
+// OTHER project already holds 443 here — which is precisely the accident these
+// cases must not depend on.
+//
+// So every real-`dev` child runs portless in a world this test OWNS:
+//   PORTLESS_PORT      an UNPRIVILEGED port. Portless asks for sudo only below
+//                      1024, so above it the proxy just starts — this is
+//                      verbatim the "use an unprivileged port" option portless's
+//                      own refusal recommends.
+//   PORTLESS_HTTPS=0   no TLS, so no certificate authority to generate or trust.
+//   PORTLESS_STATE_DIR a fresh dir per test. Portless keeps its proxy pid, port
+//                      and routes there, so nothing this suite starts can see,
+//                      reuse or disturb the machine's own daemon — and nothing
+//                      the machine runs can satisfy a test on its behalf.
+//   CI=1               the non-interactive path is what a runner takes, so it is
+//                      what these cases exercise HERE too, instead of passing on
+//                      a developer's TTY and failing on the runner.
+//
+// `stopPortless` then takes the proxy back down and removes the state dir, so a
+// run leaves no daemon behind.
+
+// One test's isolated portless world: the port its proxy binds and the state dir
+// it records itself in.
+interface PortlessRun {
+  port: number;
+  stateDir: string;
+}
+
+// Where portless records the proxy it started, relative to the state dir.
+const PROXY_PID_FILE = "proxy.pid";
+const PROXY_PORT_FILE = "proxy.port";
+
+// A fresh portless world: a free port plus a state dir owned by ONE test.
+async function makePortlessRun(track: string[]): Promise<PortlessRun> {
+  const stateDir = mkdtempSync(join(tmpdir(), "dobby-portless-"));
+  track.push(stateDir);
+  return { port: await freePort(), stateDir };
+}
+
+// The env a real `dev` child hands portless. Never set on `process.env`: the
+// in-process `run()` cases in this file must not inherit `CI` or a proxy port.
+function portlessTestEnv(portless: PortlessRun): NodeJS.ProcessEnv {
+  return {
+    CI: "1",
+    PORTLESS_HTTPS: "0",
+    PORTLESS_PORT: String(portless.port),
+    PORTLESS_STATE_DIR: portless.stateDir,
+  };
+}
+
+// The world the CURRENT test prepared, asserted present rather than assumed.
+function requirePortless(portless: PortlessRun | undefined): PortlessRun {
+  if (portless === undefined) {
+    throw new Error(
+      "test fixture: no portless world was prepared for this test"
+    );
+  }
+  return portless;
+}
+
+// Ask the OS for a port by binding 0 and letting go again: whatever it hands
+// back is ephemeral and therefore far ABOVE 1024, which is the only property
+// that matters — portless needs sudo only below it.
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, () => {
+      const address = probe.address();
+      probe.close(() => {
+        if (address === null || typeof address === "string") {
+          reject(new Error("test fixture: could not obtain a free TCP port"));
+          return;
+        }
+        resolve(address.port);
+      });
+    });
+  });
+}
+
+// Stop the proxy portless auto-started for this test and drop its state dir. The
+// pid is read from the test's OWN state dir, so the signal can only ever reach a
+// proxy this suite started — never the machine's daemon on 443. A proxy that
+// survives is REPORTED, not failed: a leak is a harness problem to see, and the
+// behaviour under test is elsewhere.
+async function stopPortless(portless: PortlessRun | undefined): Promise<void> {
+  if (portless === undefined) {
+    return;
+  }
+  const bound = readTrimmed(join(portless.stateDir, PROXY_PORT_FILE));
+  if (bound !== undefined && bound !== String(portless.port)) {
+    process.stderr.write(
+      `warning: portless bound port ${bound}, not the test's ${portless.port}\n`
+    );
+  }
+  const pid = Number.parseInt(
+    readTrimmed(join(portless.stateDir, PROXY_PID_FILE)) ?? "",
+    10
+  );
+  if (
+    // `pid > 0` is not pedantry: `kill(0, …)` would signal the CALLER's whole
+    // process group — vitest itself — and `kill(-n, …)` a group. Portless only
+    // ever writes its own `process.pid` here, and this keeps it that way.
+    Number.isInteger(pid) &&
+    pid > 0 &&
+    signalQuietly(pid, "SIGTERM") &&
+    !(await until(() => !isRunning(pid), EXIT_WAIT_MS))
+  ) {
+    signalQuietly(pid, "SIGKILL");
+  }
+  if (!(await untilPortFree(portless.port, EXIT_WAIT_MS))) {
+    process.stderr.write(
+      `warning: something is still listening on port ${portless.port} after cleanup\n`
+    );
+  }
+  rmSync(portless.stateDir, { force: true, recursive: true });
+}
+
+// Signal a pid, saying whether it was there to signal — a gone process is the
+// outcome this asks for, never an error.
+function signalQuietly(pid: number, signal: NodeJS.Signals): boolean {
+  try {
+    process.kill(pid, signal);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Is nothing listening on `port`? Asked by BINDING it, not by shelling out to
+// `lsof`: a runner need not carry lsof at all, and a missing binary would read
+// as "no leak" — the one answer a leak check must never invent.
+function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.once("error", () => {
+      resolve(false);
+    });
+    probe.listen(port, () => {
+      probe.close(() => {
+        resolve(true);
+      });
+    });
+  });
+}
+
+// Poll until the port is free or the ceiling elapses; the RESULT says which.
+async function untilPortFree(port: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  let free = await isPortFree(port);
+  while (!free && Date.now() < deadline) {
+    await pause(POLL_MS);
+    free = await isPortFree(port);
+  }
+  return free;
 }
 
 // --- task 2 observers -------------------------------------------------------
