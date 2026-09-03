@@ -545,3 +545,55 @@ describe("run() — `down` without --json (human rendering unchanged)", () => {
     expect(() => payloadOf(result.stdout)).toThrow();
   });
 });
+
+// --- Slice S6 (REVIEW ROUND 3): the registry SIDECARS are swept too -------------
+// A reclaim moves the registration it read as stale aside, into
+// `.dobby/dev.pid.stale.<pid>`, and can leave that file behind — including one it
+// CAPTURED from a live run. Teardown therefore handles those files exactly as it
+// handles `dev.pid`: the sweep is a mechanic `down` PERFORMS (nothing is added to
+// the instruction catalogue), it reports the same success, and `--dry-run` lists
+// it while removing nothing.
+//
+// INDEPENDENT SOURCES: the sidecar path and "the file is gone" are the spec's own
+// words; `2147483647` is unreachable by construction, so nothing is ever
+// signalled here; `ok:true` / `reason:null` / `instructions:[]` are the same
+// literals the slices above are stated in.
+
+// The leftover a reclaim left in the registry directory. Its name suffix is
+// arbitrary — the pid to act on lives in the file's bytes.
+const SIDECAR = "dev.pid.stale.99";
+
+describe("run() — `down --json` (the stale registry sidecars are swept too)", () => {
+  it("removes a stale sidecar and still reports ok:true with an empty catalogue", async () => {
+    const repo = makeRepo();
+    const sidecar = writeSidecar(repo, SIDECAR, DEAD_PID);
+    expect(existsSync(sidecar)).toBe(true);
+    const result = await run(["down", "--json"], repo);
+    expect(result.stderr).not.toContain("unknown command");
+    expect(result.exitCode, result.stderr).toBe(0);
+    const payload = payloadOf(result.stdout);
+    expect([payload.ok, payload.reason]).toEqual([true, null]);
+    expect(payload.instructions).toEqual([]);
+    expect(existsSync(sidecar)).toBe(false);
+  });
+
+  it("names the sidecar in the plan and removes nothing under --dry-run", async () => {
+    const repo = makeRepo();
+    const sidecar = writeSidecar(repo, SIDECAR, DEAD_PID);
+    const result = await run(["down", "--dry-run"], repo);
+    expect(result.exitCode, result.stderr).toBe(0);
+    // The FULL name, not just the prefix: a plan that enumerated the registry
+    // directory can print it, a glob cannot have come from enumeration.
+    expect(result.stdout).toContain(SIDECAR);
+    expect(existsSync(sidecar)).toBe(true);
+  });
+});
+
+// A registry SIDECAR under `<repo>/.dobby/`, holding `pid` — written after
+// `makeRepo` so the shared fixture maker keeps its signature.
+function writeSidecar(dir: string, name: string, pid: string): string {
+  mkdirSync(join(dir, ".dobby"), { recursive: true });
+  const path = join(dir, ".dobby", name);
+  writeFileSync(path, `${pid}\n`);
+  return path;
+}

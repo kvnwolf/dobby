@@ -27,6 +27,7 @@ import {
 import {
   clearOwnPidfile,
   killFromPidfile,
+  listStaleSidecars,
   liveRegisteredPid,
   writePidfile,
 } from "./pidfile.ts";
@@ -1897,6 +1898,14 @@ export function runDown(
   // (1) The detached-run pidfile — kill the group, or clean a stale file.
   if (existsSync(join(workroot, ".dobby", "dev.pid"))) {
     actions.push({ kind: "kill-pidfile", pidRel: ".dobby/dev.pid" });
+  }
+  // (1b) Every reclaim sidecar (`.dobby/dev.pid.stale.*`) a `dev` registration
+  // race left behind — one may hold ANOTHER run's live, owned pid that its own
+  // restore never landed (review round 3, greptile P1). Swept with the exact
+  // same mechanic as `dev.pid` itself: `killFromPidfile` below applies the
+  // identical ownership check per sidecar and removes it regardless of outcome.
+  for (const pidRel of listStaleSidecars(workroot)) {
+    actions.push({ kind: "kill-pidfile", pidRel });
   }
   // (2) Neon branch delete (capability + BOTH creds present; missing → skip).
   if (

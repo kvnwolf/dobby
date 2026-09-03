@@ -1,6 +1,7 @@
 import {
   appendFileSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -14,11 +15,13 @@ import { runCapture } from "./runner.ts";
 // (`writePidfile`, called by `dobby dev` on startup), reading it back with the liveness +
 // ownership check (`liveRegisteredPid`, consulted by `planDev` to refuse a live twin),
 // clearing its OWN registration on self-teardown (`clearOwnPidfile`, called by `dev`'s
-// managed-group teardown), and tearing a REGISTERED run down from the outside
+// managed-group teardown), tearing a REGISTERED run down from the outside
 // (`killFromPidfile`, called by `down` regardless of which environment adapter is
-// currently active). Sits BELOW both `environment.ts` and `lifecycle.ts` in the import
-// graph — it imports neither of them, so both may import THIS module freely without ever
-// risking a cycle.
+// currently active), and listing the reclaim SIDECARS a captured-but-never-restored
+// registration can leave behind (`listStaleSidecars`, consulted by `down`'s plan so
+// its sweep treats every leftover exactly like `dev.pid` itself). Sits BELOW both
+// `environment.ts` and `lifecycle.ts` in the import graph — it imports neither of
+// them, so both may import THIS module freely without ever risking a cycle.
 
 // Top-level regexes (biome useTopLevelRegex).
 const PS_ETIME_RE = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/;
@@ -33,6 +36,10 @@ const DOBBY_DEV_COMMAND_RE = /(^|[\s/])dobby([\s/][^\s]*)*\s+dev\s*$/;
 
 // The registry path, relative to a workroot.
 const PIDFILE_REL = ".dobby/dev.pid";
+// The filename prefix EVERY reclaim sidecar shares (`reclaimStalePath` appends
+// `.<pid>.<attempt>`) — what `listStaleSidecars` matches against `.dobby/`'s own
+// entries.
+const STALE_SIDECAR_PREFIX = "dev.pid.stale.";
 
 /**
  * The outcome of `writePidfile`: `{ registered: true }` once THIS process now
@@ -144,15 +151,20 @@ function classifyCapture(
     // In flight: a peer between ITS create and ITS write — the pending write
     // still lands on the same inode wherever it currently sits, so put it
     // back exactly where it was and refuse, same as the ordinary in-flight
-    // rule above.
-    restoreOrDiscard(stalePath, pidPath);
+    // rule above. Neither dead nor foreign — a failed restore must NEVER
+    // discard this file either (see `restoreOrKeep`): the peer's `wx` create
+    // already exists, its write is still coming, and dropping the capture now
+    // would leave that peer's eventual registration with nothing on disk
+    // naming it — the exact P1 this round closes, one branch over.
+    restoreOrKeep(stalePath, pidPath);
     return { pid: null, registered: false };
   }
   const capturedPid = livePidAt(stalePath, workroot);
   if (capturedPid !== null) {
     // Live and OWNED: a peer's fresh registration completed AFTER our read
-    // above — never stale. Put it back and defer to it.
-    restoreOrDiscard(stalePath, pidPath);
+    // above — never stale. Put it back and defer to it. A failed restore
+    // NEVER discards this file — see `restoreOrKeep`.
+    restoreOrKeep(stalePath, pidPath);
     const twinNow = liveRegisteredPid(workroot);
     if (twinNow !== null) {
       return { pid: twinNow, registered: false };
@@ -179,22 +191,75 @@ function classifyCapture(
   }
 }
 
-// Put a captured file back exactly where it came from, or discard it when a
-// THIRD registrant has already retaken `pidPath` in the meantime (nothing sane
-// left to restore it to — the content we captured is superseded).
-function restoreOrDiscard(stalePath: string, pidPath: string): void {
+// Put a captured file (empty/in-flight, or live-and-OWNED) back exactly where
+// it came from. When a THIRD registrant has already retaken `pidPath` in the
+// meantime the rename fails — and the sidecar is NEVER discarded on that
+// failure, for either capture shape: it still holds ANOTHER run's registration
+// (an in-flight peer's about-to-land pid, or a live, owned one — review round
+// 3, greptile P1: three overlapping `dev`s can have A capture B's registration,
+// then C recreate `dev.pid` before A's restore lands), and deleting it would
+// make that run invisible to every future `up`/`down`. Only a capture that
+// RE-CLASSIFIES as dead or foreign (`classifyCapture`'s third branch) is ever
+// removed. A failed restore instead leaves the sidecar on disk for `down`'s
+// sidecar sweep (`killFromPidfile`, driven by `listStaleSidecars`) to find and
+// act on later.
+function restoreOrKeep(stalePath: string, pidPath: string): void {
   try {
     renameSync(stalePath, pidPath);
   } catch {
-    rmSync(stalePath, { force: true });
+    // Leave the sidecar exactly where it is — see the comment above.
   }
 }
 
 // Where a reclaim moves a registration out of the way before re-classifying
-// it — namespaced by THIS process's pid, so two concurrent reclaimers never
-// aim their rename at the same destination.
+// it — namespaced by THIS process's pid (so two concurrent reclaimers never
+// aim their rename at the same destination) AND a per-process, monotonically
+// increasing ATTEMPT counter (so THIS process's own bounded retry never aims
+// two separate captures at the same destination either). Without the attempt
+// number, a live-and-owned capture that `restoreOrKeep` leaves behind on a
+// failed restore (review round 3) could be silently overwritten by a LATER
+// capture from the same process's own retry (`classifyCapture`'s recursive
+// `registerOrReclaim` call) — clobbering the first capture's registration
+// exactly as invisibly as the original bug this round fixes.
+let reclaimAttempts = 0;
+
 function reclaimStalePath(pidPath: string): string {
-  return `${pidPath}.stale.${process.pid}`;
+  reclaimAttempts += 1;
+  return `${pidPath}.stale.${process.pid}.${reclaimAttempts}`;
+}
+
+// The prefix EVERY sidecar THIS process's own reclaim attempts share — pid
+// only, no attempt number, so it matches all of them. Used by `clearOwnPidfile`
+// to find every one of THIS process's own leftovers without touching a peer's.
+function ownStalePrefix(pidPath: string): string {
+  return `${pidPath}.stale.${process.pid}.`;
+}
+
+/**
+ * Every reclaim sidecar (`.dobby/dev.pid.stale.*`) currently sitting in
+ * `<workroot>/.dobby/`, as paths relative to `workroot` — a reclaim that
+ * captured a registration but then failed to restore it (see `restoreOrKeep`)
+ * leaves one of these behind PER ATTEMPT (`reclaimStalePath` keys each by pid
+ * AND a monotonic attempt counter, so a process's own bounded retry never
+ * clobbers an earlier capture with a later one), and it may be the ONLY record
+ * left of the run it names. `[]` when `.dobby/` does not exist. Read fresh on
+ * every call; never cached.
+ *
+ * @public — `down`'s sidecar sweep (`lifecycle.ts`'s `runDown`), which treats
+ * each entry exactly like `dev.pid` itself via `killFromPidfile`; also
+ * `clearOwnPidfile`'s own best-effort sweep of ITS OWN leftovers.
+ */
+export function listStaleSidecars(workroot: string): string[] {
+  const dobbyDir = join(workroot, ".dobby");
+  let entries: string[];
+  try {
+    entries = readdirSync(dobbyDir);
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((name) => name.startsWith(STALE_SIDECAR_PREFIX))
+    .map((name) => `.dobby/${name}`);
 }
 
 // The atomic create: `wx` fails EEXIST when the file is already there (created
@@ -243,22 +308,29 @@ export function liveRegisteredPid(workroot: string): number | null {
 // preserves a file's mtime, so asking about the renamed copy answers exactly
 // what asking about the original would have.
 function livePidAt(pidPath: string, workroot: string): number | null {
-  let pid: number;
-  try {
-    pid = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
-  } catch {
-    return null;
-  }
+  const pid = readPidAt(pidPath);
   if (
-    !(
-      Number.isInteger(pid) &&
-      isAlive(pid) &&
-      ownsDetachedRun(pid, workroot, pidPath)
-    )
+    pid === null ||
+    !(isAlive(pid) && ownsDetachedRun(pid, workroot, pidPath))
   ) {
     return null;
   }
   return pid;
+}
+
+// The raw pid parsed from `path`'s content, with NO liveness/ownership check —
+// `null` for an unreadable file or unparseable content. Shared by `livePidAt`
+// (which layers the liveness+ownership check on top) and `clearOwnPidfile`
+// (which only needs the bare pid, to compare against ITS OWN, never someone
+// else's liveness).
+function readPidAt(path: string): number | null {
+  let pid: number;
+  try {
+    pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
+  } catch {
+    return null;
+  }
+  return Number.isInteger(pid) ? pid : null;
 }
 
 /**
@@ -270,19 +342,36 @@ function livePidAt(pidPath: string, workroot: string): number | null {
  * self-identity is a plain byte compare, not the `ps`-based ownership check
  * (`ownsDetachedRun`), which answers a different question ("is that OTHER pid
  * ours?") for a different caller (`down`, killing someone else's process).
- * ALSO sweeps our own `.stale.<our-pid>` reclaim sidecar, if one is somehow
- * still there — belt-and-braces alongside the `finally` inside `writePidfile`
- * that normally removes it inline.
+ * ALSO sweeps every reclaim sidecar THIS process's own attempts left behind
+ * (`.stale.<our-pid>.<attempt>` — no longer only a rare double-fault: since
+ * review round 3, `restoreOrKeep` deliberately LEAVES a captured registration
+ * behind when a restore back to `dev.pid` fails), but NEVER by filename alone:
+ * a sidecar is removed here only when its CONTENT is either our own pid or
+ * classifies as dead/foreign (`livePidAt` reading null) — a captured live,
+ * OWNED registration that belongs to somebody ELSE is left exactly where it is
+ * (review round 3 follow-up, greptile P1 restated one call site over: deleting
+ * it here would drop it exactly as invisibly as the original bug). That one is
+ * left for `down`'s own sweep (`listStaleSidecars` + `killFromPidfile`) to find
+ * and act on — the only path allowed to sign off on a live, owned pid that
+ * isn't ours.
  *
  * @public — self-teardown for `dobby dev`.
  */
 export function clearOwnPidfile(workroot: string): void {
   const pidPath = join(workroot, PIDFILE_REL);
-  // Tolerate a leftover `.stale.<pid>` this process's own reclaim may have left
-  // behind (normally cleaned up inline by `writePidfile`'s `finally`, but
-  // belt-and-braces here too) — `force: true` already makes this a silent
-  // no-op when there is nothing to remove.
-  rmSync(reclaimStalePath(pidPath), { force: true });
+  const ownPrefix = ownStalePrefix(pidPath);
+  for (const rel of listStaleSidecars(workroot)) {
+    const sidecarPath = join(workroot, rel);
+    if (!sidecarPath.startsWith(ownPrefix)) {
+      continue;
+    }
+    const capturedPid = readPidAt(sidecarPath);
+    const belongsToSomeoneElseAndLive =
+      capturedPid !== process.pid && livePidAt(sidecarPath, workroot) !== null;
+    if (!belongsToSomeoneElseAndLive) {
+      rmSync(sidecarPath, { force: true });
+    }
+  }
   let raw: string;
   try {
     raw = readFileSync(pidPath, "utf8").trim();

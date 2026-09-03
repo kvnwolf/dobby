@@ -1387,3 +1387,270 @@ describe("run() — down command (which command lines count as a dobby dev run)"
     }
   );
 });
+
+// ===========================================================================
+// REVIEW ROUND 3 — a CAPTURED live registration is never dropped, and teardown
+// SWEEPS the sidecars a reclaim left behind.
+//
+// Round 2's reclaim moves the registration it read as stale ASIDE — into
+// `.dobby/dev.pid.stale.<pid>` — instead of deleting it, so the loser of the
+// race can put it back. That rename can CAPTURE a LIVE registration: run A reads
+// a stale pid, run B registers in the same instant, and A renames what is by then
+// B's registration. If A's restore then fails — a third run C has already
+// recreated `dev.pid` — deleting the captured file leaves B running with nothing
+// on disk naming it, and no teardown can ever find it.
+//
+// The contract is stated entirely in what a TEARDOWN leaves behind: `dobby down`
+// handles every `.dobby/dev.pid.stale.*` file exactly as it handles the
+// registration itself — the same ownership check, a signal to the BARE `pid` of
+// the owned live ones, and the file gone whatever the outcome — while `dobby up`
+// and `dobby dev` keep reading ONLY `dev.pid`, so a sidecar is never mistaken for
+// a registration.
+//
+// The three-process race is NOT reproduced with real processes (a capture needs
+// an interleaving no test can command). The sidecars are placed on disk directly
+// — that IS the state a capture leaves — and the fix is pinned through the
+// sweep's observable effect.
+//
+// SEAM: `down`, `dev` and `up` through `run(argv, cwd)`, as everywhere else in
+// this file. Nothing from the implementation is imported, so WHERE the sweep
+// lives, and how the sidecar is spelled internally, cannot break these cases.
+//
+// INDEPENDENT SOURCES for every expected value below:
+//   - `.dobby/dev.pid.stale.*`, "the file is removed regardless of outcome", "a
+//     sidecar is never a registration" and exit code 0 for a teardown are the
+//     spec's own words.
+//   - Every sidecar NAME suffix here (4242, 1, 2, 7) deliberately DISAGREES with
+//     the pid inside the file — which is precisely what a capture produces: the
+//     name carries the pid the reclaim READ, the bytes carry the registration it
+//     actually moved. The pid to act on can therefore only come from the file's
+//     CONTENT, and a name-derived pid hits the `ps` stub's miss branch.
+//   - `2147483647` (2^31-1) is above any live pid on darwin/linux: unreachable BY
+//     CONSTRUCTION.
+//   - `00:03` is three seconds by the POSIX `[[dd-]hh:]mm:ss` format, computed by
+//     hand — inside the spec's 15-second window around the file's mtime, which
+//     the write below stamps with now.
+//   - The child is spawned WITHOUT `detached`, so it leads no process group: it
+//     can only die if the BARE pid was signalled.
+//   - `noop` / `ok:true` for a project with no app is the `up --json` contract
+//     already pinned in `upjson.test.ts`, restated here with a sidecar present.
+// ===========================================================================
+
+// The sidecar prefix the spec names, inside the registry directory. What follows
+// it is whatever the reclaim that produced the file happened to name it.
+const SIDECAR_PREFIX = "dev.pid.stale.";
+
+// A package.json with NO app capability (a drizzle dependency and nothing that
+// serves): `up` there has nothing to start, so what it reports is about the
+// registry alone.
+const NOAPP_PKG = {
+  dependencies: { "drizzle-orm": "^0.30.0" },
+  name: "pidfile-noapp",
+  private: true,
+};
+
+// The documented test seams: no `bun install`, and no production-length liveness
+// wait — so a run that wrongly waited on the sidecar fails fast instead of
+// sleeping through the real ceiling.
+const SKIP_INSTALL = "DOBBY_SKIP_INSTALL";
+const LIVENESS_RETRIES = "DOBBY_LIVENESS_RETRIES";
+
+// The slice of `up --json` these cases read (the full field set is pinned in
+// `upjson.test.ts`).
+interface UpFacts {
+  ok: boolean;
+  phase: string;
+  reason: string | null;
+}
+
+describe("run() — down sweeps the stale registry sidecars a reclaim left behind", () => {
+  const dirs: string[] = [];
+  const children: ChildProcess[] = [];
+  let originalCmux: string | undefined;
+  let originalSkip: string | undefined;
+  let originalRetries: string | undefined;
+
+  beforeEach(() => {
+    originalCmux = process.env[CMUX];
+    originalSkip = process.env[SKIP_INSTALL];
+    originalRetries = process.env[LIVENESS_RETRIES];
+    Reflect.deleteProperty(process.env, CMUX);
+    process.env[SKIP_INSTALL] = "1";
+    process.env[LIVENESS_RETRIES] = "1";
+  });
+
+  afterEach(() => {
+    restoreEnv(CMUX, originalCmux);
+    restoreEnv(SKIP_INSTALL, originalSkip);
+    restoreEnv(LIVENESS_RETRIES, originalRetries);
+    // Never leak a `sleep` out of the suite, whatever the assertions did.
+    for (const proc of children) {
+      proc.kill("SIGKILL");
+    }
+    children.length = 0;
+  });
+
+  afterAll(() => {
+    cleanupDirs(dirs);
+    dirs.length = 0;
+  });
+
+  it("stops the live run a captured sidecar names and removes both registry files", async () => {
+    const repo = makeRepo(dirs);
+    const pidfile = registerPid(repo, UNREACHABLE_PID);
+    const child = startLongLivedProcess();
+    children.push(child);
+    const pid = pidOf(child);
+    // The capture shape: the NAME carries the pid the reclaim read as stale, the
+    // BYTES carry the live registration it actually moved aside.
+    const sidecar = writeSidecar(repo, "4242", String(pid));
+    const binDir = makePsStub(dirs, { command: OWNED_COMMAND, pid });
+
+    const result = await withStubPath(binDir, () => run(["down"], repo));
+    await exited(child, EXIT_WAIT_MS);
+
+    expect([
+      result.exitCode,
+      existsSync(pidfile),
+      existsSync(sidecar),
+      isRunning(pid),
+    ]).toEqual([0, false, false, false]);
+  });
+
+  it("leaves the process a sidecar names alone when it is not a dobby run, and removes the sidecar anyway", async () => {
+    const repo = makeRepo(dirs);
+    const pidfile = registerPid(repo, UNREACHABLE_PID);
+    const child = startLongLivedProcess();
+    children.push(child);
+    const pid = pidOf(child);
+    const sidecar = writeSidecar(repo, "4242", String(pid));
+    const binDir = makePsStub(dirs, { command: FOREIGN_COMMAND, pid });
+
+    const result = await withStubPath(binDir, () => run(["down"], repo));
+    await exited(child, SETTLE_MS);
+
+    expect([
+      result.exitCode,
+      existsSync(pidfile),
+      existsSync(sidecar),
+      isRunning(pid),
+    ]).toEqual([0, false, false, true]);
+  });
+
+  it("sweeps every sidecar when there is no registration file left at all", async () => {
+    const repo = makeRepo(dirs);
+    const child = startLongLivedProcess();
+    children.push(child);
+    const pid = pidOf(child);
+    // Two leftovers from two reclaims: one holding a live, owned run, one holding
+    // a pid that is long gone.
+    const live = writeSidecar(repo, "1", String(pid));
+    const dead = writeSidecar(repo, "2", UNREACHABLE_PID);
+    const binDir = makePsStub(dirs, { command: OWNED_COMMAND, pid });
+
+    const result = await withStubPath(binDir, () => run(["down"], repo));
+    await exited(child, EXIT_WAIT_MS);
+
+    expect([
+      result.exitCode,
+      existsSync(live),
+      existsSync(dead),
+      isRunning(pid),
+    ]).toEqual([0, false, false, false]);
+  });
+
+  it("plans the sidecar sweep without performing it under --dry-run", async () => {
+    const repo = makeRepo(dirs);
+    const pidfile = registerPid(repo, UNREACHABLE_PID);
+    const child = startLongLivedProcess();
+    children.push(child);
+    const pid = pidOf(child);
+    const sidecar = writeSidecar(repo, "4242", String(pid));
+    const binDir = makePsStub(dirs, { command: OWNED_COMMAND, pid });
+
+    const result = await withStubPath(binDir, () =>
+      run(["down", "--dry-run"], repo)
+    );
+    await exited(child, SETTLE_MS);
+
+    expect([
+      result.exitCode,
+      result.stdout.includes(SIDECAR_PREFIX),
+      existsSync(pidfile),
+      existsSync(sidecar),
+      isRunning(pid),
+    ]).toEqual([0, true, true, true, true]);
+  });
+
+  // A sidecar is a LEFTOVER, never a registration: the two commands that read the
+  // registry must ignore it entirely, even when it names a live, owned run.
+  it("starts a run when the only registry file is a sidecar naming a live dobby run", async () => {
+    const repo = makeRepo(dirs);
+    const child = startLongLivedProcess();
+    children.push(child);
+    const pid = pidOf(child);
+    writeSidecar(repo, "7", String(pid));
+    const binDir = makePsStub(dirs, { command: OWNED_COMMAND, pid });
+
+    const result = await withStubPath(binDir, () =>
+      run(["dev", "--dry-run"], repo)
+    );
+
+    expect([
+      result.exitCode,
+      result.stdout.includes(PLAN_MARKER),
+      // …and the process the sidecar names is left strictly alone: `dev` never
+      // stops anything.
+      isRunning(pid),
+    ]).toEqual([0, true, true]);
+  });
+
+  it("brings a workroot up as a no-op when the only registry file is a sidecar naming a live dobby run", async () => {
+    const repo = makeNoAppRepo(dirs);
+    const child = startLongLivedProcess();
+    children.push(child);
+    const pid = pidOf(child);
+    writeSidecar(repo, "7", String(pid));
+    const binDir = makePsStub(dirs, { command: OWNED_COMMAND, pid });
+
+    const result = await withStubPath(binDir, () =>
+      run(["up", "--json"], repo)
+    );
+
+    // Anti-tautology guard: a red here must be the registry behaviour, never an
+    // unimplemented command.
+    expect(result.stderr).not.toContain("unknown command");
+    expect(result.exitCode, result.stderr).toBe(0);
+    const payload = JSON.parse(result.stdout) as UpFacts;
+    // `reason` is the line that would move if the sidecar were taken for a start
+    // already in flight: `up` would wait on it and time out.
+    expect([payload.ok, payload.phase, payload.reason]).toEqual([
+      true,
+      "noop",
+      null,
+    ]);
+  });
+});
+
+// --- review round 3 fixtures ------------------------------------------------
+
+// A registry SIDECAR: `.dobby/dev.pid.stale.<suffix>` holding `pid`, written NOW
+// so its mtime is the reference point the 15-second ownership window is measured
+// against. `suffix` and `pid` are independent ON PURPOSE — see the capture shape
+// in the header above.
+function writeSidecar(repo: string, suffix: string, pid: string): string {
+  mkdirSync(join(repo, ".dobby"), { recursive: true });
+  const path = join(repo, ".dobby", `${SIDECAR_PREFIX}${suffix}`);
+  writeFileSync(path, `${pid}\n`);
+  return path;
+}
+
+// A throwaway git repo with NO app capability, so `up` has nothing to start and
+// answers about the registry alone.
+function makeNoAppRepo(track: string[]): string {
+  return makeScratchRepo({
+    pkg: NOAPP_PKG,
+    prefix: "dobby-pidfile-noapp-",
+    track,
+  });
+}
