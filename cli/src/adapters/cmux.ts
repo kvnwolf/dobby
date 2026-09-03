@@ -175,12 +175,13 @@ function cmuxStartInstruction(
 ): Instruction {
   const panes = discoverPanesFor(discoveryWorkroot(context), cmux);
   const sendLine = `cd ${shellQuote(context.workroot)} && ${DEV_START_COMMAND}`;
+  const quotedSendLine = shellQuote(sendLine);
   if (panes.runPane !== null) {
     return {
       applies: true,
       text: [
         `A run pane is already open: ${panes.runPane}.`,
-        `Run \`cmux send --surface ${shellQuote(panes.runPane)} "${sendLine}"\` to start the dev server in it.`,
+        `Run \`cmux send --surface ${shellQuote(panes.runPane)} ${quotedSendLine}\` to start the dev server in it.`,
         CONFIRM_BOOT_LINE,
       ].join(" "),
       topic: "start",
@@ -191,7 +192,7 @@ function cmuxStartInstruction(
     applies: true,
     text: [
       "No run pane is open.",
-      `Create one with \`cmux new-pane --workspace ${shellQuote(cmux)} --direction right\`, rename it with \`cmux rename-tab --surface <ref> ${shellQuote(runTitle)}\`, then run \`cmux send --surface <ref> "${sendLine}"\` to start the dev server.`,
+      `Create one with \`cmux new-pane --workspace ${shellQuote(cmux)} --direction right\`, rename it with \`cmux rename-tab --surface <ref> ${shellQuote(runTitle)}\`, then run \`cmux send --surface <ref> ${quotedSendLine}\` to start the dev server.`,
       CONFIRM_BOOT_LINE,
     ].join(" "),
     topic: "start",
@@ -213,8 +214,8 @@ function cmuxStopInstruction(
     return { applies: false, text: "", topic: "stop" };
   }
   const closeCommands = refs
-    .map((ref) => `cmux close-surface --surface ${shellQuote(ref)}`)
-    .join("; then ");
+    .map((ref) => `\`cmux close-surface --surface ${shellQuote(ref)}\``)
+    .join(", then ");
   return {
     applies: true,
     text: `Close every kit pane dobby opened: ${closeCommands}.`,

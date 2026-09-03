@@ -2,6 +2,7 @@ import {
   appendFileSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -54,8 +55,16 @@ export type PidfileRegistration =
  *     (in flight) — never reclaimed, refused with `pid: null`;
  *   - a pid that is alive and OWNED (`liveRegisteredPid`'s semantics) —
  *     refused, naming that pid;
- *   - a dead or unowned pid (stale) — the file is removed and the `wx` write
- *     retried exactly once; a second `EEXIST` is refused too.
+ *   - a dead or unowned pid (stale) — reclaimed by an ATOMIC RENAME of the
+ *     registry to a `.stale.<our-pid>` sidecar (never a `rm`), so a peer
+ *     reclaiming the SAME file at the same instant either loses the rename
+ *     outright (`ENOENT`, defers to `wx` below) or wins it and then
+ *     RE-CLASSIFIES what it actually captured — never the read made before
+ *     the rename, since a peer can complete its OWN reclaim in that gap. An
+ *     empty or live-and-owned capture is put back exactly where it came from
+ *     and deferred to (retried, bounded, if that peer then vanishes); only a
+ *     capture that is STILL dead/unowned is reclaimed, via the same `wx`
+ *     retry, which remains the single arbiter either way.
  *
  * Called by `dobby dev`'s streaming path (`runDev`) at startup, once `planDev`'s
  * soft pre-check has found no live twin — this is the hard, race-proof gate
@@ -69,7 +78,20 @@ export function writePidfile(workroot: string): PidfileRegistration {
   mkdirSync(dobbyDir, { recursive: true });
   ensureGitignored(workroot, ".dobby/");
   const pidPath = join(dobbyDir, "dev.pid");
+  return registerOrReclaim(pidPath, workroot, 0);
+}
 
+// The bounded retry depth `registerOrReclaim` allows itself when a captured
+// registration turns out to belong to a peer that then vanishes before the
+// re-check below can confirm it — a double-fault so rare the tests never hit
+// it, but recursion still needs a floor under it rather than running forever.
+const MAX_RECLAIM_RETRIES = 3;
+
+function registerOrReclaim(
+  pidPath: string,
+  workroot: string,
+  depth: number
+): PidfileRegistration {
   if (tryCreatePidfile(pidPath)) {
     return { registered: true };
   }
@@ -80,15 +102,99 @@ export function writePidfile(workroot: string): PidfileRegistration {
   if (twin !== null) {
     return { pid: twin, registered: false };
   }
-  // Dead or unowned — reclaim: remove the stale file and retry exactly once.
-  rmSync(pidPath, { force: true });
-  if (tryCreatePidfile(pidPath)) {
-    return { registered: true };
+  // Dead or unowned A MOMENT AGO — reclaim ATOMICALLY: rename the file out of
+  // the way (never `rm` it) and retry `wx`. The rename, not the read above, is
+  // the race-proof step: a peer can complete its OWN full reclaim (its own
+  // rename + wx) in the gap between our read and our rename, so whatever we
+  // physically capture below is re-classified from scratch by
+  // `classifyCapture` — never trusted from the read above — before we decide
+  // it was ever ours to take.
+  const stalePath = reclaimStalePath(pidPath);
+  try {
+    renameSync(pidPath, stalePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+    // A peer's rename beat ours — the file at `pidPath` right now (if any) is
+    // theirs to adjudicate, never ours to move. `wx` remains the single
+    // arbiter either way.
+    if (tryCreatePidfile(pidPath)) {
+      return { registered: true };
+    }
+    return {
+      pid: isEmptyPidfile(pidPath) ? null : liveRegisteredPid(workroot),
+      registered: false,
+    };
   }
-  return {
-    pid: isEmptyPidfile(pidPath) ? null : liveRegisteredPid(workroot),
-    registered: false,
-  };
+  return classifyCapture(stalePath, pidPath, workroot, depth);
+}
+
+// What renaming `pidPath` to `stalePath` actually captured — decided fresh
+// against the file we are now physically holding, never against the read that
+// led us here (a peer may have completed its OWN reclaim, and even its own
+// registration, in that gap).
+function classifyCapture(
+  stalePath: string,
+  pidPath: string,
+  workroot: string,
+  depth: number
+): PidfileRegistration {
+  if (isEmptyPidfile(stalePath)) {
+    // In flight: a peer between ITS create and ITS write — the pending write
+    // still lands on the same inode wherever it currently sits, so put it
+    // back exactly where it was and refuse, same as the ordinary in-flight
+    // rule above.
+    restoreOrDiscard(stalePath, pidPath);
+    return { pid: null, registered: false };
+  }
+  const capturedPid = livePidAt(stalePath, workroot);
+  if (capturedPid !== null) {
+    // Live and OWNED: a peer's fresh registration completed AFTER our read
+    // above — never stale. Put it back and defer to it.
+    restoreOrDiscard(stalePath, pidPath);
+    const twinNow = liveRegisteredPid(workroot);
+    if (twinNow !== null) {
+      return { pid: twinNow, registered: false };
+    }
+    // The peer vanished between our restore and this re-check — try the
+    // whole dance again against the file as it now stands, bounded so a
+    // pathological environment can never spin forever.
+    return depth < MAX_RECLAIM_RETRIES
+      ? registerOrReclaim(pidPath, workroot, depth + 1)
+      : { pid: null, registered: false };
+  }
+  // Genuinely dead or unowned — safe to reclaim. Only the process that
+  // captured the file removes it, whether `wx` below wins or loses.
+  try {
+    if (tryCreatePidfile(pidPath)) {
+      return { registered: true };
+    }
+    return {
+      pid: isEmptyPidfile(pidPath) ? null : liveRegisteredPid(workroot),
+      registered: false,
+    };
+  } finally {
+    rmSync(stalePath, { force: true });
+  }
+}
+
+// Put a captured file back exactly where it came from, or discard it when a
+// THIRD registrant has already retaken `pidPath` in the meantime (nothing sane
+// left to restore it to — the content we captured is superseded).
+function restoreOrDiscard(stalePath: string, pidPath: string): void {
+  try {
+    renameSync(stalePath, pidPath);
+  } catch {
+    rmSync(stalePath, { force: true });
+  }
+}
+
+// Where a reclaim moves a registration out of the way before re-classifying
+// it — namespaced by THIS process's pid, so two concurrent reclaimers never
+// aim their rename at the same destination.
+function reclaimStalePath(pidPath: string): string {
+  return `${pidPath}.stale.${process.pid}`;
 }
 
 // The atomic create: `wx` fails EEXIST when the file is already there (created
@@ -127,7 +233,16 @@ function isEmptyPidfile(pidPath: string): boolean {
  * @public — the already-registered-run check for `up`/`env` (later task in this plan).
  */
 export function liveRegisteredPid(workroot: string): number | null {
-  const pidPath = join(workroot, PIDFILE_REL);
+  return livePidAt(join(workroot, PIDFILE_REL), workroot);
+}
+
+// `liveRegisteredPid`'s own check, parameterized over the path to read — so a
+// reclaim can ask the identical question of a `.stale.<pid>` file it just
+// captured by rename, not only of the registry's canonical path. `pidPath` is
+// also what `ownsDetachedRun` stats for the pidfile's mtime; a POSIX rename
+// preserves a file's mtime, so asking about the renamed copy answers exactly
+// what asking about the original would have.
+function livePidAt(pidPath: string, workroot: string): number | null {
   let pid: number;
   try {
     pid = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
@@ -155,11 +270,19 @@ export function liveRegisteredPid(workroot: string): number | null {
  * self-identity is a plain byte compare, not the `ps`-based ownership check
  * (`ownsDetachedRun`), which answers a different question ("is that OTHER pid
  * ours?") for a different caller (`down`, killing someone else's process).
+ * ALSO sweeps our own `.stale.<our-pid>` reclaim sidecar, if one is somehow
+ * still there — belt-and-braces alongside the `finally` inside `writePidfile`
+ * that normally removes it inline.
  *
  * @public — self-teardown for `dobby dev`.
  */
 export function clearOwnPidfile(workroot: string): void {
   const pidPath = join(workroot, PIDFILE_REL);
+  // Tolerate a leftover `.stale.<pid>` this process's own reclaim may have left
+  // behind (normally cleaned up inline by `writePidfile`'s `finally`, but
+  // belt-and-braces here too) — `force: true` already makes this a silent
+  // no-op when there is nothing to remove.
+  rmSync(reclaimStalePath(pidPath), { force: true });
   let raw: string;
   try {
     raw = readFileSync(pidPath, "utf8").trim();

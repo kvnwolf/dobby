@@ -1,5 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
@@ -11,6 +18,8 @@ import {
   mkStubBins,
   readStubLog,
   restoreEnv,
+  stubLogPath,
+  stubPath,
   useSpawnBudget,
   withStubPath,
 } from "./test-helpers.ts";
@@ -95,6 +104,21 @@ const spacedRepo = nestedRepo("dobby r1 space-");
 // as a product failure.
 const quotedRepo = tryNestedRepo("dobby r1 it's-");
 
+// REVIEW ROUND 2 — the workroot that is also an ATTACK. Its basename (and so the
+// goal slug, and so every kit pane title) carries every metacharacter that turns
+// an interpolated value into a command: a space, a single quote, a double quote,
+// a `$(…)` substitution and a backtick pair. Both substitutions are `touch
+// <marker>`, so a shell that EVALUATES what dobby wrote leaves a file behind —
+// the injection is observed by its effect, never by reading quote characters.
+const INJECTION_MARKERS = ["sub", "tick"];
+const INJECTION_NAME = `r2 it's "q" $(touch ${INJECTION_MARKERS[0]}) \`touch ${INJECTION_MARKERS[1]}\``;
+const injectedRepo = tryNamedRepo(INJECTION_NAME);
+// The goal slug the catalogue derives from that workroot: its basename, read by
+// node:path — a different mechanism than the code's git top-level resolution.
+const injectedSlug = injectedRepo === undefined ? "" : basename(injectedRepo);
+// The kit panes cmux reports for it, titled with that same slug.
+const INJECTED_KIT_PANES = `surface:4 dobby-run-${injectedSlug}\nsurface:5 dobby-browser-${injectedSlug}\n`;
+
 // The two cmux discovery states, in the listing shape cmux itself prints
 // (`pane:N` from `list-panes`, `surface:N <title>` from `list-pane-surfaces`):
 // both kit panes open, versus a workspace holding only a non-kit pane.
@@ -146,6 +170,36 @@ function nestedRepo(prefix: string): string {
   gitIn(dir, ["add", "-A"]);
   gitIn(dir, ["commit", "-q", "-m", "scratch"]);
   return dir;
+}
+
+// A throwaway git repo whose own DIRECTORY NAME is `name` — so the workroot path
+// AND the goal slug dobby derives from it both carry whatever `name` carries.
+function namedRepo(name: string): string {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), "dobby-instr-r2-")));
+  scratchDirs.push(parent);
+  const dir = join(parent, name);
+  mkdirSync(dir, { recursive: true });
+  gitIn(dir, ["init", "-q"]);
+  gitIn(dir, ["checkout", "-q", "-b", "main"]);
+  writeFileSync(join(dir, "README"), "scratch\n");
+  gitIn(dir, ["add", "-A"]);
+  gitIn(dir, ["commit", "-q", "-m", "scratch"]);
+  return dir;
+}
+
+// The same fixture where the filesystem may refuse a character in the name: the
+// cases SKIP rather than reporting the filesystem as a product failure.
+function tryNamedRepo(name: string): string | undefined {
+  const made: string[] = [];
+  try {
+    made.push(namedRepo(name));
+  } catch (error) {
+    made.length = 0;
+    process.stderr.write(
+      `skipping the metacharacter-workroot fixture: ${String(error)}\n`
+    );
+  }
+  return made[0];
 }
 
 // The same fixture where the filesystem may refuse the name outright.
@@ -301,7 +355,7 @@ describe("dobby instructions — the cmux catalogue", () => {
     expect(payload.applies).toBe(true);
     expect(payload.text).toContain("cmux send");
     expect(payload.text).toContain(RUN_PANE_REF);
-    expect(payload.text).toContain(`cd '${project}' && bunx dobby dev`);
+    expect(payload.text).toContain(nestedSendArgument(project));
     expect(payload.text).not.toContain("new-pane");
   });
 
@@ -842,8 +896,29 @@ describe("dobby instructions — cmux instructions quote shell arguments", () =>
     );
     expect(result.exitCode, combined(result)).toBe(0);
     expect(payloadOf(result.stdout).text).toContain(
-      `cd '${spacedRepo}' && bunx dobby dev`
+      nestedSendArgument(spacedRepo)
     );
+  });
+
+  it("hands cmux send the whole dev command line as ONE argument, for a path holding a space", async () => {
+    // The byte-identity half of the contract, where it is well defined: a path
+    // with no single quote of its own needs no `'\''` escape, so the argument
+    // `cmux send` receives is exactly the review finding's literal.
+    const stubDir = cmuxStub(SPACED_KIT_PANES);
+    const result = await withStubPath(stubDir, () =>
+      run(["instructions", "start", "--json"], spacedRepo)
+    );
+    const scratch = markerDir();
+    const failed = runCmuxLines(
+      payloadOf(result.stdout).text,
+      stubDir,
+      scratch
+    );
+
+    expect(
+      [failed, sendArguments(readStubLog(stubDir, "cmux"))],
+      combined(result)
+    ).toEqual([[], [`cd '${spacedRepo}' && bunx dobby dev`]]);
   });
 
   it("hands over a dev command line a shell parses and enters, for a path holding a space", async () => {
@@ -851,12 +926,13 @@ describe("dobby instructions — cmux instructions quote shell arguments", () =>
     const result = await withStubPath(stubDir, () =>
       run(["instructions", "start", "--json"], spacedRepo)
     );
-    const enterWorkroot = devCdCommand(payloadOf(result.stdout).text);
+    const scratch = markerDir();
+    runCmuxLines(payloadOf(result.stdout).text, stubDir, scratch);
 
-    expect([shParses(enterWorkroot), shLandsIn(enterWorkroot)]).toEqual([
-      0,
-      spacedRepo,
-    ]);
+    expect(
+      shLandsIn(sendArguments(readStubLog(stubDir, "cmux"))[0], scratch),
+      combined(result)
+    ).toBe(spacedRepo);
   });
 
   it.skipIf(quotedRepo === undefined)(
@@ -867,12 +943,20 @@ describe("dobby instructions — cmux instructions quote shell arguments", () =>
       const result = await withStubPath(stubDir, () =>
         run(["instructions", "start", "--json"], workroot)
       );
-      const enterWorkroot = devCdCommand(payloadOf(result.stdout).text);
+      const scratch = markerDir();
+      const failed = runCmuxLines(
+        payloadOf(result.stdout).text,
+        stubDir,
+        scratch
+      );
 
-      expect([shParses(enterWorkroot), shLandsIn(enterWorkroot)]).toEqual([
-        0,
-        workroot,
-      ]);
+      expect(
+        [
+          failed,
+          shLandsIn(sendArguments(readStubLog(stubDir, "cmux"))[0], scratch),
+        ],
+        combined(result)
+      ).toEqual([[], workroot]);
     }
   );
 
@@ -911,42 +995,454 @@ describe("dobby instructions — cmux instructions quote shell arguments", () =>
   });
 });
 
-// --- slice 6 observers ------------------------------------------------------
+// --- Slice 7: the cmux command lines survive shell metacharacters -----------
+// Round 1 single-quoted the values dobby interpolates, but wrapped the whole
+// `sendLine` in DOUBLE quotes as the argument to `cmux send` — and inside double
+// quotes a shell still reads `"`, `$(…)`, a backtick and `\`. So a workroot (or
+// a goal slug, which is its basename) carrying those characters is not merely
+// mis-split: it EXECUTES when the model runs the command dobby handed it.
+//
+// The contract is therefore the one thing a quote-counting assertion cannot
+// state: run every cmux command line dobby emitted through /bin/sh, against a
+// `cmux` that records its argv, and require that (a) the shell exits 0, (b) NO
+// marker file appeared — nothing dobby wrote was evaluated as a command — and
+// (c) each dynamic value reached the stub's argv INTACT, byte for byte, as one
+// argument. `cmux send` is checked one layer deeper still: the dev command line
+// it carried is itself run, and must land in the workroot.
+//
+// That proof rests on one presentational requirement, which the model copying
+// the command needs just as much: every cmux command dobby writes must be
+// COPYABLE WHOLE — either standing on its own line, or written as one markdown
+// code span (`cmux …`). A command left bare inside a sentence has no end a
+// reader (or this test) can find once a value carries a `;`, a `.` or a
+// backtick of its own, so it is not a command anyone can run.
+//
+// Where every expected value comes from (all independent of any implementation):
+//  - the workroot, its basename and the pane titles built from it are values
+//    THIS file created with node:fs and node:path;
+//  - `w1` is the workspace id the test exports; `surface:4`/`surface:5` are
+//    invented by the cmux stub this file writes;
+//  - exit 0 and "no marker file" are properties of the SHELL, not of dobby;
+//  - `'\''` (POSIX single-quote escaping) is never spelled out in an assertion:
+//    any correct escaping passes and any broken one fails, because the proof is
+//    execution.
+describe("dobby instructions — cmux instructions survive shell metacharacters", () => {
+  beforeEach(() => {
+    process.env[CMUX] = CMUX_ID;
+  });
 
-// The tail every dev command line ends with — the anchor the `cd` in front of it
-// is cut from.
+  it.skipIf(injectedRepo === undefined)(
+    "sends a dev command that enters a workroot whose name is a shell attack",
+    async () => {
+      const workroot = injectedRepo ?? "";
+      const stubDir = cmuxStub(INJECTED_KIT_PANES);
+      const result = await withStubPath(stubDir, () =>
+        run(["instructions", "start", "--json"], workroot)
+      );
+      const scratch = markerDir();
+      const failed = runCmuxLines(
+        payloadOf(result.stdout).text,
+        stubDir,
+        scratch
+      );
+      const records = readStubLog(stubDir, "cmux");
+      const sent = sendArguments(records);
+      const lands = shLandsIn(sent[0], scratch);
+      // Both places a `touch <marker>` could land: the directory the commands
+      // ran FROM, and the workroot a `cd` reaches before the `&&`.
+      const fired = [...markersFired(scratch), ...markersFired(workroot)];
+
+      expect(
+        {
+          failed,
+          fired,
+          lands,
+          sent: sent.length,
+          strayWorkspace: flagValues(records, "--workspace").filter(
+            (value) => value !== CMUX_ID
+          ),
+          surfaces: flagValues(records, "--surface"),
+        },
+        cmuxReport(result, stubDir)
+      ).toEqual({
+        failed: [],
+        fired: [],
+        lands: workroot,
+        sent: 1,
+        strayWorkspace: [],
+        surfaces: [RUN_PANE_REF],
+      });
+    }
+  );
+
+  it.skipIf(injectedRepo === undefined)(
+    "names a new run pane after a goal slug that is a shell attack",
+    async () => {
+      const workroot = injectedRepo ?? "";
+      const stubDir = cmuxStub(NO_KIT_PANES);
+      const result = await withStubPath(stubDir, () =>
+        run(["instructions", "start", "--json"], workroot)
+      );
+      const scratch = markerDir();
+      const failed = runCmuxLines(
+        payloadOf(result.stdout).text,
+        stubDir,
+        scratch
+      );
+      const records = readStubLog(stubDir, "cmux");
+      const title = `dobby-run-${injectedSlug}`;
+      const lands = shLandsIn(sendArguments(records)[0], scratch);
+      const fired = markersFired(scratch);
+
+      expect(
+        {
+          failed,
+          fired,
+          lands,
+          titled: records.flat().includes(title),
+          workspaces: [...new Set(flagValues(records, "--workspace"))],
+        },
+        cmuxReport(result, stubDir)
+      ).toEqual({
+        failed: [],
+        fired: [],
+        lands: workroot,
+        titled: true,
+        workspaces: [CMUX_ID],
+      });
+    }
+  );
+
+  it.skipIf(injectedRepo === undefined)(
+    "closes the kit panes of a workroot whose name is a shell attack",
+    async () => {
+      const workroot = injectedRepo ?? "";
+      const stubDir = cmuxStub(INJECTED_KIT_PANES);
+      const result = await withStubPath(stubDir, () =>
+        run(["instructions", "stop", "--json"], workroot)
+      );
+      const scratch = markerDir();
+      const failed = runCmuxLines(
+        payloadOf(result.stdout).text,
+        stubDir,
+        scratch
+      );
+      const records = readStubLog(stubDir, "cmux");
+      const fired = markersFired(scratch);
+
+      expect(
+        { failed, fired, surfaces: flagValues(records, "--surface") },
+        cmuxReport(result, stubDir)
+      ).toEqual({
+        failed: [],
+        fired: [],
+        surfaces: [RUN_PANE_REF, BROWSER_PANE_REF],
+      });
+    }
+  );
+
+  it.skipIf(injectedRepo === undefined)(
+    "renames the workspace to a goal slug that is a shell attack",
+    async () => {
+      const workroot = injectedRepo ?? "";
+      const stubDir = cmuxStub(INJECTED_KIT_PANES);
+      const result = await withStubPath(stubDir, () =>
+        run(["instructions", "rename", "--json"], workroot)
+      );
+      const scratch = markerDir();
+      const failed = runCmuxLines(
+        payloadOf(result.stdout).text,
+        stubDir,
+        scratch
+      );
+      const renames = readStubLog(stubDir, "cmux").filter(
+        (record) => record[0] === "rename-workspace"
+      );
+      const fired = markersFired(scratch);
+
+      // The whole argv, verbatim: the workspace id and the goal slug reach cmux
+      // as two arguments, byte for byte what this file created.
+      expect({ failed, fired, renames }, cmuxReport(result, stubDir)).toEqual({
+        failed: [],
+        fired: [],
+        renames: [["rename-workspace", "--workspace", CMUX_ID, injectedSlug]],
+      });
+    }
+  );
+
+  it.skipIf(injectedRepo === undefined)(
+    "names a new browser pane after a goal slug that is a shell attack",
+    async () => {
+      const workroot = injectedRepo ?? "";
+      const stubDir = cmuxStub(NO_KIT_PANES);
+      const result = await withStubPath(stubDir, () =>
+        run(["instructions", "browser", "--json"], workroot)
+      );
+      const scratch = markerDir();
+      const failed = runCmuxLines(
+        payloadOf(result.stdout).text,
+        stubDir,
+        scratch
+      );
+      const argv = readStubLog(stubDir, "cmux").flat();
+      const wanted = [CMUX_ID, `dobby-browser-${injectedSlug}`];
+      const fired = markersFired(scratch);
+
+      expect(
+        {
+          failed,
+          fired,
+          intact: wanted.filter((value) => argv.includes(value)),
+        },
+        cmuxReport(result, stubDir)
+      ).toEqual({ failed: [], fired: [], intact: wanted });
+    }
+  );
+
+  // The negative guard, on an ORDINARY workroot: every cmux command dobby wrote
+  // is copyable whole (its own line, or one code span), and with every dynamic
+  // argument single-quoted a double quote has no job left to do on it.
+  // (Restricted to dobby's own commands: the vendored cmux-browser guide the
+  // browser topic carries is third-party prose, full of its own quoting.)
+  it.each(DOUBLE_QUOTE_FREE_TOPICS)(
+    "writes copyable cmux commands with no double-quoted argument for %s",
+    async (topic, surfaces) => {
+      const stubDir = cmuxStub(surfaces);
+      const result = await withStubPath(stubDir, () =>
+        run(["instructions", topic, "--json"], project)
+      );
+      const { text } = payloadOf(result.stdout);
+      const lines = dobbyCmuxCommands(text);
+
+      expect(
+        {
+          commands: lines.length > 0,
+          doubleQuoted: lines.filter((line) => line.includes('"')),
+        },
+        // The browser topic carries the whole vendored guide, so the report is
+        // the command lines plus the OPENING of the text, never all of it.
+        `dobby's own cmux command lines:\n${lines.join("\n")}\ntext begins:\n${text.slice(0, TEXT_EXCERPT)}`
+      ).toEqual({ commands: true, doubleQuoted: [] });
+    }
+  );
+});
+
+// --- slice 6 + 7 observers --------------------------------------------------
+//
+// The quoting contract is proven by RUNNING what dobby wrote, never by reading
+// the quote characters in it: each cmux command line dobby emits is handed to
+// /bin/sh with the recording `cmux` stub first on PATH, and the assertions are
+// about what the shell DID — the exit status, the files a substitution would
+// have created, and the argv the stub received byte for byte.
+
+// The tail every dev command line ends with — the anchor that identifies the
+// argument `cmux send` carried, wherever in the argv it landed.
 const DEV_TAIL = " && bunx dobby dev";
 
-// The `cd <workroot>` command dobby put in front of the dev command, extracted
-// from the instruction text so it can be RUN on its own. Cutting back from the
-// tail (rather than matching a shape) keeps the extraction independent of how
-// the surrounding sentence is worded or wrapped.
-function devCdCommand(text: string): string {
-  const line = text.split("\n").find((one) => one.includes(DEV_TAIL)) ?? "";
-  const tailAt = line.indexOf(DEV_TAIL);
-  expect(
-    tailAt,
-    `no \`… && bunx dobby dev\` command in:\n${text}`
-  ).toBeGreaterThan(-1);
-  const cdAt = line.lastIndexOf("cd ", tailAt);
-  expect(
-    cdAt,
-    `no \`cd\` in front of the dev command in:\n${line}`
-  ).toBeGreaterThan(-1);
-  return line.slice(cdAt, tailAt);
+// The slot a cmux instruction leaves for a ref the MODEL only learns at run time
+// (the pane it just created), and the ref this file fills it with so the command
+// can be run for real. Substituting a placeholder is what the model does too; it
+// touches nothing dobby quoted.
+const REF_PLACEHOLDER = "<ref>";
+const SUBSTITUTE_REF = "surface:9";
+
+// The values dobby INJECTS into a cmux command line. A line carrying one of them
+// is dobby's own (the vendored cmux-browser guide inside the browser topic's
+// text carries none of these — checked against the vendored bytes), which is
+// what separates a command dobby composed from a command a third-party document
+// merely illustrates.
+const INJECTED_MARKERS = [
+  CMUX_ID,
+  RUN_PANE_REF,
+  BROWSER_PANE_REF,
+  REF_PLACEHOLDER,
+  "dobby-run-",
+  "dobby-browser-",
+  DEV_TAIL,
+];
+
+// The four topics, each with the discovery state in which it WRITES a cmux
+// command line of its own: `browser` only composes one when no browser pane is
+// open yet (with a pane open it hands over the vendored protocol instead).
+// How much of an instruction's text a failure report quotes: enough to read
+// dobby's own sentences, never the whole vendored browser guide behind them.
+const TEXT_EXCERPT = 400;
+
+const DOUBLE_QUOTE_FREE_TOPICS: [string, string][] = [
+  ["start", KIT_PANES],
+  ["stop", KIT_PANES],
+  ["rename", KIT_PANES],
+  ["browser", NO_KIT_PANES],
+];
+
+// Everything a failing case needs to be read without re-running it: the
+// command's own output plus the argv the stub recorded.
+function cmuxReport(
+  result: { stderr: string; stdout: string },
+  stubDir: string
+): string {
+  const argv = readStubLog(stubDir, "cmux")
+    .map((record) => JSON.stringify(record))
+    .join("\n");
+  const commands = commandsIn(result.stdout).join("\n");
+  return `${combined(result)}\ncommands read out of the text:\n${commands}\ncmux received:\n${argv}`;
 }
 
-// Does /bin/sh PARSE the command dobby handed over? `sh -n` reads it without
-// running it, so an unbalanced quote surfaces as a syntax error.
-function shParses(cdCommand: string): number | null {
-  return spawnSync("sh", ["-n", "-c", `${cdCommand}${DEV_TAIL}`]).status;
+// The cmux commands in a `--json` stdout, for a failure REPORT: an unparseable
+// stdout (an error path, say) answers none rather than throwing inside the
+// message that was supposed to explain the failure.
+function commandsIn(stdout: string): string[] {
+  try {
+    return dobbyCmuxCommands(payloadOf(stdout).text);
+  } catch {
+    return [];
+  }
 }
 
-// Where a shell actually ENDS UP after running dobby's `cd` — the assertion the
-// whole quoting contract exists for. An unquoted path holding a space makes `cd`
-// fail, `&&` short-circuits, and this answers the empty string.
-function shLandsIn(cdCommand: string): string {
-  return spawnSync("sh", ["-c", `${cdCommand} && pwd`], {
+// The `cmux send` ARGUMENT dobby hands over for a workroot holding no single
+// quote of its own: the dev command line, itself single-quoted so the whole
+// thing reaches `cmux send` as ONE argument. Spelled out, not computed — this is
+// the review finding's own form, `… 'cd '\''<workroot>'\'' && bunx dobby dev'`.
+function nestedSendArgument(workroot: string): string {
+  return `'cd '\\''${workroot}'\\'' && bunx dobby dev'`;
+}
+
+// The characters that may follow the backtick CLOSING a markdown code span in
+// ordinary prose: whitespace, sentence punctuation, or the end of the line. A
+// backtick followed by anything else is still inside the span — which is how a
+// command carrying a backtick IN ONE OF ITS VALUES is read whole.
+const SPAN_ENDS = [" ", "\t", ".", ",", ";", ":", ")", "]", "!", "?", '"'];
+
+// The cmux commands inside ONE line of prose, each read out of the markdown code
+// span it is written in (`…`). A line may carry several ("Create one with `cmux
+// new-pane …`, then rename it with `cmux rename-tab …`.").
+function spanCommands(line: string): string[] {
+  const found: string[] = [];
+  let from = 0;
+  for (;;) {
+    const open = line.indexOf("`cmux ", from);
+    if (open === -1) {
+      return found;
+    }
+    const close = spanClose(line, open + 1);
+    found.push(
+      close === -1 ? line.slice(open + 1) : line.slice(open + 1, close)
+    );
+    if (close === -1) {
+      return found;
+    }
+    from = close + 1;
+  }
+}
+
+// Where the code span opened before `from` closes: the first backtick that ends
+// the line or is followed by prose. Answers -1 when the span never closes.
+function spanClose(line: string, from: number): number {
+  for (let at = from; at < line.length; at += 1) {
+    if (line[at] !== "`") {
+      continue;
+    }
+    const next = line[at + 1];
+    if (next === undefined || SPAN_ENDS.includes(next)) {
+      return at;
+    }
+  }
+  return -1;
+}
+
+// Every cmux command DOBBY ITSELF wrote into the text — the commands a model is
+// meant to RUN, read whether they stand on their own line or sit in a code span
+// inside a sentence, and kept only when they carry a value dobby injected (the
+// vendored cmux-browser guide the browser topic quotes carries none).
+function dobbyCmuxCommands(text: string): string[] {
+  const commands: string[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line.startsWith("cmux ")) {
+      commands.push(line);
+    } else {
+      commands.push(...spanCommands(line));
+    }
+  }
+  return commands.filter((command) =>
+    INJECTED_MARKERS.some((marker) => command.includes(marker))
+  );
+}
+
+// A throwaway directory to run dobby's command lines FROM: a shell that
+// evaluates an interpolated `$(touch …)` or backtick drops the marker file here,
+// so an injection is observed by the file it left behind.
+function markerDir(): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-instr-marker-")));
+  scratchDirs.push(dir);
+  return dir;
+}
+
+// Which of the injection markers actually fired — `[]` when nothing dobby wrote
+// was evaluated as a command.
+function markersFired(dir: string): string[] {
+  return INJECTION_MARKERS.filter((name) => existsSync(join(dir, name)));
+}
+
+// Run every cmux command line in `text` through /bin/sh with the stub first on
+// PATH and `cwd` as the working directory, returning the lines that did NOT exit
+// 0. The stub's log is cleared first, so the argv read back afterwards is only
+// what these lines produced.
+function runCmuxLines(text: string, stubDir: string, cwd: string): string[] {
+  rmSync(stubLogPath(stubDir, "cmux"), { force: true });
+  const failures: string[] = [];
+  for (const line of dobbyCmuxCommands(text)) {
+    const command = line.replaceAll(REF_PLACEHOLDER, SUBSTITUTE_REF);
+    const { status } = spawnSync("sh", ["-c", command], {
+      cwd,
+      env: { ...process.env, PATH: stubPath(stubDir) },
+    });
+    if (status !== 0) {
+      failures.push(`${line} -> exit ${String(status)}`);
+    }
+  }
+  return failures;
+}
+
+// The values a flag was given, across every invocation the stub recorded — the
+// verbatim half of the contract: `--surface` must be followed by the ref dobby
+// discovered and `--workspace` by the workspace id, each as ONE argv element the
+// shell did not split, expand or re-quote. Flag-relative rather than positional,
+// so re-ordering the flags on a command line cannot fail this.
+function flagValues(records: string[][], flag: string): string[] {
+  const values: string[] = [];
+  for (const record of records) {
+    for (const [at, arg] of record.entries()) {
+      const value = record[at + 1];
+      if (arg === flag && value !== undefined) {
+        values.push(value);
+      }
+    }
+  }
+  return values;
+}
+
+// The dev command lines that reached the stub as ONE argument — the whole point
+// of the outer quoting layer. A command line split by the shell into several
+// argv elements does not appear here at all.
+function sendArguments(records: string[][]): string[] {
+  return records
+    .flat()
+    .filter((arg) => arg.startsWith("cd ") && arg.endsWith(DEV_TAIL));
+}
+
+// Where a shell ENDS UP after running the dev command line the pane received —
+// the proof the INNER quoting layer survived too. Run from `cwd`, so a
+// substitution that fires only here still leaves its marker where the test
+// looks. An unquoted path holding a space makes `cd` fail, `&&` short-circuits,
+// and this answers the empty string.
+function shLandsIn(sendArgument: string | undefined, cwd: string): string {
+  if (sendArgument === undefined) {
+    return "";
+  }
+  const enter = sendArgument.slice(0, -DEV_TAIL.length);
+  return spawnSync("sh", ["-c", `${enter} && pwd`], {
+    cwd,
     encoding: "utf8",
   }).stdout.trim();
 }

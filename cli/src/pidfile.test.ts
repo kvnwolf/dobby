@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -653,6 +654,92 @@ describe("run() — dev command (the run process registers itself)", () => {
       expect([registered, foreignAlive]).toEqual([true, true]);
     }
   );
+
+  // -------------------------------------------------------------------------
+  // REVIEW ROUND 2 — RECLAIMING a stale registration must be atomic too.
+  //
+  // Round 1 made the FIRST registration atomic (create-exclusively, and the
+  // loser is refused). The reclaim path is the same race one layer down: two
+  // runs that read the SAME stale file — a dead pid, or a live process that is
+  // not a dobby run — both decide it may be taken over. If taking it over is
+  // "remove the file, then create it exclusively", the second removal deletes
+  // the FIRST run's fresh registration and both runs come up: two dev servers
+  // in one worktree, with the registry naming only one of them.
+  //
+  // The contract is the WORLD the two runs leave behind, and it is identical to
+  // round 1's: exactly ONE registered and running, the other refused with the
+  // same message and exit code, the app's own bin started EXACTLY ONCE — plus,
+  // now, no leftover of whatever the reclaim moved the stale file to. How the
+  // reclaim is done (rename, unlink, lock) is never asserted.
+  //
+  // Each case runs THREE times: a race decided by chance passes once, so a
+  // single green run is not evidence. Every round builds its own fixtures, and
+  // `beforeEach` gives it its own portless world.
+  //
+  // INDEPENDENT SOURCES: exit code 1 and the `already running` / `dobby down`
+  // wording are the finding's own words for the refusal; the registered pid is
+  // the one the OS gave the child WE spawned; `2147483647` is unreachable by
+  // construction; "exactly one" is counted from a stub bin THIS file wrote, one
+  // line per invocation; "no leftover" is read from the registry DIRECTORY, so
+  // it holds for any derivative name a reclaim might leave behind.
+  // -------------------------------------------------------------------------
+
+  it.skipIf(!hasBun()).each(RACE_ROUNDS)(
+    "registers exactly one of two runs reclaiming a dead registration (round %i)",
+    async () => {
+      const log = viteLog(dirs);
+      const repo = makeIsolatedViteRepo(dirs, viteRecordingSleeper(log));
+      // The registration both runs find, and both may take over.
+      const pidfile = registerPid(repo, UNREACHABLE_PID);
+      const binDir = makeReclaimPsStub(dirs, Number(UNREACHABLE_PID));
+
+      const observed = await raceTwoRuns(repo, portless, binDir, log, pidfile);
+      devChild = observed.survivor;
+      devTwin = observed.other;
+
+      observed.survivor.kill("SIGTERM");
+      const cleared = await until(() => !existsSync(pidfile), EXIT_WAIT_MS);
+      // Wait for the survivor to actually land, so its own teardown (and not
+      // just the SIGKILL in `afterEach`) takes the app process down with it.
+      await exited(observed.survivor, EXIT_WAIT_MS);
+
+      expect(
+        [...observed.report, cleared],
+        `${RACE_OBSERVATIONS}, cleared] = ${JSON.stringify([...observed.report, cleared])}\nrefused run said:\n${observed.refusal}`
+      ).toEqual([true, 1, true, true, true, true, 1, [], true]);
+    }
+  );
+
+  it.skipIf(!hasBun()).each(RACE_ROUNDS)(
+    "registers exactly one of two runs reclaiming a live foreign registration (round %i)",
+    async () => {
+      const log = viteLog(dirs);
+      const repo = makeIsolatedViteRepo(dirs, viteRecordingSleeper(log));
+      // A registration naming a LIVE process that is not a dobby run: both runs
+      // are entitled to take it over, and neither may touch the process itself.
+      child = startLongLivedProcess();
+      const foreignPid = pidOf(child);
+      const pidfile = registerPid(repo, String(foreignPid));
+      const binDir = makeReclaimPsStub(dirs, foreignPid, FOREIGN_COMMAND);
+
+      const observed = await raceTwoRuns(repo, portless, binDir, log, pidfile);
+      devChild = observed.survivor;
+      devTwin = observed.other;
+      // Reclaiming the FILE is never killing what it happened to name.
+      const foreignAlive = isRunning(foreignPid);
+
+      observed.survivor.kill("SIGTERM");
+      const cleared = await until(() => !existsSync(pidfile), EXIT_WAIT_MS);
+      // Wait for the survivor to actually land, so its own teardown (and not
+      // just the SIGKILL in `afterEach`) takes the app process down with it.
+      await exited(observed.survivor, EXIT_WAIT_MS);
+
+      expect(
+        [...observed.report, foreignAlive, cleared],
+        `${RACE_OBSERVATIONS}, foreignAlive, cleared] = ${JSON.stringify([...observed.report, foreignAlive, cleared])}\nrefused run said:\n${observed.refusal}`
+      ).toEqual([true, 1, true, true, true, true, 1, [], true, true]);
+    }
+  );
 });
 
 // --- task 2 fixtures --------------------------------------------------------
@@ -742,6 +829,146 @@ exit 1
 `
   );
   return binDir;
+}
+
+// The rounds each RACE case runs: a race decided by chance can pass once, so a
+// single green run says nothing. Three fresh fixtures, three verdicts.
+const RACE_ROUNDS = [1, 2, 3];
+
+// How long the stub `ps` dawdles before answering about the STALE pid — the one
+// probe both runs make before they decide the registration may be taken over.
+// Holding both of them inside that window is what turns a rare interleaving into
+// the ordinary one, so the race is hit far more often than by luck alone. (It
+// cannot be made certain from outside: the two runs still have to reach the
+// registry within that window, and how long each takes to get there is the
+// machine's business. That is why each case runs three rounds.)
+const STALE_PROBE_DELAY = "1";
+
+// The observation names the race cases report, in the order their array carries
+// them — a failing race is unreadable without them (round 1 failed on CI with an
+// empty stderr and a bare `[false, null, …]`).
+const RACE_OBSERVATIONS =
+  "observed [settled, code, saysAlreadyRunning, saysRecovery, registered, alive, starts, leftovers";
+
+// A stub `ps` for the RECLAIM races: it answers about the pid already in the
+// registry — slowly, and as a process no run may claim (a foreign command line,
+// or nothing at all when the pid is unreachable) — and reports every OTHER pid
+// as a fresh, owned dobby run, which is what the loser of the race must see when
+// it looks at the winner. (A child spawned as `bun <CLI_ENTRY> dev` does not
+// carry `dobby dev` on its real command line, so real `ps` would report the
+// winner as foreign and invite the loser to reclaim it — an artefact of running
+// the CLI from source.)
+function makeReclaimPsStub(
+  track: string[],
+  stalePid: number,
+  staleCommand?: string
+): string {
+  const binDir = mkStubBinDir(track);
+  const staleAnswer =
+    staleCommand === undefined
+      ? "exit 1"
+      : `case "$*" in
+      *command*) printf '%s\\n' '${staleCommand}' ; exit 0 ;;
+      *etime*) printf '%s\\n' '  ${FRESH_ETIME}' ; exit 0 ;;
+    esac
+    exit 1`;
+  mkStubBin(
+    binDir,
+    "ps",
+    `#!/bin/sh
+case "$*" in
+  *${stalePid}*)
+    sleep ${STALE_PROBE_DELAY}
+    ${staleAnswer} ;;
+esac
+case "$*" in
+  *command*) printf '%s\\n' '${OWNED_COMMAND}' ; exit 0 ;;
+  *etime*) printf '%s\\n' '  ${FRESH_ETIME}' ; exit 0 ;;
+esac
+exit 1
+`
+  );
+  return binDir;
+}
+
+// What two runs started back to back in ONE tick left behind: which of them
+// survived, what the other said, and the eight observations the contract is
+// stated in. The survivor is left RUNNING — the caller stops it, so it can also
+// assert the registry is cleared on the way down.
+interface RaceOutcome {
+  other: ChildProcess;
+  refusal: string;
+  report: [
+    boolean,
+    number | null,
+    boolean,
+    boolean,
+    boolean,
+    boolean,
+    number,
+    string[],
+  ];
+  survivor: ChildProcess;
+}
+
+async function raceTwoRuns(
+  repo: string,
+  portless: PortlessRun | undefined,
+  binDir: string,
+  log: string,
+  pidfile: string
+): Promise<RaceOutcome> {
+  // Back to back in ONE tick: neither run gets a head start.
+  const runA = spawnDev(repo, portless, binDir);
+  const runB = spawnDev(repo, portless, binDir);
+  const first = watchDev(runA);
+  const second = watchDev(runB);
+
+  const settled = await until(
+    () => existsSync(pidfile) && (first.code !== null || second.code !== null),
+    REGISTER_WAIT_MS
+  );
+  const refused = first.code === null ? second : first;
+  const survivor = first.code === null ? runA : runB;
+  const other = survivor === runA ? runB : runA;
+  // The app coming up is its OWN wait: booting vite is the slow tail, and on a
+  // loaded runner it lands well after the registration the line above watched
+  // for. Folding the two into one ceiling would report a healthy-but-slow run as
+  // a failed race.
+  await until(() => logLines(log).length > 0, REGISTER_WAIT_MS);
+  // Let a SECOND start — if the reclaim let one through — reach the app's bin
+  // before the invocations are counted.
+  await pause(SETTLE_MS);
+  const survivorPid = pidOf(survivor);
+
+  return {
+    other,
+    refusal: refused.stderr,
+    report: [
+      settled,
+      refused.code,
+      refused.stderr.includes(ALREADY_RUNNING),
+      refused.stderr.includes(RECOVERY_HINT),
+      readTrimmed(pidfile) === String(survivorPid),
+      isRunning(survivorPid),
+      logLines(log).length,
+      registryLeftovers(repo),
+    ],
+    survivor,
+  };
+}
+
+// Anything the registry directory holds that was DERIVED from the registry file:
+// the `.stale.<pid>` (or however it is spelled) a reclaim moved the old
+// registration to, and never cleaned up. The registry keeps one file.
+function registryLeftovers(repo: string): string[] {
+  const stateDir = join(repo, ".dobby");
+  if (!existsSync(stateDir)) {
+    return [];
+  }
+  return readdirSync(stateDir).filter(
+    (name) => name.startsWith("dev.pid") && name !== "dev.pid"
+  );
 }
 
 // A real `dobby dev` child in `repo`, detached (so `killGroup` can take its
