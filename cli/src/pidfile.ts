@@ -306,14 +306,33 @@ export function liveRegisteredPid(workroot: string): number | null {
 // captured by rename, not only of the registry's canonical path. `pidPath` is
 // also what `ownsDetachedRun` stats for the pidfile's mtime; a POSIX rename
 // preserves a file's mtime, so asking about the renamed copy answers exactly
-// what asking about the original would have. Only a positive "owned" verdict
-// counts here — both "not-owned" and the inconclusive "unknown" fall through
-// to null, exactly as an outright false always has for every caller of this
-// function (the tri-state distinction only matters to `clearOwnPidfile`'s own
-// sidecar sweep, which asks `ownershipVerdict` directly).
+// what asking about the original would have.
+//
+// REVIEW ROUND 5, greptile P1: a positive "owned" verdict counts, exactly as
+// before — but so does a LIVE pid whose verdict is merely "unknown" (`ps`
+// exited nonzero, or its `etime` would not parse). Both readers of this
+// function — the fast-path check `liveRegisteredPid` makes before `dev` even
+// tries to register, and `classifyCapture`'s re-classification of whatever a
+// reclaim physically captured on `EEXIST` — must agree that "I could not ask
+// `ps`" is never license to treat a live process as absent. This is a
+// REGISTRY: the cost of a false "still running" is a `dev` that refuses and
+// tells the operator to run `dobby down` (the documented escape hatch, which
+// removes the file unconditionally); the cost of a false "not registered"
+// is a second server coming up while the first keeps running with nothing on
+// disk naming it — silently losing the very thing this file exists to
+// prevent. Only a pid that is DEAD, or one `ps` POSITIVELY reports as not a
+// dobby run, may be reclaimed — null only for those two cases (or no pid to
+// read at all).
 function livePidAt(pidPath: string, workroot: string): number | null {
   const pid = readPidAt(pidPath);
-  if (pid === null || ownershipVerdict(pid, workroot, pidPath) !== "owned") {
+  if (pid === null) {
+    return null;
+  }
+  const verdict = ownershipVerdict(pid, workroot, pidPath);
+  if (verdict === "not-owned") {
+    return null;
+  }
+  if (verdict === "unknown" && !isAlive(pid)) {
     return null;
   }
   return pid;

@@ -2000,3 +2000,229 @@ exit 1
   );
   return binDir;
 }
+
+// ===========================================================================
+// REVIEW ROUND 5 — a LIVE pid whose ownership cannot be decided is never
+// reclaimed.
+//
+// Round 4 gave the ownership probe three outcomes — owned, not-owned, and
+// UNKNOWN (a `ps` that exits nonzero, or an `etime` that is not an elapsed
+// time) — and taught a run's OWN teardown to KEEP a sidecar it cannot classify.
+// The REGISTRATION side still collapses unknown into "nothing is registered",
+// and both of its readers act on that: the check `dev` makes before it starts
+// lets the run through, and the reclaim that CAPTURES the registration on a
+// collision treats the captured live pid as dead-or-foreign and takes it over.
+// Either way a SECOND dev server comes up in the worktree while the first keeps
+// running with nothing on disk naming it — the exact state round 3 exists to
+// prevent, reached from the other side.
+//
+// The contract: a pid that is ALIVE and whose ownership is UNKNOWN counts as a
+// LIVE REGISTRATION. `dev` is REFUSED — exit 1, naming the pid and `dobby
+// down`, with nothing spawned — and the registry is left EXACTLY as it was: the
+// same bytes in `dev.pid`, and no sidecar beside it. Only a pid that is DEAD,
+// or POSITIVELY not a dobby run, may be reclaimed. (`down` is untouched by this
+// round: it never signals an unknown pid but still removes the files, which is
+// the documented way out of a wedged registry.)
+//
+// SEAM: `run(argv, cwd)` as everywhere in this file — the refusal is decided
+// before anything is spawned — plus ONE real `dev` child for the collision
+// path, which an in-process fast path can short-circuit before it is reached.
+//
+// INDEPENDENT SOURCES for every expected value below:
+//   - Exit code 1, `already running`, the pid and `dobby down` are the finding's
+//     own words for the refusal; exit 0 plus the plan marker are its words for
+//     the two paths that STAY reclaimable.
+//   - The pid asserted on is the one the OS gave the `sleep 300` this test
+//     spawned, and "the registration is untouched" is the exact BYTES this test
+//     wrote, compared byte for byte afterwards. Nothing recomputes either.
+//   - `2147483647` (2^31-1) is above any live pid on darwin/linux: dead BY
+//     CONSTRUCTION. It is paired with the FAILING `ps` on purpose, so this round
+//     pins "alive AND unknown is refused" and not the far broader — and wrong —
+//     "a failing `ps` refuses everything".
+//   - `sleep 300` on the command probe is the one POSITIVE not-mine verdict, so
+//     the second guard pins that a KNOWN-foreign live pid stays reclaimable.
+//   - "Nothing was spawned" is observed on the consumer `vite` bin, the absolute
+//     path a real dev plan resolves and runs. In-process that is a GUARD only
+//     (the seam renders a plan rather than executing it, so it would hold
+//     whatever the code did); the real-child case is where it carries weight.
+// ===========================================================================
+
+// The observation names the round-5 refusals report, in the order their array
+// carries them — a bare `[0, false, …]` says nothing about which half broke.
+const UNKNOWN_OBSERVATIONS =
+  "observed [code, saysPid, saysRecovery, registrationUntouched, leftovers, viteRan, pidAlive]";
+
+// The same for the real-child case, which also asserts the wording.
+const UNKNOWN_CHILD_OBSERVATIONS =
+  "observed [code, saysAlreadyRunning, saysPid, saysRecovery, registrationUntouched, leftovers, viteRan, pidAlive]";
+
+describe("run() — dev and a registered pid nobody can vouch for", () => {
+  const dirs: string[] = [];
+  let child: ChildProcess | undefined;
+  let devChild: ChildProcess | undefined;
+  let originalCmux: string | undefined;
+  let portless: PortlessRun | undefined;
+
+  beforeEach(async () => {
+    originalCmux = process.env[CMUX];
+    Reflect.deleteProperty(process.env, CMUX);
+    portless = await makePortlessRun(dirs);
+  });
+
+  afterEach(async () => {
+    restoreEnv(CMUX, originalCmux);
+    // Never leak the registered process, a real dev, or a dev's own children.
+    child?.kill("SIGKILL");
+    child = undefined;
+    killGroup(devChild);
+    devChild = undefined;
+    await stopPortless(portless);
+    portless = undefined;
+  });
+
+  afterAll(() => {
+    cleanupDirs(dirs);
+    dirs.length = 0;
+  });
+
+  it("refuses to start while the registered pid is live and ps cannot answer about it at all", async () => {
+    const log = viteLog(dirs);
+    const repo = makeViteRepo(dirs, viteRecorderScript(log));
+    child = startLongLivedProcess();
+    const pid = pidOf(child);
+    const pidfile = registerPid(repo, String(pid));
+    // The bytes THIS test wrote — the reference "untouched" is measured against.
+    const registration = rawBytes(pidfile);
+
+    const result = await withStubPath(makeBlindPsStub(dirs), () =>
+      run(["dev"], repo)
+    );
+
+    const report = [
+      result.exitCode,
+      result.stderr.includes(String(pid)),
+      result.stderr.includes(RECOVERY_HINT),
+      rawBytes(pidfile) === registration,
+      registryLeftovers(repo),
+      existsSync(log),
+      // Refusing is never stopping: `dobby down` is what stops a run.
+      isRunning(pid),
+    ];
+
+    expect(
+      report,
+      `${UNKNOWN_OBSERVATIONS} = ${JSON.stringify(report)}\ndev said:\n${result.stderr}`
+    ).toEqual([1, true, true, true, [], false, true]);
+  });
+
+  it("refuses to start while the registered pid is live and ps reports an elapsed time it cannot read", async () => {
+    const log = viteLog(dirs);
+    const repo = makeViteRepo(dirs, viteRecorderScript(log));
+    child = startLongLivedProcess();
+    const pid = pidOf(child);
+    const pidfile = registerPid(repo, String(pid));
+    const registration = rawBytes(pidfile);
+
+    const result = await withStubPath(makeUntimedPsStub(dirs), () =>
+      run(["dev"], repo)
+    );
+
+    const report = [
+      result.exitCode,
+      result.stderr.includes(String(pid)),
+      result.stderr.includes(RECOVERY_HINT),
+      rawBytes(pidfile) === registration,
+      registryLeftovers(repo),
+      existsSync(log),
+      isRunning(pid),
+    ];
+
+    expect(
+      report,
+      `${UNKNOWN_OBSERVATIONS} = ${JSON.stringify(report)}\ndev said:\n${result.stderr}`
+    ).toEqual([1, true, true, true, [], false, true]);
+  });
+
+  it("starts anyway when the registered pid is gone, even when ps cannot answer", async () => {
+    // The guard that keeps the rule ALIVE-and-unknown rather than the far
+    // broader "a failing `ps` refuses everything": the same blind `ps` over a
+    // pid that is dead by construction must still yield the registration.
+    const repo = makeRepo(dirs);
+    registerPid(repo, UNREACHABLE_PID);
+
+    const result = await withStubPath(makeBlindPsStub(dirs), () =>
+      run(["dev", "--dry-run"], repo)
+    );
+
+    expect([result.exitCode, result.stdout.includes(PLAN_MARKER)]).toEqual([
+      0,
+      true,
+    ]);
+  });
+
+  it("starts anyway when ps positively reports the live registered pid as something other than a dobby run", async () => {
+    // The other guard: a POSITIVE not-mine verdict is not the unknown one, and
+    // a live process carrying it stays reclaimable — and untouched.
+    const repo = makeRepo(dirs);
+    child = startLongLivedProcess();
+    const pid = pidOf(child);
+    registerPid(repo, String(pid));
+    const binDir = makePsStub(dirs, { command: FOREIGN_COMMAND, pid });
+
+    const result = await withStubPath(binDir, () =>
+      run(["dev", "--dry-run"], repo)
+    );
+    await exited(child, SETTLE_MS);
+
+    expect([
+      result.exitCode,
+      result.stdout.includes(PLAN_MARKER),
+      isRunning(pid),
+    ]).toEqual([0, true, true]);
+  });
+
+  it.skipIf(!hasBun())(
+    "refuses a real run while the registered pid is live and ps cannot answer about it at all",
+    async () => {
+      // The same registration through a REAL `dev`, which is the only way to
+      // reach the collision path: an in-process fast path can answer the whole
+      // question before the capture-and-classify step is ever consulted, and
+      // BOTH readers of the registry have to treat live-and-unknown alike.
+      const log = viteLog(dirs);
+      const repo = makeIsolatedViteRepo(dirs, viteRecorderScript(log));
+      child = startLongLivedProcess();
+      const pid = pidOf(child);
+      const pidfile = registerPid(repo, String(pid));
+      const registration = rawBytes(pidfile);
+
+      devChild = spawnDev(repo, portless, makeBlindPsStub(dirs));
+      const outcome = await collect(devChild, REGISTER_WAIT_MS);
+
+      const report = [
+        outcome.code,
+        outcome.stderr.includes(ALREADY_RUNNING),
+        outcome.stderr.includes(String(pid)),
+        outcome.stderr.includes(RECOVERY_HINT),
+        rawBytes(pidfile) === registration,
+        registryLeftovers(repo),
+        // The app's own bin never ran: the refusal happened BEFORE any spawn.
+        existsSync(log),
+        isRunning(pid),
+      ];
+
+      expect(
+        report,
+        `${UNKNOWN_CHILD_OBSERVATIONS} = ${JSON.stringify(report)}\ndev said:\n${outcome.stderr}`
+      ).toEqual([1, true, true, true, true, [], false, true]);
+    }
+  );
+});
+
+// --- review round 5 fixtures ------------------------------------------------
+
+// The file's bytes EXACTLY as they are on disk — untrimmed, and `undefined` when
+// the file is not there, so "the registration is untouched" fails loudly on a
+// run that removed or renamed it, instead of throwing.
+function rawBytes(path: string): string | undefined {
+  return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+}
