@@ -32,7 +32,7 @@ Validate the envelope before handing the prototype to the user:
 ## Step 3: Hand it over — the play session
 
 - **Logic branch** → give the user the one run command.
-- **UI branch** → give the URL on the **already-running dev server** (resolve it the way `/dobby:execute` Step 2 does — `bunx dobby up` ensures the run is up, then read `devUrl` from `bunx dobby env`; never start a second server) + the `?variant=` keys.
+- **UI branch** → give the URL on the **already-running dev server** (bring the run up per `../execute/references/bring-up.md`, then read `devUrl` from `bunx dobby env`; never start a second server) + the `?variant=` keys.
 
 The user drives. The interesting moments are "wait, that shouldn't be possible" and "I want the header from B with the sidebar from C" — those are the answer forming. Iterate through the implementor as the user asks for new actions, adjustments, or another variant. Every iteration uses the SAME result-envelope gate from Step 2: only `completed` may return to the play session; `blocked` or invalid stops `needs-human` after reporting/mechanical inspection, and no iteration work log is persisted to `STATE.md`.
 

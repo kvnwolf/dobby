@@ -172,14 +172,38 @@ export { default } from "@kvnwolf/dobby/drizzle";
 
 ### `dobby env`
 
-Print a snapshot of the working environment — worktree root, branch, cmux workspace, browser verification guide, kit pane refs, detected capabilities, config presence, inferred `db:*` task names (`dbTasks`), and dev URL. Every fact is resolved locally (no network), and `env` always exits 0.
+Print a snapshot of the working environment — worktree root, branch, cmux workspace, kit pane refs, detected capabilities, config presence, inferred `db:*` task names (`dbTasks`), and dev URL. Every fact is resolved locally (no network), and `env` always exits 0.
 
 ```sh
 dobby env             # key: value text
 dobby env --json      # the same facts as one JSON object
 ```
 
-The JSON object carries `branch`, `browserGuide`, `browserPane`, `capabilities`, `cmux`, `config`, `dbTasks`, `devUrl`, `runPane`, and `worktree`. Every field folds to `null` / `false` / `[]` rather than throwing when its underlying tool or context is absent (no vite capability → `devUrl: null`; no cmux workspace → `browserPane`/`runPane`/`cmux: null`), which is why `env` always exits 0. Agent model/effort/reasoning live in each worker agent's own frontmatter (`plugin/agents/*.md`), not in this payload — there is no fixed recipe object to resolve here.
+The JSON object carries `branch`, `browserPane`, `capabilities`, `cmux`, `config`, `dbTasks`, `devUrl`, `runPane`, and `worktree` — nine keys. Every field folds to `null` / `false` / `[]` rather than throwing when its underlying tool or context is absent (no vite capability → `devUrl: null`; no cmux workspace → `browserPane`/`runPane`/`cmux: null`), which is why `env` always exits 0. Agent model/effort/reasoning live in each worker agent's own frontmatter (`plugin/agents/*.md`), not in this payload — there is no fixed recipe object to resolve here. `env` no longer carries a UI-verification field — see `dobby instructions browser` below.
+
+### `dobby instructions <topic>`
+
+The **instruction catalogue** half of the environment seam: for the detected environment (cmux, terminal, Claude Desktop, or t3 code), print what the *model* must do for one topic, because dobby cannot act there on its own behalf. dobby only ever prints the instruction — it never carries it out. `--help` advertises it as a universal command, never capability-filtered.
+
+```sh
+dobby instructions start --json     # how to start the dev server here
+dobby instructions stop             # how to stop it (text form)
+dobby instructions browser --json   # how to drive the UI here
+dobby instructions rename           # how to rename the workspace (cmux only)
+```
+
+Four topics: `start`, `stop`, `browser`, `rename`. `start`/`stop`/`rename` fail hard outside a git repo (same as every action command); `browser` does not — it degrades to an empty workroot/slug/devUrl and still answers, since QA and a manual-setup gate may need it from outside a resolved worktree. An unknown or missing topic exits 1.
+
+```json
+{
+  "applies": true,
+  "environment": "terminal",
+  "text": "Run `bunx dobby dev` from /path/to/worktree as a background task of the host: use Claude Code's Bash tool with the `run_in_background` option set to true. Read the command's early output to confirm the server is booting — a failed command shows its error right there — before re-invoking `bunx dobby up --json` to confirm the app is live. Once confirmed live, the app is reachable at the devUrl `dobby env` reports.",
+  "topic": "start"
+}
+```
+
+`applies: false` means the topic is a valid answer, not an error — nothing here for the model to do (a plain terminal has no workspace to `rename`, and `dobby down` kills the registered process itself, so `stop` never applies there). The text form prints the instruction text and a trailing newline when `applies` is true, and `not applicable in <environment>: <topic> has nothing for the model to do here` at exit 0 otherwise. See [`bring-up.md`](../plugin/skills/execute/references/bring-up.md) for the two-step protocol that consumes `start`/`rename`, and the same file's teardown section for `stop`.
 
 ### `dobby check [file...]`
 
@@ -230,7 +254,7 @@ dobby dev
 dobby dev --dry-run       # print the resolved plan without spawning
 ```
 
-The app runs **local-only**, on the stable portless URL (`dobby env` reports it as `devUrl`).
+The app runs **local-only**, on the stable portless URL (`dobby env` reports it as `devUrl`). On startup a live `dobby dev` registers itself at `<workroot>/.dobby/dev.pid`, which is what lets `up` find an in-flight start and wait it out instead of handing back another `start` instruction, and what `down` signals to tear the run down; a `dev` that finds a live twin already registered there refuses instead of starting a second server — `already running (pid N) — \`dobby down\` stops it`, exit 1.
 
 ### `dobby build`
 
@@ -251,15 +275,16 @@ Building through dobby (rather than a raw framework CLI) means the config-less d
 
 ### `dobby up` / `dobby down`
 
-**`dobby up` is the single lifecycle entry point — it prepares and runs the workspace, idempotently.** It runs a **setup phase** first — `bun install`, then installing the [pre-push backstop](#dobby-check-file) hook (idempotently, into the repository's shared hooks directory, so one install covers every worktree; a `pre-push` hook dobby did not write is reported and left alone), then (in a linked git worktree) re-materializing files listed in `.worktreeinclude` from the main checkout, then any `setup[]` extras (fail-fast) — and only once that succeeds does it **run** the app: provisioning an isolated Neon branch when the repo has the neon capability, starting the run (cmux panes or a detached background run), and waiting for liveness. Under cmux the run pane opens immediately (so you watch the server boot) while the browser pane opens only once liveness confirms the dev URL answers — never on a booting server's 404 — and not at all when the app never becomes reachable. Under cmux, `up` also renames the **cmux workspace** to the goal slug (the workspace title becomes the goal identity, distinct from the `dobby-`prefixed pane names) so you can tell at a glance which workspace belongs to which goal — this happens whenever cmux is present, even for a repo with no app to run. Because the run is liveness-first, re-running `up` on an already-live workspace starts nothing — it only opens the browser pane if it is missing, and never re-sends the dev command (so it can't double-start the server). A repo with no app to run (no vite capability) still runs the full setup phase, then reports `no app to run` and exits 0.
+**`dobby up` prepares the workspace and probes it — it no longer starts anything itself.** It runs a **setup phase** first — `bun install`, then installing the [pre-push backstop](#dobby-check-file) hook (idempotently, into the repository's shared hooks directory, so one install covers every worktree; a `pre-push` hook dobby did not write is reported and left alone), then (in a linked git worktree) re-materializing files listed in `.worktreeinclude` from the main checkout, then any `setup[]` extras (fail-fast) — and only once that succeeds does it **run** the check, in this order: a single liveness probe against the dev URL FIRST — already live → `live: true`, nothing more to do; not live → it provisions an isolated Neon branch when the repo has the neon capability, THEN checks for a start already in flight (a registered `.dobby/dev.pid`) — found → waits it out in the liveness loop; none found → hands back `instructions[]` — the applicable subset of `rename` (cmux only) and `start` — for the **model** to carry out itself and re-invoke `up` with. This two-step protocol is documented in full at [`bring-up.md`](../plugin/skills/execute/references/bring-up.md); every skill and agent that brings a worktree up follows it. A repo with no app to run (no vite capability) still runs the full setup phase, then reports `no app to run` and exits 0 — `phase: "noop"` still carries a `rename` instruction under cmux, since the workspace identity is independent of whether there's an app.
 
-`dobby down` is the counterpart teardown: it closes the panes, kills the run, deletes the Neon branch, and runs `teardown[]` extras. Both are listed only for a repo with the vite capability.
+`dobby down` is the counterpart teardown: its own mechanics (killing the registered pidfile process, deleting the Neon branch, running `teardown[]` extras) already ran by the time it returns — the only thing left for the model is `instructions[]`, the `stop` topic, present only when a kit pane was discovered under cmux. Both are listed only for a repo with the vite capability.
 
 ```sh
-dobby up                  # prepare (setup phase) + run the workspace
+dobby up                  # prepare (setup phase) + probe the workspace
 dobby up --dry-run        # print the FULL ordered plan (setup phase + run phase)
 dobby up --json           # one JSON object as the only stdout (for scripts/agents)
 dobby down
+dobby down --json
 dobby down --dry-run
 ```
 
@@ -269,18 +294,28 @@ dobby down --dry-run
 {
   "browserPane": null,
   "cmux": null,
-  "degradedCommand": "DOBBY_SKIP_INSTALL=1 bunx dobby up",
-  "devUrl": null,
-  "ok": false,
-  "phase": "setup",
-  "reason": "install-failed",
+  "degradedCommand": null,
+  "devUrl": "https://my-goal.local.dev",
+  "instructions": [
+    {
+      "applies": true,
+      "text": "Run `bunx dobby dev` from /path/to/worktree as a background task of the host: use Claude Code's Bash tool with the `run_in_background` option set to true. Read the command's early output to confirm the server is booting — a failed command shows its error right there — before re-invoking `bunx dobby up --json` to confirm the app is live. Once confirmed live, the app is reachable at https://my-goal.local.dev.",
+      "topic": "start"
+    }
+  ],
+  "live": false,
+  "ok": true,
+  "phase": "run",
+  "reason": null,
   "slug": "my-goal",
-  "verifyMode": "programmatic",
+  "verifyMode": "url",
   "workroot": "/path/to/worktree"
 }
 ```
 
-`reason` is a fixed set — `not-a-git-repo`, `config-unreadable`, `install-failed`, `worktree-copy-failed`, `setup-extra-failed`, `neon-creds-missing`, `dev-start-failed`, `liveness-timeout` — and is `null` on success. `phase` is where it stopped (`setup`, `run`, or `noop` = nothing to run); `verifyMode` is `url` when there is a `devUrl` to hit and `programmatic` otherwise; `degradedCommand` is offered only for an install-phase failure. The exit code always agrees with the payload: 0 when `ok` is true, nonzero when it is false.
+`reason` is a fixed set — `not-a-git-repo`, `config-unreadable`, `install-failed`, `worktree-copy-failed`, `setup-extra-failed`, `neon-creds-missing`, `neon-branch-failed`, `liveness-timeout` — and is `null` on success; there is no member for a failed start, since `up` starts nothing itself anymore — a failed start is something the model that ran the `start` instruction sees in its own stderr. `phase` is where it stopped (`setup`, `run`, or `noop` = nothing to run); `live` is whether the devUrl answered this probe (it pairs with an `ok: true` "please start it" report just as often as with a timeout — it says nothing about success alone); `instructions` is always present, possibly empty, ordered `rename` then `start`; `verifyMode` is `url` when there is a `devUrl` to hit and `programmatic` otherwise; `degradedCommand` is offered only for an install-phase failure. The exit code always agrees with the payload: 0 when `ok` is true, nonzero when it is false.
+
+**`dobby down --json`** answers a smaller, flat object — `{cmux, instructions, ok, reason, slug, workroot}` — `reason` a fixed set (`not-a-git-repo`, `neon-delete-failed`, `teardown-extra-failed`, or `null` on success; the Neon delete stays best-effort, so `neon-delete-failed` is reserved for a future path rather than produced today), and `instructions` carrying the `stop` topic only when a kit pane was discovered.
 
 ### `dobby db:*`
 

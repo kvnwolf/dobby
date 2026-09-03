@@ -26,10 +26,6 @@ const SCOPED_NAME_RE = /^@[^/]+\/(.+)$/;
 export interface EnvSnapshot {
   // The current git branch, or null outside a repo / on a detached HEAD.
   branch: string | null;
-  // The verification guide for the detected environment: the vendored cmux-browser
-  // protocol when a cmux workspace is present, else the non-cmux (claude-in-chrome
-  // falling back to curl-only) instructions — never empty. See browser-guide.ts.
-  browserGuide: string;
   // The kit browser-pane surface ref (surface titled dobby-browser-<slug>), or null.
   browserPane: string | null;
   // Detected project capabilities (may be empty).
@@ -54,8 +50,8 @@ export interface EnvSnapshot {
 // Assemble the environment snapshot for the project at `root` (the caller's cwd).
 export function collectEnv(root: string): EnvSnapshot {
   // Resolved ONCE — the single CMUX_WORKSPACE_ID read this command makes (see
-  // environment.ts); everything environment-specific below (the browser guide, the
-  // pane refs) reads through it.
+  // environment.ts); everything environment-specific below (the pane refs)
+  // reads through it.
   const environment = detectEnvironment();
   // Resolve the workroot ONCE; every git/portless/cmux spawn below pins to it.
   const workroot = resolveWorkroot(root);
@@ -66,7 +62,6 @@ export function collectEnv(root: string): EnvSnapshot {
   const devUrl = resolveDevUrl(root, workroot, capabilities);
   return {
     branch: workroot === null ? null : gitBranch(workroot),
-    browserGuide: environment.browserGuide(),
     browserPane: panes.browserPane,
     capabilities,
     cmux: environment.cmux,
