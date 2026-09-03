@@ -554,18 +554,23 @@ describe("run() — dev command (the run process registers itself)", () => {
       survivor.kill("SIGTERM");
       const cleared = await until(() => !existsSync(pidfile), EXIT_WAIT_MS);
 
+      // Named in the message as well as asserted: this case failed on CI with
+      // an EMPTY stderr, and stderr was all the message carried — so the report
+      // named none of the eight observations that produced the failure.
+      const observed = [
+        settled,
+        refused.code,
+        refused.stderr.includes(ALREADY_RUNNING),
+        refused.stderr.includes(RECOVERY_HINT),
+        registered,
+        alive,
+        starts,
+        cleared,
+      ];
+
       expect(
-        [
-          settled,
-          refused.code,
-          refused.stderr.includes(ALREADY_RUNNING),
-          refused.stderr.includes(RECOVERY_HINT),
-          registered,
-          alive,
-          starts,
-          cleared,
-        ],
-        `refused run said:\n${refused.stderr}`
+        observed,
+        `observed [settled, code, saysAlreadyRunning, saysRecovery, registered, alive, starts, cleared] = ${JSON.stringify(observed)}\nrefused run said:\n${refused.stderr}`
       ).toEqual([true, 1, true, true, true, true, 1, true]);
     }
   );
@@ -859,3 +864,110 @@ function killGroup(proc: ChildProcess | undefined): void {
     proc?.kill("SIGKILL");
   }
 }
+
+// ===========================================================================
+// CI ROUND 1 — ownership is decided by the command line `ps` actually reports.
+//
+// The registry's ownership check has to recognise a `dobby dev` run in EVERY
+// legitimate launch shape, not only the one a published install happens to
+// render. On GitHub's Linux runner a run started from source appears as
+// `bun …/cli/src/index.ts dev`; a check that recognises only the literal
+// `dobby dev` calls that a foreign process, so a second run reclaims a LIVE
+// registration instead of being refused. Whatever makes macOS report it
+// differently is not something the check may rest on.
+//
+// SEAM: `down` through `run(argv, cwd)`, with the `ps` stub reporting the
+// COMMAND LINE under test for a live, non-detached `sleep 300` — so no real
+// `dev` is needed and the outcome is unambiguous: ownership recognised ⇔ the
+// registered process is DEAD afterwards; not recognised ⇔ it survives and the
+// registry file is merely removed.
+//
+// INDEPENDENT SOURCES: every command line below is a literal spelled out here,
+// four launch shapes the spec calls legitimate (bunx, this repo's own source
+// entry, a consumer `.bin` shim, a consumer package entry) and four that are
+// not a dobby dev run at all. Each negative pins a DIFFERENT way an over-broad
+// recognition could go wrong, which is why they matter even while they pass:
+// `sleep 300` is nothing like a run, `… index.ts check` is another subcommand
+// under a dobby path, `/tmp/devtools/index.ts dev` ends in `dev` with no dobby
+// anywhere, and `… index.ts dev --dry-run` is a dobby path plus `dev` whose
+// LAST word is not `dev`. The start-time half of the check is untouched and
+// stays satisfied throughout: `registerPid` stamps the file NOW and the stub
+// reports `00:03`, three seconds by the POSIX `mm:ss` format.
+// ===========================================================================
+
+// Command lines a legitimate `dobby dev` run appears under: ownership is
+// recognised, so `down` stops the process it found.
+const DOBBY_DEV_COMMANDS = [
+  "bunx dobby dev",
+  "bun /home/runner/work/dobby/dobby/cli/src/index.ts dev",
+  "bun /Users/x/app/node_modules/.bin/dobby dev",
+  "bun /Users/x/app/node_modules/@kvnwolf/dobby/src/index.ts dev",
+];
+
+// Command lines that are NOT a dobby dev run: whatever the registry named is
+// left strictly alone, and only the stale file goes.
+const NON_DOBBY_DEV_COMMANDS = [
+  "sleep 300",
+  "bun /home/runner/work/dobby/dobby/cli/src/index.ts check",
+  "bun /tmp/devtools/index.ts dev",
+  "bun /x/dobby/cli/src/index.ts dev --dry-run",
+];
+
+describe("run() — down command (which command lines count as a dobby dev run)", () => {
+  const dirs: string[] = [];
+  const children: ChildProcess[] = [];
+  let originalCmux: string | undefined;
+
+  beforeEach(() => {
+    originalCmux = process.env[CMUX];
+    Reflect.deleteProperty(process.env, CMUX);
+  });
+
+  afterEach(() => {
+    restoreEnv(CMUX, originalCmux);
+    // Never leak a `sleep` out of the suite, whatever the assertions did.
+    for (const proc of children) {
+      proc.kill("SIGKILL");
+    }
+    children.length = 0;
+  });
+
+  afterAll(() => {
+    cleanupDirs(dirs);
+    dirs.length = 0;
+  });
+
+  it.each(DOBBY_DEV_COMMANDS)(
+    "stops the registered run when ps reports it as `%s`",
+    async (command) => {
+      const repo = makeRepo(dirs);
+      const child = startLongLivedProcess();
+      children.push(child);
+      const pid = pidOf(child);
+      const pidfile = registerPid(repo, String(pid));
+      const binDir = makePsStub(dirs, { command, pid });
+
+      await withStubPath(binDir, () => run(["down"], repo));
+      await exited(child, EXIT_WAIT_MS);
+
+      expect([isRunning(pid), existsSync(pidfile)]).toEqual([false, false]);
+    }
+  );
+
+  it.each(NON_DOBBY_DEV_COMMANDS)(
+    "leaves the registered process alone when ps reports it as `%s`",
+    async (command) => {
+      const repo = makeRepo(dirs);
+      const child = startLongLivedProcess();
+      children.push(child);
+      const pid = pidOf(child);
+      const pidfile = registerPid(repo, String(pid));
+      const binDir = makePsStub(dirs, { command, pid });
+
+      await withStubPath(binDir, () => run(["down"], repo));
+      await exited(child, SETTLE_MS);
+
+      expect([isRunning(pid), existsSync(pidfile)]).toEqual([true, false]);
+    }
+  );
+});

@@ -22,6 +22,13 @@ import { runCapture } from "./runner.ts";
 // Top-level regexes (biome useTopLevelRegex).
 const PS_ETIME_RE = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/;
 const TRAILING_SLASH_RE = /\/$/;
+// Matches a `dobby dev` command line in any legitimate launch shape: `bunx dobby dev`;
+// `bun <…>/node_modules/.bin/dobby dev`; `bun <…>/@kvnwolf/dobby/src/index.ts dev`; and
+// `bun <…>/dobby/cli/src/index.ts dev` (this repo's own dogfooded run). Requires a
+// `dobby` path segment (preceded by start-of-string or whitespace/`/`) followed by zero
+// or more further path segments and then `dev` as the LAST word — so `… dev --dry-run`
+// (dev not last) and a path with no `dobby` segment at all both correctly fail to match.
+const DOBBY_DEV_COMMAND_RE = /(^|[\s/])dobby([\s/][^\s]*)*\s+dev\s*$/;
 
 // The registry path, relative to a workroot.
 const PIDFILE_REL = ".dobby/dev.pid";
@@ -241,8 +248,9 @@ function isAlive(pid: number): boolean {
 }
 
 // Whether `pid` is OUR detached run — requires BOTH (a) the command-line signature
-// (`dobby dev`, since it was spawned as `bunx dobby dev`) AND (b) a start-time match:
-// the process must have started no later than the pidfile was written (+ tolerance).
+// (a `dobby dev` run, in any legitimate launch shape — see `DOBBY_DEV_COMMAND_RE`) AND
+// (b) a start-time match: the process must have started no later than the pidfile was
+// written (+ tolerance).
 // (a) alone is insufficient — the signature matches ANY dobby dev, including another
 // worktree's (parallel goals are the kit's normal mode), so a recycled pid now running
 // an UNRELATED workspace's dev group would still match. The start-time guard closes
@@ -261,7 +269,7 @@ function ownsDetachedRun(
   if (
     command.error ||
     command.status !== 0 ||
-    !command.stdout.includes("dobby dev")
+    !DOBBY_DEV_COMMAND_RE.test(command.stdout)
   ) {
     return false;
   }
