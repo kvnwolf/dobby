@@ -521,8 +521,8 @@ describe("run() — `env` (inferred db:* task names)", () => {
 //     `liveness-timeout` reason and the exit codes are LITERALS the task spec
 //     states outright;
 //   - every asserted PHRASE (`run_in_background`, `bunx dobby dev`, `cmux send`,
-//     `new-pane`, `rename-workspace --workspace w1`) is a literal the spec names
-//     for that topic's text;
+//     `new-pane`, `rename-workspace --workspace 'w1' '<slug>'`) is a literal the
+//     spec names for that topic's text;
 //   - `w1` is the workspace id WE inject; `surface:4` is invented by the cmux
 //     STUB THIS file writes, so an instruction carrying it proves real discovery;
 //   - the slug is `basename()` of the temp dir WE created (node:path — a
@@ -838,7 +838,7 @@ describe("run() — `up --json` (cmux enrichment: rename then start, both handed
   it("names the workspace rename against the injected workspace id and the goal slug", async () => {
     const result = await run(["up", "--json"], repo);
     const rename = instructionFor(factsOf(result.stdout), "rename");
-    expect(rename.text).toContain(`rename-workspace --workspace ${CMUX_ID}`);
+    expect(rename.text).toContain(`rename-workspace --workspace '${CMUX_ID}'`);
     expect(rename.text).toContain(basename(repo));
   });
 
@@ -1016,7 +1016,7 @@ describe("run() — `up --dry-run` (instructions are quoted, mechanics are gone)
     const agentAt = firstAgentLine(lines);
     expect(agentAt, "expected an `agent:` hand-over line").toBeGreaterThan(-1);
     for (const phrase of [
-      `rename-workspace --workspace ${CMUX_ID}`,
+      `rename-workspace --workspace '${CMUX_ID}'`,
       "bunx dobby dev",
     ]) {
       const at = lines.findIndex((line) => line.includes(phrase));

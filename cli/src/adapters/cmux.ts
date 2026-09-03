@@ -21,6 +21,16 @@ import { runCapture } from "../runner.ts";
 
 // Top-level regexes (biome useTopLevelRegex).
 const WHITESPACE_SPLIT_RE = /\s+/;
+const SINGLE_QUOTE_RE = /'/g;
+
+// Single-quote a dynamic value bound for a shell command line inside an
+// instruction's `text` — every workroot, cmux workspace id, slug, pane title
+// and discovered pane ref lands on a line the model pastes into a shell
+// verbatim, so it must survive spaces and embedded quotes alike (POSIX
+// single-quote escaping: end the quote, emit an escaped quote, reopen it).
+function shellQuote(value: string): string {
+  return `'${value.replace(SINGLE_QUOTE_RE, "'\\''")}'`;
+}
 
 export function cmuxEnvironment(cmux: string): Environment {
   return {
@@ -164,13 +174,13 @@ function cmuxStartInstruction(
   cmux: string
 ): Instruction {
   const panes = discoverPanesFor(discoveryWorkroot(context), cmux);
-  const sendLine = `cd ${context.workroot} && ${DEV_START_COMMAND}`;
+  const sendLine = `cd ${shellQuote(context.workroot)} && ${DEV_START_COMMAND}`;
   if (panes.runPane !== null) {
     return {
       applies: true,
       text: [
         `A run pane is already open: ${panes.runPane}.`,
-        `Run \`cmux send --surface ${panes.runPane} "${sendLine}"\` to start the dev server in it.`,
+        `Run \`cmux send --surface ${shellQuote(panes.runPane)} "${sendLine}"\` to start the dev server in it.`,
         CONFIRM_BOOT_LINE,
       ].join(" "),
       topic: "start",
@@ -181,7 +191,7 @@ function cmuxStartInstruction(
     applies: true,
     text: [
       "No run pane is open.",
-      `Create one with \`cmux new-pane --workspace ${cmux} --direction right\`, rename it with \`cmux rename-tab --surface <ref> ${runTitle}\`, then run \`cmux send --surface <ref> "${sendLine}"\` to start the dev server.`,
+      `Create one with \`cmux new-pane --workspace ${shellQuote(cmux)} --direction right\`, rename it with \`cmux rename-tab --surface <ref> ${shellQuote(runTitle)}\`, then run \`cmux send --surface <ref> "${sendLine}"\` to start the dev server.`,
       CONFIRM_BOOT_LINE,
     ].join(" "),
     topic: "start",
@@ -203,7 +213,7 @@ function cmuxStopInstruction(
     return { applies: false, text: "", topic: "stop" };
   }
   const closeCommands = refs
-    .map((ref) => `cmux close-surface --surface ${ref}`)
+    .map((ref) => `cmux close-surface --surface ${shellQuote(ref)}`)
     .join("; then ");
   return {
     applies: true,
@@ -221,10 +231,12 @@ function cmuxBrowserInstruction(
   cmux: string
 ): Instruction {
   const panes = discoverPanesFor(discoveryWorkroot(context), cmux);
-  const urlFlag = context.devUrl === null ? "" : ` --url ${context.devUrl}`;
+  const urlFlag =
+    context.devUrl === null ? "" : ` --url ${shellQuote(context.devUrl)}`;
+  const browserTitle = `dobby-browser-${context.slug}`;
   const surfaceStep =
     panes.browserPane === null
-      ? `No browser pane is open. Create one with \`cmux new-pane --workspace ${cmux} --type browser${urlFlag} --direction right\`, then rename it with \`cmux rename-tab --surface <ref> dobby-browser-${context.slug}\`.`
+      ? `No browser pane is open. Create one with \`cmux new-pane --workspace ${shellQuote(cmux)} --type browser${urlFlag} --direction right\`, then rename it with \`cmux rename-tab --surface <ref> ${shellQuote(browserTitle)}\`.`
       : `A browser pane is already open: ${panes.browserPane}. Drive it directly.`;
   return {
     applies: true,
@@ -234,14 +246,14 @@ function cmuxBrowserInstruction(
 }
 
 // `rename`: always applies under cmux — names `cmux rename-workspace` with the
-// slug UNQUOTED (the tests pin this exact form).
+// workspace id and slug quoted (the tests pin this exact form).
 function cmuxRenameInstruction(
   context: SurfaceContext,
   cmux: string
 ): Instruction {
   return {
     applies: true,
-    text: `Rename the cmux workspace to the goal slug: \`cmux rename-workspace --workspace ${cmux} ${context.slug}\`.`,
+    text: `Rename the cmux workspace to the goal slug: \`cmux rename-workspace --workspace ${shellQuote(cmux)} ${shellQuote(context.slug)}\`.`,
     topic: "rename",
   };
 }

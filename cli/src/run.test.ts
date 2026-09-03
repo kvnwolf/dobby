@@ -3510,7 +3510,7 @@ describe("run() — a flagged live dev falls through to the strict parse", () =>
 //     `neonctl branches create` / `neonctl branches delete` with `--project-id` and
 //     the branch `dobby/<slug>`; and — since TASK 4 rewrote up's run phase — the
 //     INSTRUCTION phrases `run_in_background` / `bunx dobby dev` / `cmux send` /
-//     `rename-workspace --workspace <id> <slug>` plus the `agent:` hand-over
+//     `rename-workspace --workspace '<id>' '<slug>'` plus the `agent:` hand-over
 //     marker: each is a LITERAL the spec's up/down recipe states outright, never
 //     recomputed by the code under test. (`supabase stop` no longer appears
 //     anywhere; nor do up's own `cmux new-pane` / `cmux send` / `spawn detached`
@@ -3881,7 +3881,7 @@ describe("run() — up command (no app capability: graceful no-op)", () => {
     const lines = result.stdout.split("\n");
     const agentAt = firstAgentLine(lines);
     const renameAt = lines.findIndex((l) =>
-      l.includes("rename-workspace --workspace cmux-ws-noapp")
+      l.includes("rename-workspace --workspace 'cmux-ws-noapp'")
     );
     expect(agentAt, "expected an `agent:` hand-over line").toBeGreaterThan(-1);
     expect(renameAt, "expected the workspace rename").toBeGreaterThan(agentAt);
@@ -3976,7 +3976,7 @@ describe("run() — up command (cmux present: the pane work is handed over, not 
     // Independent: slug = basename of the temp dir WE created; the cmux id is the
     // value beforeEach injected.
     expect(lines[renameAt]).toContain(
-      "rename-workspace --workspace cmux-ws-up"
+      "rename-workspace --workspace 'cmux-ws-up'"
     );
     expect(lines[renameAt]).toContain(slug);
     // The workspace title IS the goal identity: the PLAIN slug, never the

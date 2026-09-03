@@ -491,16 +491,20 @@ function executeDbCommand(
 //     no-app gate): detect capabilities, build the plan, and turn "no app main"
 //     OR "a live twin is already registered" (`pidfile.ts`'s `liveRegisteredPid`)
 //     into a hard error. No spawn, no registration — dry-run and the in-process
-//     `run()` seam must never write the pidfile.
+//     `run()` seam must never write the pidfile. This is a SOFT pre-check only
+//     (read-then-decide) — it narrows the window but cannot close a race
+//     between two `dev`s starting in the same tick.
 //   - `runDev(cwd)` — the STREAMING path (used ONLY by the bin, index.ts): once
-//     `planDev` clears both gates, register THIS process (`writePidfile`) before
-//     touching anything else, clear the `.vite` cache, then spawn the
-//     portless-wrapped main + the concurrent secondaries as ONE managed process
-//     group; on any child exit or a SIGINT/SIGTERM to dobby, clear the
-//     registration (`clearOwnPidfile`, only if it still names US) and tear the
-//     whole group down, exiting with the MAIN's code. Inherited stdio — it
-//     streams and lives until the group exits. NOT CI-tested (spawns real
-//     servers) — covered by the wrap-stage human smoke + the QA's live recipe.
+//     `planDev`'s pre-check clears, register THIS process ATOMICALLY
+//     (`writePidfile`, which is the hard gate — refusing here too when it
+//     loses a race `planDev` missed) before touching anything else, clear the
+//     `.vite` cache, then spawn the portless-wrapped main + the concurrent
+//     secondaries as ONE managed process group; on any child exit or a
+//     SIGINT/SIGTERM to dobby, clear the registration (`clearOwnPidfile`, only
+//     if it still names US) and tear the whole group down, exiting with the
+//     MAIN's code. Inherited stdio — it streams and lives until the group
+//     exits. NOT CI-tested (spawns real servers) — covered by the wrap-stage
+//     human smoke + the QA's live recipe.
 // ---------------------------------------------------------------------------
 
 // A dev command whose bin is RESOLVED to a spawnable path: a consumer-local
@@ -531,8 +535,10 @@ export interface ResolvedDevPlan {
 //     (`liveRegisteredPid`) → the "already running" gate (names the pid and
 //     `dobby down`). Checked here — not in `runDev` — because this is the ONE
 //     function both the in-process `run()` seam (which never reaches `runDev`;
-//     see `runDev`'s header) and the streaming path share, so it is the only
-//     place a refusal is visible to both.
+//     see `runDev`'s header) and the streaming path share, so it is the
+//     cheapest place a refusal is visible to both; it is a SOFT pre-check,
+//     though — `runDev`'s own `writePidfile` call is the hard, race-proof gate
+//     that can still refuse after this one passes.
 //   - `{ ok: true, plan }`   — an app exists and no live twin blocks it; the
 //     RESOLVED ordered plan (main, secondaries) is ready to render (dry-run) or
 //     execute (streaming).
@@ -660,12 +666,21 @@ export async function runDev(cwd: string): Promise<number> {
     return 1;
   }
 
-  // Register THIS process — `planDev` (above) has already confirmed no live,
-  // owned twin is registered, so this is unconditional (no environment check):
-  // creates `.dobby/`, gitignores it, and writes `process.pid`. Before any cache
-  // clear or spawn, so a crash between here and the managed group still leaves an
-  // accurate registration for the next `dev` or a `down` to find.
-  writePidfile(root);
+  // Register THIS process — `planDev` (above) is only a SOFT pre-check (it can
+  // race another `dev` started in the same tick); `writePidfile` is the hard,
+  // atomic gate that actually decides the winner. Before any cache clear or
+  // spawn, so a refused run starts nothing and a crash between here and the
+  // managed group still leaves an accurate registration for the next `dev` or a
+  // `down` to find.
+  const registration = writePidfile(root);
+  if (!registration.registered) {
+    const pidNote =
+      registration.pid === null ? "" : ` (pid ${registration.pid})`;
+    process.stderr.write(
+      `already running${pidNote} — \`dobby down\` stops it\n`
+    );
+    return 1;
+  }
 
   // (1) Cache-clear (`rm -rf node_modules/.vite`) — done natively, before spawning.
   for (const clear of cacheClears) {

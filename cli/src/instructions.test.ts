@@ -1,10 +1,12 @@
-import { mkdtempSync, realpathSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { run } from "./run.ts";
 import {
   cleanupDirs,
+  gitIn,
   makeScratchRepo,
   mkStubBins,
   readStubLog,
@@ -35,9 +37,10 @@ import {
 //    codes, and the "a non-applicable topic is not an error" rule are the task
 //    spec stated outright;
 //  - every asserted PHRASE (`run_in_background`, `bunx dobby dev`, `cmux send`,
-//    `new-pane --workspace w1`, `close-surface`,
-//    `rename-workspace --workspace w1 <slug>`, `claude-in-chrome`, `curl`) is a
-//    literal the spec names for that topic's text;
+//    `new-pane --workspace 'w1'`, `close-surface --surface '<ref>'`,
+//    `rename-workspace --workspace 'w1' '<slug>'`, `claude-in-chrome`, `curl`)
+//    is a literal the spec names for that topic's text — quoted where the value
+//    lands on a shell command line (see Slice 6, which owns that rule);
 //  - `snapshot --interactive` is a stable distinctive line of the VENDORED
 //    cmux-browser protocol (`src/vendor/cmux-browser/SKILL.md`, third-party
 //    text, not dobby code), hardcoded here on purpose: if the vendored bytes
@@ -80,6 +83,18 @@ const plainDir = realpathSync(
 );
 scratchDirs.push(plainDir);
 
+// Two more workroots whose PATHS carry the shell metacharacters an unquoted
+// interpolation breaks on. The repo sits one level down (`…/repo`), so the space
+// (and the quote) live in a PARENT component while the goal slug stays a plain
+// word — workroot quoting and slug quoting are then independently observable.
+const SPACED_SLUG = "repo";
+const SPACED_KIT_PANES = `surface:4 dobby-run-${SPACED_SLUG}\nsurface:5 dobby-browser-${SPACED_SLUG}\n`;
+const spacedRepo = nestedRepo("dobby r1 space-");
+// A single quote is legal in a POSIX path but not on every filesystem; where the
+// fixture cannot be created the case SKIPS rather than reporting the filesystem
+// as a product failure.
+const quotedRepo = tryNestedRepo("dobby r1 it's-");
+
 // The two cmux discovery states, in the listing shape cmux itself prints
 // (`pane:N` from `list-panes`, `surface:N <title>` from `list-pane-surfaces`):
 // both kit panes open, versus a workspace holding only a non-kit pane.
@@ -114,6 +129,37 @@ function cmuxStub(surfaces: string): string {
     },
     scratchDirs
   );
+}
+
+// A throwaway git repo NESTED one level inside a temp dir named with `prefix`,
+// so the workroot's path carries whatever `prefix` carries while its basename —
+// the goal slug — stays the plain word `repo`. `makeScratchRepo` always inits at
+// the temp dir itself, which would put the metacharacter in the slug too.
+function nestedRepo(prefix: string): string {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  scratchDirs.push(parent);
+  const dir = join(parent, SPACED_SLUG);
+  mkdirSync(dir, { recursive: true });
+  gitIn(dir, ["init", "-q"]);
+  gitIn(dir, ["checkout", "-q", "-b", "main"]);
+  writeFileSync(join(dir, "README"), "scratch\n");
+  gitIn(dir, ["add", "-A"]);
+  gitIn(dir, ["commit", "-q", "-m", "scratch"]);
+  return dir;
+}
+
+// The same fixture where the filesystem may refuse the name outright.
+function tryNestedRepo(prefix: string): string | undefined {
+  const made: string[] = [];
+  try {
+    made.push(nestedRepo(prefix));
+  } catch (error) {
+    made.length = 0;
+    process.stderr.write(
+      `skipping the quoted-path fixture: ${String(error)}\n`
+    );
+  }
+  return made[0];
 }
 
 function payloadOf(stdout: string): InstructionPayload {
@@ -255,7 +301,7 @@ describe("dobby instructions — the cmux catalogue", () => {
     expect(payload.applies).toBe(true);
     expect(payload.text).toContain("cmux send");
     expect(payload.text).toContain(RUN_PANE_REF);
-    expect(payload.text).toContain(`cd ${project} && bunx dobby dev`);
+    expect(payload.text).toContain(`cd '${project}' && bunx dobby dev`);
     expect(payload.text).not.toContain("new-pane");
   });
 
@@ -285,8 +331,8 @@ describe("dobby instructions — the cmux catalogue", () => {
     expect(result.exitCode, combined(result)).toBe(0);
     const payload = payloadOf(result.stdout);
     expect(payload.applies).toBe(true);
-    expect(payload.text).toContain(`new-pane --workspace ${CMUX_ID}`);
-    expect(payload.text).toContain(`dobby-run-${slug}`);
+    expect(payload.text).toContain(`new-pane --workspace '${CMUX_ID}'`);
+    expect(payload.text).toContain(`'dobby-run-${slug}'`);
   });
 
   it("instructs closing every discovered kit pane on stop", async () => {
@@ -297,9 +343,10 @@ describe("dobby instructions — the cmux catalogue", () => {
     expect(result.exitCode, combined(result)).toBe(0);
     const payload = payloadOf(result.stdout);
     expect(payload.applies).toBe(true);
-    expect(payload.text).toContain("close-surface");
-    expect(payload.text).toContain(RUN_PANE_REF);
-    expect(payload.text).toContain(BROWSER_PANE_REF);
+    expect(payload.text).toContain(`close-surface --surface '${RUN_PANE_REF}'`);
+    expect(payload.text).toContain(
+      `close-surface --surface '${BROWSER_PANE_REF}'`
+    );
     expect(
       readStubLog(stubDir, "cmux").some((argv) =>
         argv.includes("close-surface")
@@ -338,7 +385,7 @@ describe("dobby instructions — the cmux catalogue", () => {
     const payload = payloadOf(result.stdout);
     expect(payload.applies).toBe(true);
     expect(payload.text).toContain(
-      `rename-workspace --workspace ${CMUX_ID} ${slug}`
+      `rename-workspace --workspace '${CMUX_ID}' '${slug}'`
     );
     expect(
       readStubLog(stubDir, "cmux").some((argv) =>
@@ -762,3 +809,144 @@ describe("dobby instructions — the Claude Desktop catalogue", () => {
     expect(payload.applies).toBe(true);
   });
 });
+
+// --- Slice 6: shell quoting in the cmux command lines -----------------------
+// Every dynamic value dobby interpolates into a shell command line inside an
+// instruction's text — the workroot, the workspace id, the goal slug, a kit pane
+// title, a discovered pane ref — is an ARGUMENT the model will type or `cmux
+// send` verbatim. Unquoted, `cd /tmp/dobby r1 space-X/repo` is TWO arguments and
+// the run starts in the wrong directory (or not at all), which is why the
+// contract here is not "a quote character is present" but "a shell running the
+// command lands where dobby meant": the workroot cases EXECUTE the extracted
+// `cd` through /bin/sh and compare the directory it reaches.
+//
+// Where every expected value comes from (all independent of any implementation):
+//  - the quoted forms `cd '<workroot>' && bunx dobby dev`,
+//    `new-pane --workspace 'w1'`, `rename-workspace --workspace 'w1' '<slug>'`
+//    and `--surface '<ref>'` are the review finding's own words;
+//  - the directory a correct `cd` must reach is the path node:fs created and
+//    this file owns — never a path any dobby code resolved;
+//  - `'\''` is POSIX single-quote escaping (the SHELL's rule, not dobby's) and
+//    is never spelled out in an assertion: the quote-bearing fixture is proven
+//    by RUNNING the command, so any correct escaping passes and any broken one
+//    fails.
+describe("dobby instructions — cmux instructions quote shell arguments", () => {
+  beforeEach(() => {
+    process.env[CMUX] = CMUX_ID;
+  });
+
+  it("quotes a workroot whose path holds a space in the dev command line", async () => {
+    const stubDir = cmuxStub(SPACED_KIT_PANES);
+    const result = await withStubPath(stubDir, () =>
+      run(["instructions", "start", "--json"], spacedRepo)
+    );
+    expect(result.exitCode, combined(result)).toBe(0);
+    expect(payloadOf(result.stdout).text).toContain(
+      `cd '${spacedRepo}' && bunx dobby dev`
+    );
+  });
+
+  it("hands over a dev command line a shell parses and enters, for a path holding a space", async () => {
+    const stubDir = cmuxStub(SPACED_KIT_PANES);
+    const result = await withStubPath(stubDir, () =>
+      run(["instructions", "start", "--json"], spacedRepo)
+    );
+    const enterWorkroot = devCdCommand(payloadOf(result.stdout).text);
+
+    expect([shParses(enterWorkroot), shLandsIn(enterWorkroot)]).toEqual([
+      0,
+      spacedRepo,
+    ]);
+  });
+
+  it.skipIf(quotedRepo === undefined)(
+    "hands over a dev command line a shell parses and enters, for a path holding a single quote",
+    async () => {
+      const workroot = quotedRepo ?? "";
+      const stubDir = cmuxStub(SPACED_KIT_PANES);
+      const result = await withStubPath(stubDir, () =>
+        run(["instructions", "start", "--json"], workroot)
+      );
+      const enterWorkroot = devCdCommand(payloadOf(result.stdout).text);
+
+      expect([shParses(enterWorkroot), shLandsIn(enterWorkroot)]).toEqual([
+        0,
+        workroot,
+      ]);
+    }
+  );
+
+  it("quotes the discovered run pane ref it sends the dev line to", async () => {
+    const stubDir = cmuxStub(SPACED_KIT_PANES);
+    const result = await withStubPath(stubDir, () =>
+      run(["instructions", "start", "--json"], spacedRepo)
+    );
+    expect(payloadOf(result.stdout).text).toContain(
+      `--surface '${RUN_PANE_REF}'`
+    );
+  });
+
+  it("quotes the workspace id and the goal slug in the rename command", async () => {
+    const stubDir = cmuxStub(SPACED_KIT_PANES);
+    const result = await withStubPath(stubDir, () =>
+      run(["instructions", "rename", "--json"], spacedRepo)
+    );
+    expect(result.exitCode, combined(result)).toBe(0);
+    expect(payloadOf(result.stdout).text).toContain(
+      `rename-workspace --workspace '${CMUX_ID}' '${SPACED_SLUG}'`
+    );
+  });
+
+  it("quotes the workspace id when it instructs a browser pane to be created", async () => {
+    // With no kit pane open, `browser` is the topic that carries a `new-pane`
+    // command line of its own.
+    const stubDir = cmuxStub(NO_KIT_PANES);
+    const result = await withStubPath(stubDir, () =>
+      run(["instructions", "browser", "--json"], spacedRepo)
+    );
+    expect(result.exitCode, combined(result)).toBe(0);
+    expect(payloadOf(result.stdout).text).toContain(
+      `new-pane --workspace '${CMUX_ID}'`
+    );
+  });
+});
+
+// --- slice 6 observers ------------------------------------------------------
+
+// The tail every dev command line ends with — the anchor the `cd` in front of it
+// is cut from.
+const DEV_TAIL = " && bunx dobby dev";
+
+// The `cd <workroot>` command dobby put in front of the dev command, extracted
+// from the instruction text so it can be RUN on its own. Cutting back from the
+// tail (rather than matching a shape) keeps the extraction independent of how
+// the surrounding sentence is worded or wrapped.
+function devCdCommand(text: string): string {
+  const line = text.split("\n").find((one) => one.includes(DEV_TAIL)) ?? "";
+  const tailAt = line.indexOf(DEV_TAIL);
+  expect(
+    tailAt,
+    `no \`… && bunx dobby dev\` command in:\n${text}`
+  ).toBeGreaterThan(-1);
+  const cdAt = line.lastIndexOf("cd ", tailAt);
+  expect(
+    cdAt,
+    `no \`cd\` in front of the dev command in:\n${line}`
+  ).toBeGreaterThan(-1);
+  return line.slice(cdAt, tailAt);
+}
+
+// Does /bin/sh PARSE the command dobby handed over? `sh -n` reads it without
+// running it, so an unbalanced quote surfaces as a syntax error.
+function shParses(cdCommand: string): number | null {
+  return spawnSync("sh", ["-n", "-c", `${cdCommand}${DEV_TAIL}`]).status;
+}
+
+// Where a shell actually ENDS UP after running dobby's `cd` — the assertion the
+// whole quoting contract exists for. An unquoted path holding a space makes `cd`
+// fail, `&&` short-circuits, and this answers the empty string.
+function shLandsIn(cdCommand: string): string {
+  return spawnSync("sh", ["-c", `${cdCommand} && pwd`], {
+    encoding: "utf8",
+  }).stdout.trim();
+}

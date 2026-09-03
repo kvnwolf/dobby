@@ -27,19 +27,89 @@ const TRAILING_SLASH_RE = /\/$/;
 const PIDFILE_REL = ".dobby/dev.pid";
 
 /**
+ * The outcome of `writePidfile`: `{ registered: true }` once THIS process now
+ * owns `.dobby/dev.pid`, or `{ registered: false, pid }` when it does not —
+ * `pid` names the process still holding the registration when known, and is
+ * `null` for the in-flight window (an EMPTY file: a peer between its own
+ * create and its own write) where no pid can yet be read.
+ */
+export type PidfileRegistration =
+  | { registered: true }
+  | { registered: false; pid: number | null };
+
+/**
  * Register THIS process in `<workroot>/.dobby/dev.pid` (creating `.dobby/` and
- * gitignoring it first). Called by `dobby dev`'s streaming path (`runDev`) at
- * startup, once `planDev` has confirmed no live twin is already registered, so a
- * later `down` (via `killFromPidfile`) or `liveRegisteredPid` can find and
- * identify it.
+ * gitignoring it first), ATOMICALLY: the create is `writeFileSync(path, pid, {
+ * flag: "wx" })`, which fails `EEXIST` when a file is already there — closing
+ * the read-then-write race two `dev`s started in the same tick would otherwise
+ * hit. On `EEXIST`:
+ *   - an EMPTY existing file means a peer is between ITS create and ITS write
+ *     (in flight) — never reclaimed, refused with `pid: null`;
+ *   - a pid that is alive and OWNED (`liveRegisteredPid`'s semantics) —
+ *     refused, naming that pid;
+ *   - a dead or unowned pid (stale) — the file is removed and the `wx` write
+ *     retried exactly once; a second `EEXIST` is refused too.
+ *
+ * Called by `dobby dev`'s streaming path (`runDev`) at startup, once `planDev`'s
+ * soft pre-check has found no live twin — this is the hard, race-proof gate
+ * behind it, so a later `down` (via `killFromPidfile`) or `liveRegisteredPid`
+ * can find and identify whichever run actually won.
  *
  * @public — self-registration for `dobby dev`.
  */
-export function writePidfile(workroot: string): void {
+export function writePidfile(workroot: string): PidfileRegistration {
   const dobbyDir = join(workroot, ".dobby");
   mkdirSync(dobbyDir, { recursive: true });
   ensureGitignored(workroot, ".dobby/");
-  writeFileSync(join(dobbyDir, "dev.pid"), `${process.pid}\n`);
+  const pidPath = join(dobbyDir, "dev.pid");
+
+  if (tryCreatePidfile(pidPath)) {
+    return { registered: true };
+  }
+  if (isEmptyPidfile(pidPath)) {
+    return { pid: null, registered: false };
+  }
+  const twin = liveRegisteredPid(workroot);
+  if (twin !== null) {
+    return { pid: twin, registered: false };
+  }
+  // Dead or unowned — reclaim: remove the stale file and retry exactly once.
+  rmSync(pidPath, { force: true });
+  if (tryCreatePidfile(pidPath)) {
+    return { registered: true };
+  }
+  return {
+    pid: isEmptyPidfile(pidPath) ? null : liveRegisteredPid(workroot),
+    registered: false,
+  };
+}
+
+// The atomic create: `wx` fails EEXIST when the file is already there (created
+// by a peer, or left stale by an earlier run) rather than silently overwriting
+// it. Any OTHER error propagates — only EEXIST is this function's business.
+function tryCreatePidfile(pidPath: string): boolean {
+  try {
+    writeFileSync(pidPath, String(process.pid), { flag: "wx" });
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+// Whether the pidfile at `pidPath` currently holds no content — the in-flight
+// window between a peer's `wx` create (the file now exists) and that same
+// peer's write landing (the pid is not yet readable). A vanished file (the
+// peer already finished, or `down` cleared it) answers false, deferring to
+// `liveRegisteredPid` — which reads null for a missing file — to drive reclaim.
+function isEmptyPidfile(pidPath: string): boolean {
+  try {
+    return readFileSync(pidPath, "utf8").trim() === "";
+  } catch {
+    return false;
+  }
 }
 
 /**

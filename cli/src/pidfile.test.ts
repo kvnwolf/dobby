@@ -331,6 +331,9 @@ const DEV_SUBCOMMAND = "dev";
 // What the refusal must carry besides the pid: the way OUT.
 const RECOVERY_HINT = "dobby down";
 
+// What the refusal must SAY: a run is already registered for this worktree.
+const ALREADY_RUNNING = "already running";
+
 // A `portless run …` token sits on the main line of every real dev plan, so its
 // presence is the positive proof that `dev` got PAST the registry check and
 // produced a plan (a bare exit 0 could also be some no-op branch).
@@ -348,6 +351,7 @@ describe("run() — dev command (the run process registers itself)", () => {
   const dirs: string[] = [];
   let child: ChildProcess | undefined;
   let devChild: ChildProcess | undefined;
+  let devTwin: ChildProcess | undefined;
   let originalCmux: string | undefined;
 
   beforeEach(() => {
@@ -362,6 +366,8 @@ describe("run() — dev command (the run process registers itself)", () => {
     child = undefined;
     killGroup(devChild);
     devChild = undefined;
+    killGroup(devTwin);
+    devTwin = undefined;
   });
 
   afterAll(() => {
@@ -489,6 +495,139 @@ describe("run() — dev command (the run process registers itself)", () => {
       expect([registered, ignored, cleared]).toEqual([true, true, true]);
     }
   );
+
+  // -------------------------------------------------------------------------
+  // REVIEW ROUND 1 — registration must be ATOMIC, not check-then-write.
+  //
+  // Two `dobby dev` runs started at the same instant in the same worktree are
+  // the case a read-then-write registry cannot answer: both read an absent
+  // file, both believe they are first, and the worktree ends up with two dev
+  // servers fighting over one port while the registry names only the loser's
+  // twin. The observable contract is therefore about the WORLD the two runs
+  // leave behind — one registered and running, one refused, and the app's own
+  // bin started exactly ONCE — never about which syscall did it.
+  //
+  // The `ps` stub these cases run under answers OWNED for ANY pid on purpose:
+  // the real command line of a spawned child is `bun …/cli/src/index.ts dev`,
+  // which does NOT contain `dobby dev`, so real `ps` would report the winner as
+  // a foreign process and invite the loser to reclaim its registration — an
+  // artefact of running the CLI from source, not the behaviour under test.
+  //
+  // INDEPENDENT SOURCES: exit code 1 and the `already running` / `dobby down`
+  // wording are the review finding's own words for the refusal; the registered
+  // pid is the one the OS gave the child WE spawned; "exactly one" is counted
+  // from a stub bin THIS file wrote, which records one line per invocation.
+  // -------------------------------------------------------------------------
+
+  it.skipIf(!hasBun())(
+    "registers exactly one of two runs started at the same instant and refuses the other",
+    async () => {
+      const log = viteLog(dirs);
+      const repo = makeIsolatedViteRepo(dirs, viteRecordingSleeper(log));
+      const binDir = makeOwnedPsStub(dirs);
+      const pidfile = join(repo, PIDFILE_REL);
+
+      // Back to back in ONE tick: neither run gets a head start.
+      const runA = spawnDev(repo, binDir);
+      const runB = spawnDev(repo, binDir);
+      devChild = runA;
+      devTwin = runB;
+      const first = watchDev(runA);
+      const second = watchDev(runB);
+
+      const settled = await until(
+        () =>
+          existsSync(pidfile) && (first.code !== null || second.code !== null),
+        REGISTER_WAIT_MS
+      );
+      const refused = first.code === null ? second : first;
+      const survivor = first.code === null ? runA : runB;
+      const survivorPid = pidOf(survivor);
+      // Let a second start — if there is one — reach the app's bin before the
+      // invocations are counted.
+      await until(() => logLines(log).length > 0, REGISTER_WAIT_MS);
+      await pause(SETTLE_MS);
+      const starts = logLines(log).length;
+      const registered = readTrimmed(pidfile) === String(survivorPid);
+      const alive = isRunning(survivorPid);
+
+      survivor.kill("SIGTERM");
+      const cleared = await until(() => !existsSync(pidfile), EXIT_WAIT_MS);
+
+      expect(
+        [
+          settled,
+          refused.code,
+          refused.stderr.includes(ALREADY_RUNNING),
+          refused.stderr.includes(RECOVERY_HINT),
+          registered,
+          alive,
+          starts,
+          cleared,
+        ],
+        `refused run said:\n${refused.stderr}`
+      ).toEqual([true, 1, true, true, true, true, 1, true]);
+    }
+  );
+
+  it.skipIf(!hasBun())(
+    "takes over a registry file left behind by a run that is gone",
+    async () => {
+      const repo = makeIsolatedViteRepo(dirs, SLEEPING_VITE);
+      const pidfile = registerPid(repo, UNREACHABLE_PID);
+
+      const devRun = spawnDev(repo);
+      devChild = devRun;
+      drain(devRun);
+      const devPid = pidOf(devRun);
+
+      const registered = await until(
+        () => readTrimmed(pidfile) === String(devPid),
+        REGISTER_WAIT_MS
+      );
+      const registryHolds = readTrimmed(pidfile);
+
+      // Stop it the way a human would, so the run tears its own children down
+      // instead of leaving them to the SIGKILL in `afterEach`.
+      devRun.kill("SIGTERM");
+      await until(() => !existsSync(pidfile), EXIT_WAIT_MS);
+
+      expect(registered, `registry still reads ${registryHolds}`).toBe(true);
+    }
+  );
+
+  it.skipIf(!hasBun())(
+    "takes over a registry file naming a live process that is not a dobby run",
+    async () => {
+      const repo = makeIsolatedViteRepo(dirs, SLEEPING_VITE);
+      child = startLongLivedProcess();
+      const foreignPid = pidOf(child);
+      const pidfile = registerPid(repo, String(foreignPid));
+      const binDir = makePsStub(dirs, {
+        command: FOREIGN_COMMAND,
+        pid: foreignPid,
+      });
+
+      const devRun = spawnDev(repo, binDir);
+      devChild = devRun;
+      drain(devRun);
+      const devPid = pidOf(devRun);
+
+      const registered = await until(
+        () => readTrimmed(pidfile) === String(devPid),
+        REGISTER_WAIT_MS
+      );
+
+      // …and the foreign process is left strictly alone: reclaiming the FILE is
+      // not killing whatever it happened to name.
+      const foreignAlive = isRunning(foreignPid);
+
+      devRun.kill("SIGTERM");
+      await until(() => !existsSync(pidfile), EXIT_WAIT_MS);
+
+      expect([registered, foreignAlive]).toEqual([true, true]);
+    }
+  );
 });
 
 // --- task 2 fixtures --------------------------------------------------------
@@ -499,6 +638,27 @@ describe("run() — dev command (the run process registers itself)", () => {
 // purpose: `node_modules` is fixture scaffolding, not repo content.
 function makeViteRepo(track: string[], viteScript: string): string {
   const repo = makeRepo(track);
+  mkStubBin(join(repo, "node_modules", ".bin"), "vite", viteScript);
+  return repo;
+}
+
+// How many uniquely-named app fixtures this process has built so far — the
+// counter behind `makeIsolatedViteRepo`'s names.
+let appFixtures = 0;
+
+// The same fixture with a package name no OTHER run can be holding: portless
+// registers a dev server under the app's name GLOBALLY, so two fixtures sharing
+// one name make the second run fail on portless's registry instead of dobby's —
+// including across suite runs, when a killed run leaves its registration behind.
+// The cases that start REAL, CONCURRENT runs need that isolation; the older ones
+// keep the shared name they were written with.
+function makeIsolatedViteRepo(track: string[], viteScript: string): string {
+  appFixtures += 1;
+  const repo = makeScratchRepo({
+    pkg: { ...VITE_PKG, name: `pidfile-app-${process.pid}-${appFixtures}` },
+    prefix: "dobby-pidfile-",
+    track,
+  });
   mkStubBin(join(repo, "node_modules", ".bin"), "vite", viteScript);
   return repo;
 }
@@ -525,6 +685,51 @@ exit 0
 const SLEEPING_VITE = `#!/bin/sh
 exec sleep 300
 `;
+
+// A `vite` that RECORDS one line per invocation AND then never returns: the
+// count of lines is "how many runs actually started the app", and the sleeping
+// tail keeps whichever run won alive to be observed and signalled.
+function viteRecordingSleeper(log: string): string {
+  return `#!/bin/sh
+printf 'vite %s\\n' "$*" >> '${log}'
+exec sleep 300
+`;
+}
+
+// A stub `ps` that answers the ownership probes for ANY pid: the process it is
+// asked about is a dobby run, started seconds ago. Needed because a child
+// spawned as `bun <CLI_ENTRY> dev` does NOT carry `dobby dev` on its real
+// command line — an artefact of running the CLI from source, which would
+// otherwise make a second run treat the first as a foreign process.
+function makeOwnedPsStub(track: string[]): string {
+  const binDir = mkStubBinDir(track);
+  mkStubBin(
+    binDir,
+    "ps",
+    `#!/bin/sh
+case "$*" in
+  *command*) printf '%s\\n' '${OWNED_COMMAND}' ; exit 0 ;;
+  *etime*) printf '%s\\n' '  ${FRESH_ETIME}' ; exit 0 ;;
+esac
+exit 1
+`
+  );
+  return binDir;
+}
+
+// A real `dobby dev` child in `repo`, detached (so `killGroup` can take its
+// whole tree down), optionally with a stub-bin dir prepended to its PATH.
+function spawnDev(repo: string, binDir?: string): ChildProcess {
+  return spawn("bun", devArgv(), {
+    cwd: repo,
+    detached: true,
+    env:
+      binDir === undefined
+        ? process.env
+        : { ...process.env, PATH: stubPath(binDir) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
 
 // --- task 2 observers -------------------------------------------------------
 
@@ -595,6 +800,42 @@ function collect(
         resolve({ code, stderr });
       }, POLL_MS);
     });
+  });
+}
+
+// What a still-RUNNING child has said so far: its exit code once it lands
+// (`null` while it is alive) and the stderr it has written. `collect` cannot
+// serve the concurrent case — there both children must be observed at once, and
+// the SURVIVOR never exits on its own.
+interface DevWatch {
+  code: number | null;
+  stderr: string;
+}
+
+function watchDev(proc: ChildProcess): DevWatch {
+  const watch: DevWatch = { code: null, stderr: "" };
+  proc.stdout?.resume();
+  proc.stderr?.on("data", (chunk: Buffer) => {
+    watch.stderr += chunk.toString();
+  });
+  proc.once("exit", (code) => {
+    watch.code = code;
+  });
+  return watch;
+}
+
+// The lines a recording stub bin wrote — one per invocation, so `.length` is
+// "how many times it ran".
+function logLines(path: string): string[] {
+  const text = readTrimmed(path);
+  return text === undefined || text === "" ? [] : text.split("\n");
+}
+
+// A plain wait, for letting a SECOND effect (if the code produced one) land
+// before the count that must be 1 is taken.
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
   });
 }
 
