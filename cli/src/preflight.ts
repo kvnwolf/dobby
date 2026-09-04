@@ -55,6 +55,24 @@ interface PullRequest {
   url: string;
 }
 
+// The raw `gh pr view` answer BEFORE it is projected down to `PullRequest`:
+// `baseRefName` drives `defaultBranch` resolution but is never itself part of
+// the payload's `pr` field (the skills only ever read the original three).
+interface PullRequestAnswer extends PullRequest {
+  baseRefName: string | null;
+}
+
+// Which step of the resolution answered `defaultBranch` — reported ALONGSIDE the
+// name so the skill (and a human reader) can tell a forge-recorded fact from a
+// guess: `"pr-base"` beats every git-cascade step, which is why it is checked
+// FIRST and, when it fires, none of the cascade runs at all.
+type DefaultBranchSource =
+  | "pr-base"
+  | "origin-head"
+  | "remote-conventional"
+  | "local-conventional"
+  | null;
+
 // The uncommitted work a teardown would destroy: `git status --porcelain` lines,
 // UNTRACKED files included (losing those is exactly what the gate protects).
 interface DirtyTree {
@@ -67,12 +85,18 @@ type Verdict = "blocked" | "confirm-required" | "safe";
 interface FinishPreflight {
   branch: string;
   branchDeleteSafe: boolean;
-  // The repository's own trunk — resolved AT `mainRoot`, never the goal branch
-  // the session stands on — by an ordered cascade, first hit wins: the remote
-  // head, then the remote-tracking `main`/`master`, then the LOCAL `main`/
-  // `master`, else `null` when nothing in the repo names one. `null` is an
-  // honest "I don't know", never a guess.
+  // The repository's own trunk. The PR's own `baseRefName` is the FORGE-recorded
+  // fact and is checked first; only when there is no usable base (no PR, or one
+  // whose answer carries no base) does the git cascade — resolved AT `mainRoot`,
+  // never the goal branch the session stands on — run: the remote head, then the
+  // remote-tracking `main`/`master`, then the LOCAL `main`/`master`, else `null`
+  // when nothing in the repo names one. `null` is an honest "I don't know",
+  // never a guess.
   defaultBranch: string | null;
+  // WHICH step answered `defaultBranch`: `"pr-base"` (the forge), `"origin-head"`,
+  // `"remote-conventional"`, `"local-conventional"` (the three cascade steps), or
+  // `null` alongside a `null` `defaultBranch` when nothing answered.
+  defaultBranchSource: DefaultBranchSource;
   dirty: DirtyTree;
   dobbyInstalled: boolean;
   // True iff the session's workroot is a LINKED worktree (git's own definition,
@@ -130,8 +154,10 @@ function currentBranch(root: string): string {
 }
 
 // The repository's own trunk — the branch the finish skill switches to before
-// it force-deletes a goal branch. `"main"` is an assumption, not a fact, so
-// this reads the repo itself through an ORDERED cascade, first hit wins:
+// it force-deletes a goal branch. The PR's own `baseRefName` is the FORGE's
+// recorded fact and is checked first (`resolveDefaultBranch`); this function is
+// the FALLBACK the forge cannot answer, so `"main"` stays an assumption, never a
+// guess: it reads the repo itself through an ORDERED cascade, first hit wins:
 //   1. `refs/remotes/origin/HEAD` (`git symbolic-ref` answers `origin/<name>`;
 //      the `origin/` prefix is stripped) — but ONLY while `refs/remotes/
 //      origin/<name>` still exists. A DANGLING head (the symbolic ref
@@ -151,7 +177,25 @@ function currentBranch(root: string): string {
 const REMOTE_HEAD_PREFIX = "origin/";
 const CONVENTIONAL_TRUNK_NAMES = ["main", "master"] as const;
 
-function defaultBranchAt(root: string): string | null {
+interface ResolvedDefaultBranch {
+  defaultBranch: string | null;
+  defaultBranchSource: DefaultBranchSource;
+}
+
+// The forge FIRST, the git cascade only when there is no usable base: `pr` is
+// null, or its `baseRefName` is missing/empty (an older gh, or a malformed
+// answer) — both read as "no usable base" and fall through identically.
+function resolveDefaultBranch(
+  mainRoot: string,
+  pr: PullRequestAnswer | null
+): ResolvedDefaultBranch {
+  if (pr !== null && pr.baseRefName !== null && pr.baseRefName !== "") {
+    return { defaultBranch: pr.baseRefName, defaultBranchSource: "pr-base" };
+  }
+  return defaultBranchAt(mainRoot);
+}
+
+function defaultBranchAt(root: string): ResolvedDefaultBranch {
   const head = runCapture(
     "git",
     ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
@@ -166,23 +210,26 @@ function defaultBranchAt(root: string): string | null {
     // reads exactly like an UNSET head: the cascade continues to tier 2
     // rather than answering with a name nothing tracks.
     if (refExists(root, `refs/remotes/origin/${target}`)) {
-      return target;
+      return { defaultBranch: target, defaultBranchSource: "origin-head" };
     }
   }
 
   for (const name of CONVENTIONAL_TRUNK_NAMES) {
     if (refExists(root, `refs/remotes/origin/${name}`)) {
-      return name;
+      return {
+        defaultBranch: name,
+        defaultBranchSource: "remote-conventional",
+      };
     }
   }
 
   for (const name of CONVENTIONAL_TRUNK_NAMES) {
     if (refExists(root, `refs/heads/${name}`)) {
-      return name;
+      return { defaultBranch: name, defaultBranchSource: "local-conventional" };
     }
   }
 
-  return null;
+  return { defaultBranch: null, defaultBranchSource: null };
 }
 
 // Whether `ref` exists in `root`'s repository — `git show-ref --verify` reads
@@ -224,12 +271,19 @@ export function runFinishPreflight(context: CommandContext): CommandResult {
   const worktreePath = inWorktree ? workroot : null;
 
   const branch = currentBranch(workroot);
-  const pr = readPullRequest(workroot, branch);
+  const prAnswer = readPullRequest(workroot, branch);
   const dirty = readDirtyTree(workroot);
   // Per-tree, not per-checkout: `node_modules/` is gitignored, so a linked
   // worktree and its main checkout are installed INDEPENDENTLY of each other.
   const dobbyInstalled = dobbyInstalledAt(workroot);
-  const defaultBranch = defaultBranchAt(mainRoot);
+  const { defaultBranch, defaultBranchSource } = resolveDefaultBranch(
+    mainRoot,
+    prAnswer
+  );
+  // The payload's `pr` field is the SAME three-field projection the skills have
+  // always read — `baseRefName` feeds `defaultBranch` resolution above and is
+  // never itself part of the payload.
+  const pr = projectPullRequest(prAnswer);
 
   const { reasons, verdict } = judgeTeardown({
     branch,
@@ -247,6 +301,7 @@ export function runFinishPreflight(context: CommandContext): CommandResult {
     // never from git, and why the skill force-deletes (`-D`) once it holds.
     branchDeleteSafe: pr?.state === "MERGED",
     defaultBranch,
+    defaultBranchSource,
     dirty,
     dobbyInstalled,
     inWorktree,
@@ -304,15 +359,21 @@ function judgeTeardown(input: {
     : { reasons, verdict: "confirm-required" };
 }
 
-// The branch's pull request via `gh pr view <branch> --json state,mergedAt,url`
-// (finish/SKILL.md's own call). NULL whenever gh cannot answer — no gh on PATH,
-// no repo remote, or gh's "no pull requests found" exit 1 — because an ABSENT PR
-// must read as "unknown", never as a merge signal. The three fields are passed
-// through as gh reported them; nothing here re-derives merge state from git.
-function readPullRequest(root: string, branch: string): PullRequest | null {
+// The branch's pull request via `gh pr view <branch> --json
+// state,mergedAt,url,baseRefName` (finish/SKILL.md's own call). NULL whenever gh
+// cannot answer — no gh on PATH, no repo remote, or gh's "no pull requests
+// found" exit 1 — because an ABSENT PR must read as "unknown", never as a merge
+// signal. The four fields are passed through as gh reported them; nothing here
+// re-derives merge state from git. `baseRefName` drives `defaultBranch`
+// resolution ONLY — the payload's own `pr` field never carries it
+// (`projectPullRequest`).
+function readPullRequest(
+  root: string,
+  branch: string
+): PullRequestAnswer | null {
   const result = runCapture(
     "gh",
-    ["pr", "view", branch, "--json", "state,mergedAt,url"],
+    ["pr", "view", branch, "--json", "state,mergedAt,url,baseRefName"],
     { root }
   );
   if (result.error || result.status !== 0) {
@@ -320,6 +381,7 @@ function readPullRequest(root: string, branch: string): PullRequest | null {
   }
   try {
     const data = JSON.parse(result.stdout) as {
+      baseRefName?: unknown;
       mergedAt?: unknown;
       state?: unknown;
       url?: unknown;
@@ -328,6 +390,8 @@ function readPullRequest(root: string, branch: string): PullRequest | null {
       return null;
     }
     return {
+      baseRefName:
+        typeof data.baseRefName === "string" ? data.baseRefName : null,
       // gh reports `mergedAt: null` for anything not merged.
       mergedAt: typeof data.mergedAt === "string" ? data.mergedAt : null,
       state: data.state,
@@ -336,6 +400,14 @@ function readPullRequest(root: string, branch: string): PullRequest | null {
   } catch {
     return null;
   }
+}
+
+// The payload's `pr` field: the SAME three fields the skills have always read,
+// `baseRefName` dropped — it exists only to drive `defaultBranch` resolution.
+function projectPullRequest(pr: PullRequestAnswer | null): PullRequest | null {
+  return pr === null
+    ? null
+    : { mergedAt: pr.mergedAt, state: pr.state, url: pr.url };
 }
 
 // The session's uncommitted work: bare `git status --porcelain` at the workroot
@@ -372,6 +444,7 @@ function formatFinishText(payload: FinishPreflight): string {
     `inWorktree:      ${payload.inWorktree}`,
     `branch:          ${payload.branch}`,
     `defaultBranch:   ${payload.defaultBranch ?? "unknown"}`,
+    `defaultBranchSource: ${payload.defaultBranchSource ?? "unknown"}`,
     `worktreePath:    ${payload.worktreePath ?? "-"}`,
     `mainRoot:        ${payload.mainRoot}`,
     `pr:              ${pr}`,

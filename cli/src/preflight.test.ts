@@ -235,10 +235,74 @@ const PR_GOAL2 = {
   url: "https://github.com/acme/scratch/pull/11",
 };
 
+// --- The base branch the PR was opened against (slice 13c) ------------------
+// `gh pr view --json <fields>` answers the fields the CALLER ASKED FOR and no
+// others, so `prAnswers` reproduces that half of the boundary's behavior: a PR
+// carrying a `baseRefName` installs TWO answers — the full JSON for an argv that
+// requested the field, and the old three-field JSON for one that did not. A CLI
+// that never widened its `--json` list therefore reads exactly what today's list
+// yields, and the base-branch cases stay red until the REQUEST is right too.
+// A PR with no `baseRefName` (an older gh, a malformed answer) installs one
+// answer with the key simply ABSENT — which is also what every case written
+// before this slice keeps getting, unchanged.
+interface PrAnswer {
+  baseRefName?: string;
+  mergedAt: string | null;
+  state: string;
+  url: string;
+}
+
+const PR_BASE_DEVELOP: PrAnswer = {
+  baseRefName: "develop",
+  mergedAt: "2026-07-24T14:05:00Z",
+  state: "MERGED",
+  url: "https://github.com/acme/scratch/pull/12",
+};
+const PR_BASE_RELEASE: PrAnswer = {
+  baseRefName: "release",
+  mergedAt: "2026-07-25T16:20:00Z",
+  state: "MERGED",
+  url: "https://github.com/acme/scratch/pull/13",
+};
+const PR_BASE_EMPTY: PrAnswer = {
+  baseRefName: "",
+  mergedAt: "2026-07-26T08:40:00Z",
+  state: "MERGED",
+  url: "https://github.com/acme/scratch/pull/14",
+};
+const PR_BASE_ABSENT: PrAnswer = {
+  mergedAt: "2026-07-27T09:10:00Z",
+  state: "MERGED",
+  url: "https://github.com/acme/scratch/pull/15",
+};
+
+function prAnswers(branch: string, pr: PrAnswer): StubResponse[] {
+  const { baseRefName, ...asked } = pr;
+  const withoutBase: StubResponse = {
+    match: branch,
+    stdout: JSON.stringify(asked),
+  };
+  if (baseRefName === undefined) {
+    return [withoutBase];
+  }
+  return [
+    {
+      match: [branch, "baseRefName"],
+      stdout: JSON.stringify({ ...asked, baseRefName }),
+    },
+    withoutBase,
+  ];
+}
+
 // Matching is a literal substring of the joined argv, FIRST-WINS in order — hence
 // `goal2` ahead of `goal`, whose name it contains. The trailing catch-all is gh's
 // real behavior for a branch with no pull request (exit 1 on stderr).
+// The slice-13c branches come first and share no substring with any name below.
 const GH_ANSWERS: StubResponse[] = [
+  ...prAnswers("pr-base-develop", PR_BASE_DEVELOP),
+  ...prAnswers("pr-base-release", PR_BASE_RELEASE),
+  ...prAnswers("pr-base-empty", PR_BASE_EMPTY),
+  ...prAnswers("pr-base-absent", PR_BASE_ABSENT),
   { match: "goal2", stdout: JSON.stringify(PR_GOAL2) },
   { match: "still-open", stdout: JSON.stringify(PR_STILL_OPEN) },
   { match: "dirty-tree", stdout: JSON.stringify(PR_DIRTY_TREE) },
@@ -267,6 +331,7 @@ interface FinishPreflight {
   branch: string;
   branchDeleteSafe: boolean;
   defaultBranch: string | null;
+  defaultBranchSource: string | null;
   dirty: { count: number; files: string[] };
   dobbyInstalled: boolean;
   inWorktree: boolean;
@@ -974,14 +1039,16 @@ function makePushedCheckout(opts: { local: string; pushAs?: string }): string {
 
 // A main checkout with NO remote at all, born on `trunk` and left standing on
 // `goal` — the cascade's third and fourth steps, where the only branch names in
-// the repository are LOCAL ones.
-function makeLocalOnlyCheckout(trunk: string): string {
+// the repository are LOCAL ones. `stand` names the goal branch the session sits
+// on: the stub `gh` is keyed on it, so a fixture that must meet a branch with NO
+// PR stands on a name the stub answers the catch-all for.
+function makeLocalOnlyCheckout(trunk: string, stand = "goal"): string {
   const mainRoot = makeMainCheckout({
     branch: trunk,
     config: true,
     dobby: true,
   });
-  gitIn(mainRoot, ["switch", "-q", "-c", "goal"]);
+  gitIn(mainRoot, ["switch", "-q", "-c", stand]);
   return mainRoot;
 }
 
@@ -1159,6 +1226,7 @@ function makeRemoteHeadFixture(opts: {
   head: string;
   push: string[];
   stale?: boolean;
+  stand?: string;
   trunk: string;
 }): string {
   const mainRoot = makeMainCheckout({
@@ -1178,7 +1246,7 @@ function makeRemoteHeadFixture(opts: {
   if (opts.stale === true) {
     gitIn(mainRoot, ["update-ref", "-d", `refs/remotes/origin/${opts.head}`]);
   }
-  gitIn(mainRoot, ["switch", "-q", "-c", "goal"]);
+  gitIn(mainRoot, ["switch", "-q", "-c", opts.stand ?? "goal"]);
   return mainRoot;
 }
 
@@ -1307,8 +1375,216 @@ describe("finish --preflight — a dangling remote head", () => {
 });
 
 // ===========================================================================
+// Slice 13c — the PR's own BASE BRANCH is the trunk, and the git cascade is what
+// answers only when there is no usable base to read. A goal branch with an open
+// or merged PR knows its trunk as a FACT: the forge recorded which branch the PR
+// targets. Guessing from refs is the fallback for a branch that never opened one.
+//
+// So step 0 of the resolution is the forge:
+//   0. the PR exists and its `baseRefName` is a non-empty string →
+//      `defaultBranch` = that name, `defaultBranchSource` = `"pr-base"`;
+//   otherwise the git cascade of slice 13/13b runs exactly as before, now
+//   NAMING which step answered: `"origin-head"` (1), `"remote-conventional"`
+//   (2), `"local-conventional"` (3), and `null` for both fields when nothing in
+//   the repository names a trunk.
+// "No usable base" covers BOTH a branch with no PR at all and a PR whose answer
+// carries no `baseRefName` — an older gh, or a malformed one. The verdict still
+// never depends on any of it.
+//
+// Independence: `develop` and `release` — the two answers the forge supplies —
+// appear in NO ref of the fixtures that expect them (not the remote head, not a
+// remote branch, not a local one, not the branch the session stands on). They
+// can only have come from the stub gh's answer, so an implementation that
+// "validates" the forge's base against the local refs, or that reads the refs at
+// all when a base is there, fails both. Conversely the cascade cases stand on
+// branches the stub answers NO PR for, so their names come from the refs WE
+// wrote with plain git. Each pair — (a)/(b) and (c)/(g) — is the SAME git
+// fixture shape under a different gh answer, which is what isolates the forge
+// from the refs.
+// ===========================================================================
+
+// The trunk and the step that answered reach a human reader as two statements,
+// each a label and its value on ONE line — not two words that merely both occur
+// somewhere in the report. `unknown` is the literal for a source nothing
+// supplied, mirroring the `defaultBranch: unknown` line beside it.
+const DEFAULT_BRANCH_SOURCE_UNKNOWN = /default.?branch.?source:?[ \t]*unknown/i;
+const DEFAULT_BRANCH_IS_DEVELOP = /default.?branch:?[ \t]*develop/i;
+const DEFAULT_BRANCH_SOURCE_IS_PR_BASE =
+  /default.?branch.?source:?[ \t]*pr-base/i;
+
+// The round-4 repository, verbatim: a remote head left DANGLING at
+// `origin/master`, a legacy `origin/main` still published beside it, and a local
+// `main` too — so every step of the git cascade has something to say, and what
+// it says (`main`) is not what the PR says. Built with the slice-13b builder;
+// only the branch the session stands on changes, which is what selects the stub
+// gh's answer.
+function makeLegacyRemoteFixture(stand: string): string {
+  const mainRoot = makeRemoteHeadFixture({
+    head: "master",
+    push: ["master:master", "master:main"],
+    stale: true,
+    stand,
+    trunk: "master",
+  });
+  gitIn(mainRoot, ["branch", "main"]);
+  return mainRoot;
+}
+
+// The live-head repository: `refs/remotes/origin/HEAD` → `origin/trunk`, target
+// intact, nothing else naming a trunk. The cascade's FIRST step answers here,
+// which is the strongest thing a PR base can be asked to beat.
+function makeLiveHeadFixture(stand: string): string {
+  return makeRemoteHeadFixture({
+    head: "trunk",
+    push: ["trunk:trunk"],
+    stand,
+    trunk: "trunk",
+  });
+}
+
+describe("finish --preflight — the default branch from the PR's base", () => {
+  let prBaseOverCascade: string;
+  let cascadeWithNoPr: string;
+  let prBaseOverLiveHead: string;
+
+  beforeAll(() => {
+    prBaseOverCascade = makeLegacyRemoteFixture("pr-base-develop");
+    cascadeWithNoPr = makeLegacyRemoteFixture("no-pr-cascade");
+    prBaseOverLiveHead = makeLiveHeadFixture("pr-base-release");
+  });
+
+  it("names the branch the PR was opened against, not the one the refs suggest", async () => {
+    expect(
+      remoteHead(prBaseOverCascade),
+      "fixture must leave origin/HEAD naming a ref that is gone"
+    ).toEqual({ head: "origin/master", target: false });
+    const preflight = await finishPreflight(prBaseOverCascade);
+    expect({
+      defaultBranch: preflight.defaultBranch,
+      defaultBranchSource: preflight.defaultBranchSource,
+    }).toEqual({ defaultBranch: "develop", defaultBranchSource: "pr-base" });
+  });
+
+  it("falls back to the git cascade for a branch that opened no PR", async () => {
+    expect(
+      remoteHead(cascadeWithNoPr),
+      "fixture must leave origin/HEAD naming a ref that is gone"
+    ).toEqual({ head: "origin/master", target: false });
+    const preflight = await finishPreflight(cascadeWithNoPr);
+    expect({
+      defaultBranch: preflight.defaultBranch,
+      defaultBranchSource: preflight.defaultBranchSource,
+      pr: preflight.pr,
+    }).toEqual({
+      defaultBranch: "main",
+      defaultBranchSource: "remote-conventional",
+      pr: null,
+    });
+  });
+
+  it("prefers the PR's base over a remote head that is right where it was", async () => {
+    expect(
+      remoteHead(prBaseOverLiveHead),
+      "fixture must leave origin/HEAD naming a ref that exists"
+    ).toEqual({ head: "origin/trunk", target: true });
+    const preflight = await finishPreflight(prBaseOverLiveHead);
+    expect({
+      defaultBranch: preflight.defaultBranch,
+      defaultBranchSource: preflight.defaultBranchSource,
+    }).toEqual({ defaultBranch: "release", defaultBranchSource: "pr-base" });
+  });
+
+  it("tells a human reader the trunk and where it came from", async () => {
+    const result = await run(["finish", "--preflight"], prBaseOverCascade);
+    expect(result.stdout).toMatch(DEFAULT_BRANCH_IS_DEVELOP);
+    expect(result.stdout).toMatch(DEFAULT_BRANCH_SOURCE_IS_PR_BASE);
+  });
+});
+
+describe("finish --preflight — a PR answer with no base branch", () => {
+  let baseAbsent: string;
+  let baseEmpty: string;
+
+  beforeAll(() => {
+    // The same live-head fixture as above under a gh answer whose JSON carries no
+    // `baseRefName` key at all — an older gh, or one asked a narrower question.
+    baseAbsent = makeLiveHeadFixture("pr-base-absent");
+    // …and under one whose `baseRefName` is the empty string: a malformed answer
+    // that is present but names nothing. `""` is not a branch, so it is not an
+    // answer either.
+    baseEmpty = makeLiveHeadFixture("pr-base-empty");
+  });
+
+  it("falls back to the git cascade when the PR answer omits the base branch", async () => {
+    const preflight = await finishPreflight(baseAbsent);
+    expect({
+      defaultBranch: preflight.defaultBranch,
+      defaultBranchSource: preflight.defaultBranchSource,
+    }).toEqual({ defaultBranch: "trunk", defaultBranchSource: "origin-head" });
+  });
+
+  it("falls back to the git cascade when the PR names an empty base branch", async () => {
+    const preflight = await finishPreflight(baseEmpty);
+    expect({
+      defaultBranch: preflight.defaultBranch,
+      defaultBranchSource: preflight.defaultBranchSource,
+    }).toEqual({ defaultBranch: "trunk", defaultBranchSource: "origin-head" });
+  });
+});
+
+describe("finish --preflight — the step that answered is named", () => {
+  let fromRemoteHead: string;
+  let fromLocalBranches: string;
+  let fromNothingAtAll: string;
+
+  beforeAll(() => {
+    fromRemoteHead = makeLiveHeadFixture("no-pr-head");
+    // No remote at all, a local `master` beside the goal branch: the cascade's
+    // third step, and the only one a repo like this can reach.
+    fromLocalBranches = makeLocalOnlyCheckout("master", "no-pr-local");
+    // Born on `develop`, never pushed, no `main` and no `master` anywhere: no
+    // step of the cascade answers and no PR supplies a base either.
+    fromNothingAtAll = makeLocalOnlyCheckout("develop", "no-pr-nothing");
+  });
+
+  it("names the remote head as the source when the head answered", async () => {
+    const preflight = await finishPreflight(fromRemoteHead);
+    expect({
+      defaultBranch: preflight.defaultBranch,
+      defaultBranchSource: preflight.defaultBranchSource,
+    }).toEqual({ defaultBranch: "trunk", defaultBranchSource: "origin-head" });
+  });
+
+  it("names the local branches as the source when a local name answered", async () => {
+    const preflight = await finishPreflight(fromLocalBranches);
+    expect({
+      defaultBranch: preflight.defaultBranch,
+      defaultBranchSource: preflight.defaultBranchSource,
+    }).toEqual({
+      defaultBranch: "master",
+      defaultBranchSource: "local-conventional",
+    });
+  });
+
+  it("admits to no trunk and no source when nothing names one", async () => {
+    const preflight = await finishPreflight(fromNothingAtAll);
+    expect({
+      defaultBranch: preflight.defaultBranch,
+      defaultBranchSource: preflight.defaultBranchSource,
+    }).toEqual({ defaultBranch: null, defaultBranchSource: null });
+  });
+
+  it("tells a human reader that both the trunk and its source are unknown", async () => {
+    const result = await run(["finish", "--preflight"], fromNothingAtAll);
+    expect(result.stdout).toMatch(DEFAULT_BRANCH_UNKNOWN);
+    expect(result.stdout).toMatch(DEFAULT_BRANCH_SOURCE_UNKNOWN);
+  });
+});
+
+// ===========================================================================
 // Slice 14 — the payload's field list is EXACT: the ten fields the finish skill
-// already reads plus `defaultBranch`, and nothing else. Pinned as a whole set
+// already reads plus `defaultBranch` and `defaultBranchSource`, and nothing
+// else. Pinned as a whole set
 // (not field-by-field) so both halves of the contract hold — a dropped field is
 // caught as surely as a stray one, and the removed kit-made-worktree fields can
 // never creep back in under a new name.
@@ -1318,6 +1594,7 @@ const FINISH_PAYLOAD_KEYS = [
   "branch",
   "branchDeleteSafe",
   "defaultBranch",
+  "defaultBranchSource",
   "dirty",
   "dobbyInstalled",
   "inWorktree",
@@ -1335,7 +1612,7 @@ describe("the finish preflight payload's field list", () => {
     checkout = makePlainCheckout("goal");
   });
 
-  it("carries exactly the eleven fields the finish skill reads", async () => {
+  it("carries exactly the twelve fields the finish skill reads", async () => {
     const preflight = await finishPreflight(checkout);
     expect(Object.keys(preflight).sort()).toEqual(FINISH_PAYLOAD_KEYS);
   });
