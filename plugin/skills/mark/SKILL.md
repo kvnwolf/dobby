@@ -20,7 +20,7 @@ Leave the cwd where the **session** is — spell the script by its absolute path
 
 What the fields mean, and which of them carry weight:
 
-- `transcript:` — **the load-bearing field**; the only thing `/dobby:learn` strictly needs. The path is correct AT EMISSION, but if the session later enters a worktree (`EnterWorktree` changes the cwd → new slug dir) the transcript MOVES there. The indicator stays valid anyway: `learn` recovers it by the immutable `.jsonl` uuid basename, not by this slug-derived path.
+- `transcript:` — **the load-bearing field**; the only thing `/dobby:learn` strictly needs. The path is correct AT EMISSION, but if the session later enters a worktree (entering one changes the cwd → new slug dir) the transcript MOVES there. The indicator stays valid anyway: `learn` recovers it by the immutable `.jsonl` uuid basename, not by this slug-derived path.
 - `skills:` — the `/dobby:*` skills this session actually invoked, keyed off each skill's launch banner rather than incidental mentions, so future-you knows which internal skill to open. The banner pattern lives in `scripts/mark.sh` and is shared verbatim with `/dobby:learn`'s digest — one definition, so an indicator and its digest can't disagree about what ran.
 - `cwd:` — the worktree root, the durable anchor for *where* this ran. `state:` points at dobby's ephemeral `STATE.md` (repo root, gitignored: goal + decisions + plan + work-log) and is **best-effort** — `/dobby:wrap` deletes it, so it's only on disk if you mark mid-session. Either way `learn` can recover its content from the transcript.
 - `note:` — your `$ARGUMENTS`. The most valuable field: the intent that would otherwise be buried in a huge transcript.

@@ -538,16 +538,12 @@ export interface UsageCommand {
   name: string;
 }
 
-// The SESSION commands — the mechanized kit surface, in workflow order (scope →
-// state → build-plan → ship → review/pr → finish), then the tracker/KB/ADR
+// The SESSION commands — the mechanized kit surface, in workflow order (state →
+// build-plan → ship → review/pr → finish), then the tracker/KB/ADR
 // helpers, then the diagnosis + migration commands, then the artifact linters.
 // Each description names the command's subcommands inline (`init|set|…`) so the
 // name column stays one token wide and the help keeps its narrow layout.
 const SESSION_COMMANDS: readonly UsageCommand[] = [
-  {
-    description: "Preflight a new goal worktree: preflight (--slug)",
-    name: "scope",
-  },
   {
     description: "Edit STATE.md sections: init|set|append-worklog|lint",
     name: "state",
