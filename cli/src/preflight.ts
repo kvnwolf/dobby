@@ -67,6 +67,10 @@ type Verdict = "blocked" | "confirm-required" | "safe";
 interface FinishPreflight {
   branch: string;
   branchDeleteSafe: boolean;
+  // The repository's own trunk — `refs/remotes/origin/HEAD`, resolved at
+  // `mainRoot` — never the goal branch the session stands on. Falls back to the
+  // constant `"main"` when there is no remote head to read.
+  defaultBranch: string;
   dirty: DirtyTree;
   dobbyInstalled: boolean;
   // True iff the session's workroot is a LINKED worktree (git's own definition,
@@ -123,6 +127,29 @@ function currentBranch(root: string): string {
   return result.status === 0 && name !== "" && name !== "HEAD" ? name : "HEAD";
 }
 
+// The repository's own trunk — the fallback the finish skill switches to
+// before it force-deletes a goal branch. `"main"` is an assumption, not a
+// fact, so this reads the repo's own remote head (`refs/remotes/origin/HEAD`,
+// which `git symbolic-ref` answers as `origin/<name>`) and strips the
+// `origin/` prefix. Any failure — no remote, no remote head set — falls back
+// to the constant below, never to the LOCAL trunk (which may not exist, or
+// may not even be the repo's real trunk).
+const DEFAULT_BRANCH_FALLBACK = "main";
+const REMOTE_HEAD_PREFIX = "origin/";
+
+function defaultBranchAt(root: string): string {
+  const result = runCapture(
+    "git",
+    ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+    { root }
+  );
+  const ref = result.stdout.trim();
+  if (result.status !== 0 || !ref.startsWith(REMOTE_HEAD_PREFIX)) {
+    return DEFAULT_BRANCH_FALLBACK;
+  }
+  return ref.slice(REMOTE_HEAD_PREFIX.length);
+}
+
 // ---------------------------------------------------------------------------
 // `dobby finish --preflight`
 // ---------------------------------------------------------------------------
@@ -155,7 +182,10 @@ export function runFinishPreflight(context: CommandContext): CommandResult {
   const branch = currentBranch(workroot);
   const pr = readPullRequest(workroot, branch);
   const dirty = readDirtyTree(workroot);
-  const dobbyInstalled = dobbyInstalledAt(mainRoot);
+  // Per-tree, not per-checkout: `node_modules/` is gitignored, so a linked
+  // worktree and its main checkout are installed INDEPENDENTLY of each other.
+  const dobbyInstalled = dobbyInstalledAt(workroot);
+  const defaultBranch = defaultBranchAt(mainRoot);
 
   const { reasons, verdict } = judgeTeardown({
     branch,
@@ -172,6 +202,7 @@ export function runFinishPreflight(context: CommandContext): CommandResult {
     // authoritative signal — which is why this is derived from `pr.state` and
     // never from git, and why the skill force-deletes (`-D`) once it holds.
     branchDeleteSafe: pr?.state === "MERGED",
+    defaultBranch,
     dirty,
     dobbyInstalled,
     inWorktree,
@@ -296,6 +327,7 @@ function formatFinishText(payload: FinishPreflight): string {
     `verdict:         ${payload.verdict}`,
     `inWorktree:      ${payload.inWorktree}`,
     `branch:          ${payload.branch}`,
+    `defaultBranch:   ${payload.defaultBranch}`,
     `worktreePath:    ${payload.worktreePath ?? "-"}`,
     `mainRoot:        ${payload.mainRoot}`,
     `pr:              ${pr}`,

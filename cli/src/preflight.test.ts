@@ -108,8 +108,11 @@ const scratchDirs: string[] = [];
 
 // Mark a root as carrying a local dobby install, the way the finish skill probes it
 // (`node_modules/.bin/dobby` executable) AND the way a manifest reader would
-// (`@kvnwolf/dobby` in devDependencies) — both signals agree in every fixture, so no
-// assertion here depends on which one the implementation reads.
+// (`@kvnwolf/dobby` in devDependencies) — both signals agree in every fixture EXCEPT
+// the two worktree-split slices at the end, where they CANNOT: `package.json` is a
+// tracked file, so a linked worktree and its main checkout necessarily share it,
+// and the only per-tree signal a real install leaves is the gitignored
+// `node_modules/.bin/dobby`. Those slices therefore pin the marker the spec names.
 function installDobby(root: string): void {
   const binDir = join(root, "node_modules", ".bin");
   mkdirSync(binDir, { recursive: true });
@@ -123,9 +126,19 @@ function installDobby(root: string): void {
 // dobby.config.json), so it starts CLEAN and so does every worktree cut from it.
 // node_modules/ is gitignored, so the local dobby install never registers as an
 // uncommitted change.
-function makeMainCheckout(opts: { config?: boolean; dobby?: boolean }): string {
+// `branch` names the trunk the repo is born on (default `main`) — the remote-head
+// slices need a repo whose trunk is `master`/`trunk`. `bin: false` keeps the
+// manifest devDependency while leaving this tree WITHOUT the local
+// `node_modules/.bin/dobby`, which is the only install split a main checkout and
+// its linked worktree can actually express.
+function makeMainCheckout(opts: {
+  bin?: boolean;
+  branch?: string;
+  config?: boolean;
+  dobby?: boolean;
+}): string {
   const dir = makeScratchRepo({
-    branch: "main",
+    branch: opts.branch ?? "main",
     config: opts.config === true ? { files: [] } : undefined,
     files: {
       ".gitignore": "node_modules/\n.claude/\n",
@@ -139,7 +152,7 @@ function makeMainCheckout(opts: { config?: boolean; dobby?: boolean }): string {
     prefix: "dobby-preflight-",
     track: scratchDirs,
   });
-  if (opts.dobby === true) {
+  if (opts.dobby === true && opts.bin !== false) {
     installDobby(dir);
   }
   return dir;
@@ -160,15 +173,23 @@ function makePlainCheckout(
 // Add a LINKED worktree with plain git, at a path of the operator's choosing
 // OUTSIDE the main checkout — deliberately nothing like the kit's old
 // `.claude/worktrees/<slug>` layout, since the kit no longer owns the naming.
-// Returns its realpath-normalized absolute path.
-function addLinkedWorktree(mainRoot: string, branch: string): string {
+// Returns its realpath-normalized absolute path. `dobby: false` leaves the new
+// worktree WITHOUT its own local install — the operator cut the tree but never ran
+// the install in it.
+function addLinkedWorktree(
+  mainRoot: string,
+  branch: string,
+  opts: { dobby?: boolean } = {}
+): string {
   const parent = realpathSync(
     mkdtempSync(join(tmpdir(), "dobby-preflight-wt-"))
   );
   scratchDirs.push(parent);
   const path = join(parent, "wt");
   gitIn(mainRoot, ["worktree", "add", "-q", "-b", branch, path]);
-  installDobby(path);
+  if (opts.dobby !== false) {
+    installDobby(path);
+  }
   return realpathSync(path);
 }
 
@@ -245,6 +266,7 @@ afterAll(() => {
 interface FinishPreflight {
   branch: string;
   branchDeleteSafe: boolean;
+  defaultBranch: string;
   dirty: { count: number; files: string[] };
   dobbyInstalled: boolean;
   inWorktree: boolean;
@@ -782,5 +804,193 @@ describe("the surviving preflights still answer", () => {
     expect([0, 1]).toContain(result.exitCode);
     const payload = JSON.parse(result.stdout) as Record<string, unknown>;
     expect(Object.hasOwn(payload, "verdict")).toBe(true);
+  });
+});
+
+// ===========================================================================
+// Slice 12 — `dobbyInstalled` is a fact about the WORKROOT the command runs in,
+// not about the main checkout it hangs off. The operator owns the worktree, so
+// the two trees are installed INDEPENDENTLY: `node_modules/` is gitignored and
+// per-tree, and `bun install` is run wherever the operator chose to work. A
+// preflight that answered for `mainRoot` would call an installed worktree
+// uninstalled (and block a perfectly safe close), and would call a bare worktree
+// installed (and green-light a `dobby down` that cannot run).
+//
+// Both fixtures share one tracked manifest — that is what a linked worktree IS —
+// so the install split is expressed the only way it can be: the local
+// `node_modules/.bin/dobby` marker exists in exactly one of the two trees. The
+// expected values are the spec's own wording (installed → not blocked; not
+// installed → `blocked`, the only blocking condition).
+// ===========================================================================
+
+describe("finish --preflight — installed in the worktree, bare main checkout", () => {
+  let worktree: string;
+
+  beforeAll(() => {
+    // The manifest declares dobby; only the main checkout never had the install
+    // run in it. The worktree the operator cut and installed into is where the
+    // session stands.
+    const mainRoot = makeMainCheckout({
+      bin: false,
+      config: true,
+      dobby: true,
+    });
+    worktree = addLinkedWorktree(mainRoot, "goal2");
+  });
+
+  it("counts the install in the worktree the session stands in", async () => {
+    const preflight = await finishPreflight(worktree);
+    expect(preflight.dobbyInstalled).toBe(true);
+  });
+
+  it("verdicts the close safe from an installed worktree over a merged PR", async () => {
+    const preflight = await finishPreflight(worktree);
+    expect({
+      inWorktree: preflight.inWorktree,
+      verdict: preflight.verdict,
+    }).toEqual({ inWorktree: true, verdict: "safe" });
+  });
+});
+
+describe("finish --preflight — bare worktree, installed main checkout", () => {
+  let worktree: string;
+
+  beforeAll(() => {
+    // The mirror image: the main checkout carries the install, the worktree the
+    // operator cut never had one run in it.
+    const mainRoot = makeMainCheckout({ config: true, dobby: true });
+    worktree = addLinkedWorktree(mainRoot, "no-dobby", { dobby: false });
+  });
+
+  it("reports dobby as not installed where the session stands", async () => {
+    const preflight = await finishPreflight(worktree);
+    expect(preflight.dobbyInstalled).toBe(false);
+  });
+
+  it("blocks the close, the main checkout's install being no help", async () => {
+    const preflight = await finishPreflight(worktree);
+    expect(preflight.verdict).toBe("blocked");
+  });
+});
+
+// ===========================================================================
+// Slice 13 — `defaultBranch`. The finish skill switches to the trunk before it
+// deletes a goal branch, and `main` is an assumption, not a fact: plenty of repos
+// still trunk on `master`, and some on a house name entirely. The answer is the
+// repository's OWN remote head (`refs/remotes/origin/HEAD` → `origin/<name>`),
+// with `"main"` as the fallback when there is no remote head to read.
+//
+// Every expected value is a name WE chose and wrote into the fixture with plain
+// git (`--initial-branch` + `git remote set-head`), never a name read back the way
+// the code reads it — and each fixture stands on a goal branch of a DIFFERENT
+// name, so a preflight that echoed the current branch fails these outright.
+// ===========================================================================
+
+// A main checkout whose trunk is `trunk`, published to a throwaway BARE origin
+// with an explicit remote head, then left standing on a `goal` branch — the
+// session shape finish actually meets. Returns the checkout's path.
+function makeRemoteHeadCheckout(trunk: string): string {
+  const mainRoot = makeMainCheckout({
+    branch: trunk,
+    config: true,
+    dobby: true,
+  });
+  const bare = realpathSync(
+    mkdtempSync(join(tmpdir(), "dobby-preflight-origin-"))
+  );
+  scratchDirs.push(bare);
+  gitIn(bare, ["init", "-q", "--bare"]);
+  gitIn(mainRoot, ["remote", "add", "origin", bare]);
+  gitIn(mainRoot, ["push", "-q", "-u", "origin", trunk]);
+  gitIn(mainRoot, ["remote", "set-head", "origin", trunk]);
+  gitIn(mainRoot, ["switch", "-q", "-c", "goal"]);
+  return mainRoot;
+}
+
+// Text mode prints the same fact in whatever prose the CLI likes: `defaultBranch`,
+// `default branch`, `default-branch` all carry it.
+const DEFAULT_BRANCH_LABEL = /default.?branch/i;
+
+describe("finish --preflight — the repository's default branch", () => {
+  let masterTrunk: string;
+  let houseTrunk: string;
+  let noRemote: string;
+
+  beforeAll(() => {
+    masterTrunk = makeRemoteHeadCheckout("master");
+    houseTrunk = makeRemoteHeadCheckout("trunk");
+    // Born on `develop` and never pushed anywhere: there is no remote head to
+    // read, and the LOCAL trunk is deliberately not `main` — so the fallback can
+    // only be answered by the spec's constant, never by reading this repo.
+    noRemote = makeMainCheckout({
+      branch: "develop",
+      config: true,
+      dobby: true,
+    });
+    gitIn(noRemote, ["switch", "-q", "-c", "goal"]);
+  });
+
+  it("reports master when the remote head points at master", async () => {
+    const preflight = await finishPreflight(masterTrunk);
+    expect(preflight.defaultBranch).toBe("master");
+  });
+
+  it("reports a house trunk name rather than assuming main", async () => {
+    const preflight = await finishPreflight(houseTrunk);
+    expect(preflight.defaultBranch).toBe("trunk");
+  });
+
+  it("names the trunk, never the goal branch the session stands on", async () => {
+    const preflight = await finishPreflight(houseTrunk);
+    expect({
+      branch: preflight.branch,
+      defaultBranch: preflight.defaultBranch,
+    }).toEqual({ branch: "goal", defaultBranch: "trunk" });
+  });
+
+  it("falls back to main when there is no remote head to read", async () => {
+    const preflight = await finishPreflight(noRemote);
+    expect(preflight.defaultBranch).toBe("main");
+  });
+
+  it("prints the default branch for a human reader too", async () => {
+    const result = await run(["finish", "--preflight"], houseTrunk);
+    expect(result.stdout).toMatch(DEFAULT_BRANCH_LABEL);
+    expect(result.stdout).toContain("trunk");
+  });
+});
+
+// ===========================================================================
+// Slice 14 — the payload's field list is EXACT: the ten fields the finish skill
+// already reads plus `defaultBranch`, and nothing else. Pinned as a whole set
+// (not field-by-field) so both halves of the contract hold — a dropped field is
+// caught as surely as a stray one, and the removed kit-made-worktree fields can
+// never creep back in under a new name.
+// ===========================================================================
+
+const FINISH_PAYLOAD_KEYS = [
+  "branch",
+  "branchDeleteSafe",
+  "defaultBranch",
+  "dirty",
+  "dobbyInstalled",
+  "inWorktree",
+  "mainRoot",
+  "pr",
+  "reasons",
+  "verdict",
+  "worktreePath",
+];
+
+describe("the finish preflight payload's field list", () => {
+  let checkout: string;
+
+  beforeAll(() => {
+    checkout = makePlainCheckout("goal");
+  });
+
+  it("carries exactly the eleven fields the finish skill reads", async () => {
+    const preflight = await finishPreflight(checkout);
+    expect(Object.keys(preflight).sort()).toEqual(FINISH_PAYLOAD_KEYS);
   });
 });
