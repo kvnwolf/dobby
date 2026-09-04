@@ -133,7 +133,12 @@ function currentBranch(root: string): string {
 // it force-deletes a goal branch. `"main"` is an assumption, not a fact, so
 // this reads the repo itself through an ORDERED cascade, first hit wins:
 //   1. `refs/remotes/origin/HEAD` (`git symbolic-ref` answers `origin/<name>`;
-//      the `origin/` prefix is stripped);
+//      the `origin/` prefix is stripped) — but ONLY while `refs/remotes/
+//      origin/<name>` still exists. A DANGLING head (the symbolic ref
+//      resolves to a branch this clone no longer tracks — the remote's
+//      default was renamed/deleted and `origin/HEAD` was never refreshed)
+//      reads exactly like an unset head: the cascade continues to tier 2
+//      rather than answering with a name nothing tracks;
 //   2. failing that, the remote-tracking refs: `origin/main`, else
 //      `origin/master`;
 //   3. failing that (no remote refs at all), the LOCAL branches: `main`, else
@@ -154,7 +159,15 @@ function defaultBranchAt(root: string): string | null {
   );
   const ref = head.stdout.trim();
   if (head.status === 0 && ref.startsWith(REMOTE_HEAD_PREFIX)) {
-    return ref.slice(REMOTE_HEAD_PREFIX.length);
+    const target = ref.slice(REMOTE_HEAD_PREFIX.length);
+    // A dangling `origin/HEAD` — the symbolic ref resolves, but the branch it
+    // names no longer exists as a remote-tracking ref (the remote's default
+    // branch was renamed/deleted and this clone's HEAD was never updated) —
+    // reads exactly like an UNSET head: the cascade continues to tier 2
+    // rather than answering with a name nothing tracks.
+    if (refExists(root, `refs/remotes/origin/${target}`)) {
+      return target;
+    }
   }
 
   for (const name of CONVENTIONAL_TRUNK_NAMES) {

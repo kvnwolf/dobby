@@ -1131,6 +1131,182 @@ describe("finish --preflight — a default branch nothing in the repo names", ()
 });
 
 // ===========================================================================
+// Slice 13b — a STALE remote head is NOT an answer. `refs/remotes/origin/HEAD`
+// is a plain symbolic ref: renaming the trunk on the forge, or pruning the
+// branch it named, leaves it pointing at an `origin/<name>` that no longer
+// exists — and git keeps reading that DANGLING pointer back quite happily. So
+// step 1 of the cascade counts ONLY while `refs/remotes/origin/<target>` still
+// exists; a dangling head falls through to steps (2)–(4) exactly as if it had
+// never been set. Everything else is unchanged.
+//
+// The fixtures are built with plain git: the head is set with
+// `git remote set-head origin <name>` and made stale with
+// `git update-ref -d refs/remotes/origin/<name>`, which removes the TARGET and
+// leaves the symbolic ref standing. Every case states that precondition first —
+// the head still reads `origin/<name>`, the target ref is gone — so a passing
+// case can never be a fixture that quietly lost its head instead.
+// ===========================================================================
+
+// A main checkout published to a throwaway BARE origin under remote names of OUR
+// choosing, with an explicit remote head, optionally left dangling, then left
+// standing on `goal`. `push` takes `<local>:<remote>` refspecs — publishing one
+// local branch under a SECOND remote name is what lets a fixture carry
+// `origin/main` with no local `main` anywhere. The order is load-bearing: push,
+// then fetch (so `set-head` has a valid ref to point at), then set the head
+// explicitly (recent git may materialize one on fetch — ours must be the last
+// word), then delete the target it names.
+function makeRemoteHeadFixture(opts: {
+  head: string;
+  push: string[];
+  stale?: boolean;
+  trunk: string;
+}): string {
+  const mainRoot = makeMainCheckout({
+    branch: opts.trunk,
+    config: true,
+    dobby: true,
+  });
+  const bare = realpathSync(
+    mkdtempSync(join(tmpdir(), "dobby-preflight-stale-"))
+  );
+  scratchDirs.push(bare);
+  gitIn(bare, ["init", "-q", "--bare"]);
+  gitIn(mainRoot, ["remote", "add", "origin", bare]);
+  gitIn(mainRoot, ["push", "-q", "origin", ...opts.push]);
+  gitIn(mainRoot, ["fetch", "-q", "origin"]);
+  gitIn(mainRoot, ["remote", "set-head", "origin", opts.head]);
+  if (opts.stale === true) {
+    gitIn(mainRoot, ["update-ref", "-d", `refs/remotes/origin/${opts.head}`]);
+  }
+  gitIn(mainRoot, ["switch", "-q", "-c", "goal"]);
+  return mainRoot;
+}
+
+// Git's own answer to BOTH halves of "the head is stale": what the head names,
+// and whether that name still resolves. `symbolic-ref` reads a dangling symref
+// perfectly well, and `show-ref --verify` is precisely "does this ref exist" —
+// neither is the way the cascade reads them.
+function remoteHead(root: string): { head: string; target: boolean } {
+  const head = gitIn(root, [
+    "symbolic-ref",
+    "--short",
+    "refs/remotes/origin/HEAD",
+  ]);
+  try {
+    gitIn(root, ["show-ref", "--verify", "--quiet", `refs/remotes/${head}`]);
+    return { head, target: true };
+  } catch {
+    return { head, target: false };
+  }
+}
+
+describe("finish --preflight — a dangling remote head", () => {
+  let staleOverRemoteMain: string;
+  let staleWithNothingElse: string;
+  let staleOverLocalMaster: string;
+  let staleOverLocalTrunk: string;
+  let liveHead: string;
+
+  beforeAll(() => {
+    // The head names `origin/master`, whose ref is gone, while `origin/main` —
+    // the same commit published under a SECOND remote name, with no local `main`
+    // anywhere — remains. Three answers are told apart at once: trusting the
+    // dangling pointer says `master`, skipping the remote branches for the local
+    // ones says `master` too, and only reading `origin/main` says `main`.
+    staleOverRemoteMain = makeRemoteHeadFixture({
+      head: "master",
+      push: ["master:master", "master:main"],
+      stale: true,
+      trunk: "master",
+    });
+    // Born on `develop`, published once as `master`, and that remote-tracking ref
+    // then deleted: past the head there is NOTHING — no remote branch left, and
+    // neither `main` nor `master` among the local ones.
+    staleWithNothingElse = makeRemoteHeadFixture({
+      head: "master",
+      push: ["develop:master"],
+      stale: true,
+      trunk: "develop",
+    });
+    // The remote has only the (now deleted) `master`, and a local `master` is
+    // still there — the cascade's third step. The answer coincides with the
+    // dangling head's own name, which is exactly why the pair below exists.
+    staleOverLocalMaster = makeRemoteHeadFixture({
+      head: "master",
+      push: ["master:master"],
+      stale: true,
+      trunk: "master",
+    });
+    // The SAME shape with the local branch named `trunk` instead of `master`:
+    // the head still dangles at `origin/master` and nothing else in the repo
+    // names a trunk. `null` here is what proves the case above answered from the
+    // local branches rather than from the pointer.
+    staleOverLocalTrunk = makeRemoteHeadFixture({
+      head: "master",
+      push: ["trunk:master"],
+      stale: true,
+      trunk: "trunk",
+    });
+    // The regression pin: the very same builder, head NOT made stale.
+    liveHead = makeRemoteHeadFixture({
+      head: "trunk",
+      push: ["trunk:trunk"],
+      trunk: "trunk",
+    });
+  });
+
+  it("falls through to the remote branches when the head dangles", async () => {
+    expect(
+      remoteHead(staleOverRemoteMain),
+      "fixture must leave origin/HEAD naming a ref that is gone"
+    ).toEqual({ head: "origin/master", target: false });
+    const preflight = await finishPreflight(staleOverRemoteMain);
+    expect(preflight.defaultBranch).toBe("main");
+  });
+
+  it("admits it does not know the trunk when a dangling head is all there is", async () => {
+    expect(
+      remoteHead(staleWithNothingElse),
+      "fixture must leave origin/HEAD naming a ref that is gone"
+    ).toEqual({ head: "origin/master", target: false });
+    const preflight = await finishPreflight(staleWithNothingElse);
+    expect(preflight.defaultBranch).toBe(null);
+  });
+
+  it("tells a human reader the trunk is unknown behind a dangling head", async () => {
+    const result = await run(["finish", "--preflight"], staleWithNothingElse);
+    expect(result.stdout).toMatch(DEFAULT_BRANCH_UNKNOWN);
+  });
+
+  it("falls through to the local branches when the head dangles", async () => {
+    expect(
+      remoteHead(staleOverLocalMaster),
+      "fixture must leave origin/HEAD naming a ref that is gone"
+    ).toEqual({ head: "origin/master", target: false });
+    const preflight = await finishPreflight(staleOverLocalMaster);
+    expect(preflight.defaultBranch).toBe("master");
+  });
+
+  it("never answers the dangling head's own name when nothing else names a trunk", async () => {
+    expect(
+      remoteHead(staleOverLocalTrunk),
+      "fixture must leave origin/HEAD naming a ref that is gone"
+    ).toEqual({ head: "origin/master", target: false });
+    const preflight = await finishPreflight(staleOverLocalTrunk);
+    expect(preflight.defaultBranch).toBe(null);
+  });
+
+  it("still reports a remote head whose target is right where it was", async () => {
+    expect(
+      remoteHead(liveHead),
+      "fixture must leave origin/HEAD naming a ref that exists"
+    ).toEqual({ head: "origin/trunk", target: true });
+    const preflight = await finishPreflight(liveHead);
+    expect(preflight.defaultBranch).toBe("trunk");
+  });
+});
+
+// ===========================================================================
 // Slice 14 — the payload's field list is EXACT: the ten fields the finish skill
 // already reads plus `defaultBranch`, and nothing else. Pinned as a whole set
 // (not field-by-field) so both halves of the contract hold — a dropped field is
