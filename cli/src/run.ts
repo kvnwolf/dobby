@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { parseArgs } from "node:util";
 import pkg from "../package.json";
 import { runAdr } from "./adr.ts";
@@ -12,12 +13,14 @@ import type {
 } from "./command.ts";
 import { loadConfig } from "./config.ts";
 import { detectCapabilities } from "./detect.ts";
-import { collectEnv, type EnvSnapshot } from "./envinfo.ts";
+import { collectEnv, type EnvSnapshot, resolveDevUrl } from "./envinfo.ts";
+import { detectEnvironment, type Topic } from "./environment.ts";
 import { prePushCheck } from "./hook-install.ts";
 import { runKb } from "./kb.ts";
 import {
   type DownAction,
   type DownPlan,
+  type DownReport,
   planDev,
   type ResolvedDevCommand,
   type ResolvedDevPlan,
@@ -39,7 +42,7 @@ import {
 import { runRelease } from "./release.ts";
 import { runRepro } from "./repro.ts";
 import { runPr, runReview } from "./review.ts";
-import { resolveWorkroot } from "./runner.ts";
+import { requireWorkroot, resolveWorkroot } from "./runner.ts";
 import { runShip } from "./ship.ts";
 import { runState } from "./state.ts";
 import { type CheckFlags, type DbCommand, usageCommands } from "./tasks.ts";
@@ -211,7 +214,7 @@ const COMMANDS: Readonly<Record<string, CommandEntry>> = {
   },
   claim: { flags: ["json", "issue"], handler: runClaim },
   dev: { flags: ["dry-run"] },
-  down: { flags: ["dry-run"] },
+  down: { flags: ["dry-run", "json"] },
   env: { flags: JSON_FLAG },
   finish: {
     flags: ["json", "preflight", "slug"],
@@ -230,6 +233,13 @@ const COMMANDS: Readonly<Record<string, CommandEntry>> = {
     // the allowlist — without the token here the flag is rejected as unknown
     // before the handler ever runs.
     subcommands: { finalize: ["file", "focus"] },
+  },
+  instructions: {
+    flags: JSON_FLAG,
+    handler: runInstructions,
+    // The four topics dobby cannot act on the model's behalf for (environment.ts's
+    // `Topic`): each is a bare subcommand token, adding no flags of its own.
+    subcommands: { browser: [], rename: [], start: [], stop: [] },
   },
   kb: {
     flags: ["json", "kind"],
@@ -431,6 +441,70 @@ function renderCommandResult(result: CommandResult): CliOutcome {
     stderr: result.error === undefined ? "" : `${result.error}\n`,
     stdout,
   };
+}
+
+// `dobby instructions <topic>` — the INSTRUCTION CATALOGUE half of the
+// environment adapter seam (see environment.ts): for the detected environment,
+// what the MODEL must do for `topic`. dobby only ever PRINTS the instruction; it
+// never performs it. `browser` embeds no workroot precondition (it answers from
+// anywhere — the resolver degrades to an empty workroot/slug/devUrl rather than
+// failing); every other topic requires a workroot exactly like `up` does.
+function runInstructions(context: CommandContext): CommandResult {
+  const topic = context.positionals[0] as Topic;
+  const environment = detectEnvironment();
+
+  let workroot: string;
+  let slug: string;
+  let devUrl: string | null;
+  if (topic === "browser") {
+    const resolved = resolveWorkroot(context.cwd);
+    workroot = resolved ?? "";
+    slug = resolved === null ? "" : basename(resolved);
+    devUrl =
+      resolved === null
+        ? null
+        : resolveDevUrl(context.cwd, resolved, detectCapabilities(context.cwd));
+  } else {
+    try {
+      workroot = requireWorkroot(context.cwd);
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : String(error),
+        exitCode: 1,
+      };
+    }
+    slug = basename(workroot);
+    devUrl = resolveDevUrl(
+      context.cwd,
+      workroot,
+      detectCapabilities(context.cwd)
+    );
+  }
+
+  const instruction = environment.instruction(topic, {
+    devUrl,
+    slug,
+    workroot,
+  });
+
+  if (context.options.json === true) {
+    return {
+      exitCode: 0,
+      json: {
+        applies: instruction.applies,
+        environment: environment.id,
+        text: instruction.text,
+        topic: instruction.topic,
+      },
+    };
+  }
+  if (!instruction.applies) {
+    return {
+      exitCode: 0,
+      text: `not applicable in ${environment.id}: ${topic} has nothing for the model to do here\n`,
+    };
+  }
+  return { exitCode: 0, text: `${instruction.text}\n` };
 }
 
 // run() is the command DISPATCHER (a flat switch over every `dobby` subcommand) and is
@@ -742,10 +816,19 @@ export async function run(
   }
 
   if (command === "down") {
-    // Tear the run down (close panes, kill the detached run, delete the neon
-    // branch, teardown[] extras). Fails hard outside a git repo; nothing to clean →
-    // exit 0 no-op. `--dry-run` renders the plan without executing.
-    const report = runDown(cwd, { dryRun: Boolean(dryRun) });
+    // Tear the run down (kill the detached run, delete the neon branch,
+    // teardown[] extras) — the cmux surface close is no longer executed here, it
+    // comes back as the `stop` INSTRUCTION (see `DownFacts.instructions` /
+    // `DownPlan.instructions`). Fails hard outside a git repo; nothing to clean →
+    // exit 0 no-op. `--dry-run` renders the plan without executing. `--json`
+    // renders the machine report INSTEAD of every human form below.
+    const report = runDown(cwd, {
+      dryRun: Boolean(dryRun),
+      machineReport: Boolean(json),
+    });
+    if (json) {
+      return renderDownJson(report);
+    }
     if (!report.ok) {
       return { exitCode: 1, stderr: `${report.error}\n`, stdout: "" };
     }
@@ -816,10 +899,6 @@ function formatEnvText(snapshot: EnvSnapshot): string {
     `devUrl: ${scalar(snapshot.devUrl)}`,
     `runPane: ${scalar(snapshot.runPane)}`,
     `browserPane: ${scalar(snapshot.browserPane)}`,
-    // The full multi-line guide belongs in --json (its own consumable field);
-    // the human form gets a one-line summary so every other field stays on its
-    // own `key: value` line.
-    `browserGuide: ${snapshot.browserGuide.length} chars (see --json for the full guide)`,
   ]
     .join("\n")
     .concat("\n");
@@ -939,29 +1018,19 @@ function renderUpJson(report: UpReport): CliOutcome {
   };
 }
 
-// The placeholder surface refs the `up` plan renders where a real run would capture
-// a runtime cmux surface ref — each pane is renamed (and the run pane is sent its
-// start line) through the ref cmux hands back, so the plan spells the dependency out
-// even though the ref is unknown until the pane is created.
-const BROWSER_SURFACE = "<browser-surface>";
-const RUN_SURFACE = "<run-surface>";
-
 // Render the FULL `up` plan for `--dry-run`: the SETUP PHASE first (install → copies
-// → extras, mirroring the folded former setup plan), THEN the cmux WORKSPACE rename
-// (when under cmux — independent of the app gate), THEN the run phase in execution
-// order (probe → neon branch → cmux RUN pane XOR detached run → liveness wait → cmux
-// BROWSER pane), OR — when the run phase is skipped — the skip reason line ('no app to
-// run'). The pane lines sit where they really happen: the run terminal at start time,
-// the browser pane AFTER the wait (a browser opened mid-boot renders a 404).
+// → extras, mirroring the folded former setup plan), THEN up's OWN run-phase
+// `actions` in execution order (probe → neon branch → liveness wait), OR — when
+// the run phase is skipped — the skip reason line ('no app to run'), and FINALLY
+// the instructions the run would hand over to the model (rename when cmux, then
+// start) QUOTED under an `agent:` line — never rendered as one of up's own action
+// lines. Since TASK 4 `up` plans no pane/detached mechanics of its own; every
+// instruction's `text` may itself be multi-line, so each of its lines is indented
+// under the hand-over.
 function formatUpPlan(plan: UpPlan): string {
   const lines: string[] = [];
   for (const action of plan.setup) {
     lines.push(`  ${describeSetupAction(action)}`);
-  }
-  if (plan.renameWorkspace !== null) {
-    lines.push(
-      `  cmux rename-workspace --workspace ${plan.renameWorkspace.workspace} "${plan.renameWorkspace.title}"`
-    );
   }
   for (const action of plan.actions) {
     for (const line of describeUpAction(action)) {
@@ -970,6 +1039,14 @@ function formatUpPlan(plan: UpPlan): string {
   }
   if (plan.runSkipped !== null) {
     lines.push(`  ${plan.runSkipped}`);
+  }
+  if (plan.instructions.length > 0) {
+    lines.push("agent:");
+    for (const instruction of plan.instructions) {
+      for (const textLine of instruction.text.split("\n")) {
+        lines.push(`    ${textLine}`);
+      }
+    }
   }
   return ["Up plan (dry-run):", ...lines].join("\n").concat("\n");
 }
@@ -986,23 +1063,6 @@ function describeUpAction(action: UpAction): string[] {
         `bunx neonctl branches create --name ${action.branch} --project-id ${action.projectId} --output json`,
         "rewrite DATABASE_URL, DATABASE_URL_UNPOOLED in .env.local (from the branch connection strings)",
       ];
-    case "cmux-run-pane":
-      return [
-        `cmux new-pane --workspace ${action.workspace} --direction right`,
-        `cmux rename-tab --surface ${RUN_SURFACE} "${action.runName}"`,
-        `cmux send --surface ${RUN_SURFACE} "${action.sendLine}"`,
-      ];
-    case "cmux-browser-pane": {
-      const url = action.devUrl === null ? "" : ` --url ${action.devUrl}`;
-      return [
-        `cmux new-pane --workspace ${action.workspace} --type browser${url} --direction right`,
-        `cmux rename-tab --surface ${BROWSER_SURFACE} "${action.browserName}"`,
-      ];
-    }
-    case "detached":
-      return [
-        `spawn detached: ${action.command} (pid → ${action.pidRel}, log → ${action.logRel})`,
-      ];
     case "wait":
       return [
         `wait for liveness: curl -sf --max-time 5 ${action.url ?? "<devUrl>"} (retry ${action.retries}×${action.intervalSec}s)`,
@@ -1013,9 +1073,45 @@ function describeUpAction(action: UpAction): string[] {
   }
 }
 
-// Render the `down` plan as one shell-style line per planned action (close panes →
-// kill the detached run → delete the neon branch → teardown[] extras). An empty
-// plan prints a `(nothing to clean)` line.
+// Render `dobby down --json`: the flat machine report (`DownFacts`, decided in
+// lifecycle.ts) as ONE JSON object that is the SOLE stdout, mirroring
+// `renderUpJson`'s exit-code contract exactly — 0 when `ok` is true, nonzero
+// whenever it is false (the failing step's own code where there is one, else 1) —
+// so `ok` and the exit code can never disagree. `kind: "plan"` (a
+// `--json --dry-run` combination, mirroring `up`'s precedent) falls through with
+// no stderr text and exit 0 whenever `facts.ok` — the plan itself never fails.
+//
+// UNLIKE `up`, a teardown extra's captured output (`report.childOutput` — see
+// `executeDown`) is forwarded here too, ahead of the failure message: down's
+// `--json` contract genuinely captures a teardown extra rather than fd-inheriting
+// it, so its stdout+stderr is real data this seam can carry (not a fd-level
+// redirect `run()`'s in-process capture could never see).
+function renderDownJson(report: DownReport): CliOutcome {
+  let stderrText = "";
+  let failureExit = 1;
+  if (report.ok === false) {
+    stderrText = `${report.error}\n`;
+  } else if (report.kind === "ran") {
+    stderrText = report.childOutput;
+    if (report.failure !== null) {
+      stderrText += `${report.failure}\n`;
+    }
+    failureExit = report.exitCode;
+  }
+  return {
+    exitCode: report.facts.ok ? 0 : Math.max(failureExit, 1),
+    stderr: stderrText,
+    stdout: `${JSON.stringify(report.facts)}\n`,
+  };
+}
+
+// Render the `down` plan as one shell-style line per planned action (kill the
+// detached run → delete the neon branch → teardown[] extras), THEN the
+// `instructions` the run would hand over to the model (the `stop` topic, when a
+// kit pane is discovered) QUOTED under an `agent:` line — never rendered as one of
+// down's own action lines (since TASK 7 the cmux surface close is no longer one of
+// down's own actions). An empty plan (no actions AND no instructions) prints a
+// `(nothing to clean)` line.
 function formatDownPlan(plan: DownPlan): string {
   const lines: string[] = [];
   for (const action of plan.actions) {
@@ -1023,18 +1119,23 @@ function formatDownPlan(plan: DownPlan): string {
       lines.push(`  ${line}`);
     }
   }
-  const body = lines.length === 0 ? ["  (nothing to clean)"] : lines;
-  return ["Down plan (dry-run):", ...body].join("\n").concat("\n");
+  if (plan.actions.length === 0 && plan.instructions.length === 0) {
+    lines.push("  (nothing to clean)");
+  }
+  if (plan.instructions.length > 0) {
+    lines.push("agent:");
+    for (const instruction of plan.instructions) {
+      for (const textLine of instruction.text.split("\n")) {
+        lines.push(`    ${textLine}`);
+      }
+    }
+  }
+  return ["Down plan (dry-run):", ...lines].join("\n").concat("\n");
 }
 
 // The plan line(s) for one `down` action.
 function describeDownAction(action: DownAction): string[] {
   switch (action.kind) {
-    case "cmux-close":
-      return [
-        `cmux close-surface --surface <${action.browserName}>`,
-        `cmux close-surface --surface <${action.runName}>`,
-      ];
     case "kill-pidfile":
       return [
         `kill process group from ${action.pidRel} (SIGTERM; stale pid → remove the file)`,

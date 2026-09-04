@@ -11,3 +11,5 @@ QA was rediscovering how to drive the cmux browser on every run — the open →
 ## Consequences
 
 The vendored text goes stale when cmux changes its CLI, and nothing detects that automatically — it is corrected in a release, like any other vendored asset. Its provenance (repository, commit, licence, checksum) is recorded alongside it so the drift is at least auditable. Where cmux is absent, the guide returns the non-cmux verification instructions rather than nothing.
+
+*Amended by ADR-0032:* the vendored text is unchanged, but its channel moved — it is now the cmux adapter's `browser` instruction, served by `dobby instructions browser`; `dobby env` no longer carries a browser guide.

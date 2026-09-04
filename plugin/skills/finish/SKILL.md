@@ -3,7 +3,7 @@ name: finish
 description: Closes the goal end-to-end — merges the goal's PR when it is still open (gated, on your explicit selection), then tears its worktree down. Use when the current goal's PR is merged OR merge-ready and you want to clean up and return to main.
 ---
 
-The end of a work session, closed end-to-end. If the goal's PR is still OPEN, `/dobby:finish` offers to **merge it first** — always as an explicit selection at the gate in Step 1, never automatically. Once it is merged, tear down its worktree: run `bunx dobby down` to close the kit-opened cmux panes (killing the dev server) and run the project's cleanup, then delete the branch and pull the main checkout up to date — closing the goal so the tree is ready for the next one.
+The end of a work session, closed end-to-end. If the goal's PR is still OPEN, `/dobby:finish` offers to **merge it first** — always as an explicit selection at the gate in Step 1, never automatically. Once it is merged, tear down its worktree: run `bunx dobby down --json` to kill the run and run the project's cleanup, carry out any `stop` instruction it hands back (closing the now-empty kit cmux panes), then delete the branch and pull the main checkout up to date — closing the goal so the tree is ready for the next one.
 
 **One session per goal.** Each goal gets its own worktree; parallel goals run in parallel worktrees (one per cmux pane/session — legitimate and encouraged). `/dobby:finish` tears down THIS goal's worktree once its PR is merged — it does not touch other goals' worktrees. Run it (typed, manually) when the PR is merged, or when it is merge-ready and you want finish to merge it.
 
@@ -48,14 +48,14 @@ One call resolves the target (`slug`, plus the kit's naming for it — `branch` 
 
 Do not proceed to teardown on anything but `safe` — either read straight from the preflight, or re-read after the gated merge — or an explicit "destroy anyway".
 
-## Step 2: Tear down the run — `bunx dobby down`
+## Step 2: Tear down the run — `bunx dobby down --json`
 
-Run `bunx dobby down` to tear the run down. It closes the kit-opened cmux panes (which terminates the dev server they host, or kills the detached background process when cmux is absent), deletes the per-worktree Neon branch, and runs the project's `teardown[]` extras from `dobby.config.json` — all the pre-removal cleanup, mechanized. You NEVER enumerate or close panes by hand and NEVER hunt for a background job — `dobby down` owns all of it. A no-app project (no run script, no panes, no `teardown` extras) no-ops cleanly.
+Run `bunx dobby down --json` (see `../execute/references/bring-up.md`'s "Tearing down" section) to tear the run down. Its mechanics already ran by the time it returns: killing the detached run by pidfile, deleting the per-worktree Neon branch, and running the project's `teardown[]` extras from `dobby.config.json`. You NEVER hunt for a background job by hand — `dobby down` owns all of it. Read `ok`/`reason` from the payload, then carry out `instructions[]` yourself: a non-empty `stop` entry (present only when a kit pane was discovered under cmux) names the now-empty kit panes to close — carry it out same as you would `up`'s `start`/`rename`. A no-app project (no run script, no panes, no `teardown` extras) no-ops cleanly, with an empty `instructions[]`.
 
 - `mode: "same-session"` — the cwd is already inside the worktree: run it there.
-- `mode: "orphan"` — run it with the preflight's `worktreePath` as the working directory (e.g. `bash -c 'cd <worktreePath> && bunx dobby down'`), never from the main checkout.
+- `mode: "orphan"` — run it with the preflight's `worktreePath` as the working directory (e.g. `bash -c 'cd <worktreePath> && bunx dobby down --json'`), never from the main checkout.
 
-If `dobby down` reports a failure, report it and let the user decide whether to continue removing the worktree — a half-cleaned resource is the user's call, not an auto-force.
+If `dobby down` reports a failure (`ok: false`, `reason`), report it and let the user decide whether to continue removing the worktree — a half-cleaned resource is the user's call, not an auto-force.
 
 ## Step 3: Remove the worktree + branch
 
@@ -104,7 +104,7 @@ Interact with the user in their language. Write any note you persist in English;
 - [ ] The **Merge & finish** option offered ONLY on an OPEN PR with an otherwise-clean tree (open PR the only `reasons[]` entry, `dirty.count: 0`) — never on a closed/absent PR or a dirty tree
 - [ ] The PR merged ONLY on the user's explicit "Merge & finish" selection, and only after `bunx dobby pr watch [--adapter <selected id>] --await-review --deadline 60 --json` answered `merge-ready` with commit-scoped evidence (multi-adapter ambiguity selected mechanically; every required adapter validated the SAME `pr.headRefOid`, with the whole set restarted on mismatch; Greptile: passing review check AND `summary.reviewedHeadOid == pr.headRefOid`; CodeRabbit: passing current-commit review check; stale/missing evidence remained `open-unreviewed`, never review-by-silence); any other verdict reported and NOT merged, `feedback-present` routed to `/dobby:address-review`; squash merge pinned to the common validated SHA (`gh pr merge <pr.url> --match-head-commit <pr.headRefOid> --squash`)
 - [ ] After the merge, the preflight re-run (same `--slug`/cwd) and read as MERGED / `safe` before Step 2 — never assumed
-- [ ] `bunx dobby down` run before removal — inside the worktree same-session, with `worktreePath` as cwd for an orphan; closes the kit cmux panes / kills the detached run, deletes the Neon branch, runs `teardown[]` extras; a no-app project no-ops cleanly; a reported failure surfaced for the user's call, not auto-forced
+- [ ] `bunx dobby down --json` run before removal — inside the worktree same-session, with `worktreePath` as cwd for an orphan; kills the detached run, deletes the Neon branch, runs `teardown[]` extras; `ok`/`reason` read and any `instructions[]` (`stop`) carried out to close the now-empty kit panes; a no-app project no-ops cleanly; a reported failure surfaced for the user's call, not auto-forced
 - [ ] Worktree + branch removed by `removeMechanism`: `ExitWorktree(remove)` same-session (cwd restored to main; `discard_changes` only after the explicit Step 1 confirmation) / raw `git worktree remove <worktreePath>` + `git branch -D <branch>` for `raw-git`, run from `mainRoot` — `-D` because `branchDeleteSafe` (gh MERGED), not git ancestry, is the safe-to-delete signal
 - [ ] `git pull` on the main checkout; on conflict/divergence reported and stopped — never forced
 - [ ] Ended with an AskUserQuestion gate (goal closed; start the next goal via `/dobby:scope` recommended, or stop here); `/dobby:scope` invoked through the Skill tool on selection

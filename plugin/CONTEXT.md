@@ -59,8 +59,13 @@ CLI at runtime (`bunx dobby …`), never imported.
 - **Hooks** need no invocation — `hooks/hooks.json` is auto-loaded whenever the
   plugin is enabled, and fires on every `Edit`/`Write` PostToolUse event.
 - Everything else (worktree lifecycle, `dobby check`/`up`/`down`/`dev`, `dobby env`
-  for the environment snapshot and verification guide) is reached through
-  `bunx dobby …`, never imported code.
+  for the environment snapshot, `dobby instructions <topic>` for the per-topic
+  instruction catalogue a skill or agent carries out itself) is reached through
+  `bunx dobby …`, never imported code. The two-step bring-up — `up`, carry out
+  its `instructions[]`, `up` again — is written once in
+  `plugin/skills/execute/references/bring-up.md` and cited by every skill that
+  brings a run up (`execute`, `scope`, `dispatch`, `address-review`, `diagnose`,
+  `prototype`, `finish`) and by `agents/qa.md`.
 
 ## Invariants
 

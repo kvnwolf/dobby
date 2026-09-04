@@ -17,21 +17,25 @@ import {
 // Task contract: the cmux browser protocol — open, read the URL, snapshot for
 // fresh refs, act, wait, re-snapshot, plus the stale-ref and script-error
 // recovery — is VENDORED into `cli/src/browser-guide.ts`, which picks the
-// variant for the detected environment, and `dobby env` REPORTS it. Without
-// cmux the guide is the non-cmux verification instructions — never empty.
+// variant for the detected environment, and `dobby instructions browser`
+// DELIVERS it. Without cmux the guide is the non-cmux verification
+// instructions — never empty.
 // Provenance (repository, commit, licence, SHA-256) is recorded the way
 // `plugin/skills/trim-context/scripts/vendor/PROVENANCE.md` already does it
 // (ADR-0027).
 //
-// THE SNAPSHOT KEY IS `browserGuide` (a plain string, alongside `browserPane`).
-// The spec names the fact but not the key; this suite fixes it, because the
-// consumers of `dobby env --json` need one name.
+// THE GUIDE'S DELIVERY CHANNEL IS `dobby instructions browser --json`, whose
+// payload is `{environment, topic, applies, text}` — the guide is the `text`
+// field, and `browser` applies in every environment (it needs no git workroot).
+// It is NO LONGER an `env` snapshot field: `dobby env` reports environment
+// FACTS only. This suite pins what the guide SAYS, whatever command hands it
+// over; `instructions.test.ts` pins the catalogue's own contract.
 //
 // The seam under test is the PUBLIC one: `run(argv, cwd) -> {exitCode, stdout,
 // stderr}` against a throwaway git repo — the repo's standing convention for
-// env behavior. `browser-guide.ts` is NEVER imported here, so how the module
-// stores or selects its text is free to change; only what `dobby env` REPORTS
-// is pinned.
+// env behavior. `browser-guide.ts`, `environment.ts` and the adapters are NEVER
+// imported here, so how the catalogue stores or selects its text is free to
+// change; only what the CLI HANDS THE MODEL is pinned.
 //
 // Where every expected value comes from (all independent of any implementation):
 //  - the two variants and the "never empty" floor are the task's constraints,
@@ -44,15 +48,20 @@ import {
 //    ladder;
 //  - cmux presence is `CMUX_WORKSPACE_ID` (the task's constraint, and the same
 //    marker the snapshot's own `cmux` field reports);
-//  - the surviving snapshot key set is `cli/CONTEXT.md`'s documented
-//    `EnvSnapshot` list PLUS this task's one new key;
+//  - the payload shape `{environment, topic, applies, text}` and `applies:
+//    true` for `browser` in both environments are the catalogue contract,
+//    stated outright;
 //  - the provenance facts are `PROVENANCE.md`'s existing four columns, and each
 //    recorded SHA-256 is checked against the bytes on disk, recomputed here
 //    with node:crypto — never against whatever the module believes.
 //
-// KNOWN CROSS-TASK COLLISION: `envinfo.test.ts` (task 1) asserts the snapshot
-// carries EXACTLY nine keys. This task adds the tenth, so that list must gain
-// `browserGuide` when this lands. Both suites then agree.
+// RETARGETED when `env` went back to reporting facts only: every case below
+// that used to read `browserGuide` off `dobby env --json` now reads the `text`
+// of `dobby instructions browser --json`, same fixtures and same cmux toggling.
+// Under cmux that text now OPENS with a surface step (reuse or open the
+// `dobby-browser-<slug>` pane) before the vendored protocol, so the protocol is
+// asserted by containment, never as the first line. Since the command already
+// exists these are REGRESSION GUARDS, not red contract tests.
 // ---------------------------------------------------------------------------
 
 useSpawnBudget();
@@ -112,41 +121,58 @@ afterAll(() => {
   cleanupDirs(scratchDirs);
 });
 
-// Ask the environment for its JSON snapshot, optionally inside a cmux workspace.
-async function snapshot(
-  workspaceId?: string
-): Promise<Record<string, unknown>> {
+// Put the process in (or out of) a cmux workspace before asking.
+function withCmux(workspaceId?: string): void {
   if (workspaceId === undefined) {
     Reflect.deleteProperty(process.env, CMUX);
   } else {
     process.env[CMUX] = workspaceId;
   }
+}
+
+// Ask the environment for its JSON snapshot, optionally inside a cmux workspace.
+async function snapshot(
+  workspaceId?: string
+): Promise<Record<string, unknown>> {
+  withCmux(workspaceId);
   const result = await run(["env", "--json"], project);
   expect(result.exitCode).toBe(0);
   return JSON.parse(result.stdout) as Record<string, unknown>;
 }
 
+// Ask the CATALOGUE for the browser topic — the guide's delivery channel.
+async function browserInstruction(
+  workspaceId?: string
+): Promise<Record<string, unknown>> {
+  withCmux(workspaceId);
+  const result = await run(["instructions", "browser", "--json"], project);
+  expect(result.exitCode, result.stderr).toBe(0);
+  return JSON.parse(result.stdout) as Record<string, unknown>;
+}
+
 async function guideFor(workspaceId?: string): Promise<string> {
-  const value = (await snapshot(workspaceId)).browserGuide;
+  const value = (await browserInstruction(workspaceId)).text;
   expect(typeof value).toBe("string");
   return value as string;
 }
 
 // --- Slice 1 (tracer bullet): the cmux protocol reaches QA ------------------
-// The headline behavior: inside a cmux workspace the snapshot already carries
-// the protocol QA would otherwise rediscover every run.
-describe("dobby env --json — inside a cmux workspace", () => {
-  it("reports a browser guide for the environment", async () => {
-    const snap = await snapshot("cmux-ws-browser-guide");
+// The headline behavior: inside a cmux workspace QA is handed the protocol it
+// would otherwise rediscover every run.
+describe("dobby instructions browser — inside a cmux workspace", () => {
+  it("hands over a browser guide for the environment", async () => {
+    const payload = await browserInstruction("cmux-ws-browser-guide");
 
-    expect(snap).toHaveProperty("browserGuide");
-    expect(typeof snap.browserGuide).toBe("string");
+    expect(payload.applies).toBe(true);
+    expect(typeof payload.text).toBe("string");
   });
 
   it("carries the vendored cmux browser protocol, not a pointer to it", async () => {
     const guide = await guideFor("cmux-ws-browser-guide");
 
-    // A URL to fetch later is exactly what this task replaces.
+    // A URL to fetch later is exactly what the vendoring replaced. The text may
+    // OPEN with the surface step (reuse or open the browser pane), so the
+    // protocol is asserted by containment, never as the first line.
     expect(guide.trim().length).toBeGreaterThan(200);
     expect(guide).toMatch(/cmux-browser/i);
   });
@@ -162,7 +188,7 @@ describe("dobby env --json — inside a cmux workspace", () => {
 });
 
 // --- Slice 2: the non-cmux variant, never empty -----------------------------
-describe("dobby env --json — without a cmux workspace", () => {
+describe("dobby instructions browser — without a cmux workspace", () => {
   it("carries the non-cmux verification instructions instead", async () => {
     const guide = await guideFor();
 
@@ -185,23 +211,28 @@ describe("dobby env --json — without a cmux workspace", () => {
 });
 
 // --- Slice 3: the selector actually selects ---------------------------------
-describe("dobby env --json — the guide matches the detected environment", () => {
+describe("dobby instructions browser — the guide matches the detected environment", () => {
   it("returns a different guide for each environment", async () => {
-    const withCmux = await guideFor("cmux-ws-browser-guide");
-    const withoutCmux = await guideFor();
+    const cmuxGuide = await guideFor("cmux-ws-browser-guide");
+    const terminalGuide = await guideFor();
 
-    expect(withCmux).not.toBe(withoutCmux);
+    expect(cmuxGuide).not.toBe(terminalGuide);
   });
 
-  it("agrees with the cmux fact the same snapshot reports", async () => {
-    const inside = await snapshot("cmux-ws-browser-guide");
-    const outside = await snapshot();
+  it("agrees with the cmux fact the environment snapshot reports", async () => {
+    // The two commands must read the same environment: whenever `env` says a
+    // cmux workspace is present, the guide handed over is the cmux one — and
+    // when it says none is, the guide never names the driver QA cannot run.
+    const insideFacts = await snapshot("cmux-ws-browser-guide");
+    const insideGuide = await guideFor("cmux-ws-browser-guide");
+    const outsideFacts = await snapshot();
+    const outsideGuide = await guideFor();
 
     expect([
-      inside.cmux === "cmux-ws-browser-guide",
-      /cmux-browser/i.test(inside.browserGuide as string),
-      outside.cmux === null,
-      /cmux-browser/i.test(outside.browserGuide as string),
+      insideFacts.cmux === "cmux-ws-browser-guide",
+      /cmux-browser/i.test(insideGuide),
+      outsideFacts.cmux === null,
+      /cmux-browser/i.test(outsideGuide),
     ]).toEqual([true, true, true, false]);
   });
 
@@ -213,23 +244,13 @@ describe("dobby env --json — the guide matches the detected environment", () =
   });
 });
 
-// --- Slice 4: the rest of the snapshot survives -----------------------------
-describe("dobby env — the snapshot keeps its other facts", () => {
-  it("carries exactly the ten environment facts and nothing else", async () => {
+// --- Slice 4: the snapshot keeps its own job --------------------------------
+// `env` reports environment FACTS; the guide reaches QA through the catalogue.
+describe("dobby env — the snapshot reports facts, not the guide", () => {
+  it("no longer delivers the browser guide as an environment fact", async () => {
     const snap = await snapshot("cmux-ws-browser-guide");
 
-    expect(Object.keys(snap).sort()).toEqual([
-      "branch",
-      "browserGuide",
-      "browserPane",
-      "capabilities",
-      "cmux",
-      "config",
-      "dbTasks",
-      "devUrl",
-      "runPane",
-      "worktree",
-    ]);
+    expect(snap).not.toHaveProperty("browserGuide");
   });
 
   it("still reports the project's branch, worktree root and config", async () => {

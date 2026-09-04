@@ -14,16 +14,23 @@ import { loadConfig } from "./config.ts";
 import { detectCapabilities, scanCapabilities } from "./detect.ts";
 import { resolveDevUrl } from "./envinfo.ts";
 import {
-  DEV_START_COMMAND,
   detectEnvironment,
   type Environment,
-  killFromPidfile,
+  type Instruction,
+  type Topic,
 } from "./environment.ts";
 import {
   installPrePushHook,
   type PrePushHookAction,
   planPrePushHook,
 } from "./hook-install.ts";
+import {
+  clearOwnPidfile,
+  killFromPidfile,
+  listStaleSidecars,
+  liveRegisteredPid,
+  writePidfile,
+} from "./pidfile.ts";
 import {
   configArgs,
   requireWorkroot,
@@ -483,14 +490,22 @@ function executeDbCommand(
 // entry points around it:
 //   - `planDev(cwd)` — the CAPTURE path (used by run() for `--dry-run` and the
 //     no-app gate): detect capabilities, build the plan, and turn "no app main"
-//     into the hard "nothing to run" error. No spawn.
-//   - `runDev(cwd)` — the STREAMING path (used ONLY by the bin, index.ts): clear
-//     the `.vite` cache, then spawn the portless-wrapped main + the concurrent
+//     OR "a live twin is already registered" (`pidfile.ts`'s `liveRegisteredPid`)
+//     into a hard error. No spawn, no registration — dry-run and the in-process
+//     `run()` seam must never write the pidfile. This is a SOFT pre-check only
+//     (read-then-decide) — it narrows the window but cannot close a race
+//     between two `dev`s starting in the same tick.
+//   - `runDev(cwd)` — the STREAMING path (used ONLY by the bin, index.ts): once
+//     `planDev`'s pre-check clears, register THIS process ATOMICALLY
+//     (`writePidfile`, which is the hard gate — refusing here too when it
+//     loses a race `planDev` missed) before touching anything else, clear the
+//     `.vite` cache, then spawn the portless-wrapped main + the concurrent
 //     secondaries as ONE managed process group; on any child exit or a
-//     SIGINT/SIGTERM to dobby, tear the whole group down and exit with the MAIN's
-//     code. Inherited stdio — it streams and lives until the group exits. NOT
-//     CI-tested (spawns real servers) — covered by the wrap-stage human smoke + the
-//     QA's live recipe.
+//     SIGINT/SIGTERM to dobby, clear the registration (`clearOwnPidfile`, only
+//     if it still names US) and tear the whole group down, exiting with the
+//     MAIN's code. Inherited stdio — it streams and lives until the group
+//     exits. NOT CI-tested (spawns real servers) — covered by the wrap-stage
+//     human smoke + the QA's live recipe.
 // ---------------------------------------------------------------------------
 
 // A dev command whose bin is RESOLVED to a spawnable path: a consumer-local
@@ -516,9 +531,18 @@ export interface ResolvedDevPlan {
 }
 
 // The outcome of planning `dobby dev`:
-//   - `{ ok: false, error }` — no app main (no vite) → the "nothing to run" gate.
-//   - `{ ok: true, plan }`   — an app exists; the RESOLVED ordered plan (main,
-//     secondaries) is ready to render (dry-run) or execute (streaming).
+//   - `{ ok: false, error }` — one of TWO hard gates: no app main (no vite) →
+//     the "nothing to run" gate, OR a live, OWNED twin is already registered
+//     (`liveRegisteredPid`) → the "already running" gate (names the pid and
+//     `dobby down`). Checked here — not in `runDev` — because this is the ONE
+//     function both the in-process `run()` seam (which never reaches `runDev`;
+//     see `runDev`'s header) and the streaming path share, so it is the
+//     cheapest place a refusal is visible to both; it is a SOFT pre-check,
+//     though — `runDev`'s own `writePidfile` call is the hard, race-proof gate
+//     that can still refuse after this one passes.
+//   - `{ ok: true, plan }`   — an app exists and no live twin blocks it; the
+//     RESOLVED ordered plan (main, secondaries) is ready to render (dry-run) or
+//     execute (streaming).
 export type DevReport =
   | { ok: false; error: string }
   | { ok: true; plan: ResolvedDevPlan };
@@ -527,7 +551,11 @@ export type DevReport =
 // spawn). Capabilities are detected from `cwd` (a single-package project runs
 // dobby at its root); `config` is threaded for signature-completeness (v1 has no
 // config-driven dev behavior). No vite app → the "nothing to run" gate (exit 1);
-// `up` is the graceful path for a project with nothing to serve.
+// `up` is the graceful path for a project with nothing to serve. A live, OWNED
+// twin already registered in `.dobby/dev.pid` → the "already running" gate
+// (exit 1, naming the pid and `dobby down`) — checked with a SOFT workroot (no
+// workroot, no possible pidfile, so the check is simply skipped rather than
+// failing hard; the real streaming path re-asserts a hard workroot separately).
 export function planDev(cwd: string): DevReport {
   // Scan ONCE for both the capabilities AND the raw dependency set — the latter
   // feeds `viteConfigSpec`'s require-all-imports guard (the tanstack preset is
@@ -548,6 +576,13 @@ export function planDev(cwd: string): DevReport {
   // hard outside a git repo; a null root leaves consumer bins as bare names, the
   // documented fallback). The real streaming path re-asserts a hard workroot.
   const root = resolveWorkroot(cwd);
+  const twin = root === null ? null : liveRegisteredPid(root);
+  if (twin !== null) {
+    return {
+      error: `already running (pid ${twin}) — \`dobby down\` stops it`,
+      ok: false,
+    };
+  }
   // The vite default (ADR-0015): BLOCKED for a config-less tanstack app missing an
   // imported package — no import-safe fallback serves the app, so it is a HARD ERROR
   // through the plan/run error path (dev's 'nothing to run' twin), not a silent base.
@@ -632,6 +667,22 @@ export async function runDev(cwd: string): Promise<number> {
     return 1;
   }
 
+  // Register THIS process — `planDev` (above) is only a SOFT pre-check (it can
+  // race another `dev` started in the same tick); `writePidfile` is the hard,
+  // atomic gate that actually decides the winner. Before any cache clear or
+  // spawn, so a refused run starts nothing and a crash between here and the
+  // managed group still leaves an accurate registration for the next `dev` or a
+  // `down` to find.
+  const registration = writePidfile(root);
+  if (!registration.registered) {
+    const pidNote =
+      registration.pid === null ? "" : ` (pid ${registration.pid})`;
+    process.stderr.write(
+      `already running${pidNote} — \`dobby down\` stops it\n`
+    );
+    return 1;
+  }
+
   // (1) Cache-clear (`rm -rf node_modules/.vite`) — done natively, before spawning.
   for (const clear of cacheClears) {
     const target = clear.args.at(-1);
@@ -668,7 +719,9 @@ export async function runDev(cwd: string): Promise<number> {
 // email dev server, …) die together. ANY child exiting, or a SIGINT/SIGTERM to
 // dobby, collapses the whole group; the resolved code is the MAIN's exit code (a
 // secondary dying or a signal is a nonzero teardown). node:child_process semantics
-// only.
+// only. Teardown ALSO clears our own registry entry (`clearOwnPidfile` — only when
+// it still names US, so a newer `dev` that already overwrote the pidfile is not
+// un-registered by this older one finishing its shutdown).
 function runManagedGroup(
   main: { bin: string; args: string[] },
   secondaries: Array<{ bin: string; args: string[] }>,
@@ -687,6 +740,7 @@ function runManagedGroup(
         return;
       }
       settled = true;
+      clearOwnPidfile(root);
       for (const child of children) {
         killGroup(child);
       }
@@ -909,40 +963,27 @@ function livenessRetries(): number {
 
 // One planned `up` action, discriminated by `kind`. `run.ts` renders each to its
 // shell-style plan line(s); `executeUp` performs the real operation. Every literal
-// a test reads (the cmux command shape, the neon branch verb, the pane names, the
-// detached-state paths) is carried HERE as data.
+// a test reads (the neon branch verb, the liveness-probe shape) is carried HERE as
+// data. Since TASK 4 `up` no longer plans its own start (cmux pane / detached
+// spawn) — that is now an `Instruction` (see `UpPlan.instructions`), quoted by
+// `run.ts`'s `formatUpPlan` under an `agent:` hand-over, never executed here.
 export type UpAction =
   | { kind: "probe"; url: string | null }
   | { kind: "neon-branch"; branch: string; projectId: string }
-  | {
-      kind: "cmux-run-pane";
-      workspace: string;
-      runName: string;
-      sendLine: string;
-    }
-  | {
-      kind: "cmux-browser-pane";
-      workspace: string;
-      devUrl: string | null;
-      browserName: string;
-    }
-  | { kind: "detached"; command: string; pidRel: string; logRel: string }
   | { kind: "wait"; url: string | null; retries: number; intervalSec: number };
 
 // The ordered `up` plan for `--dry-run`: the workroot it is pinned to, its slug,
-// the SETUP-PHASE actions (install → copies → extras) that run first, the cmux
-// WORKSPACE rename (present only under cmux, INDEPENDENT of the app gate), the
-// run-phase `actions` in execution order (probe → neon → start → wait), and
-// `runSkipped` — the reason the run phase is skipped (e.g. 'no app to run') or null
-// when it runs.
+// the SETUP-PHASE actions (install → copies → extras) that run first, up's OWN
+// run-phase `actions` in execution order (probe → neon → wait — `wait` is what the
+// in-flight retry path would run), the INSTRUCTIONS the run would hand over to the
+// model (rename when cmux, then start — applicable ones only, same shape as
+// `UpFacts.instructions`), and `runSkipped` — the reason the run phase is skipped
+// (e.g. 'no app to run') or null when it runs. The rename instruction is present
+// whenever cmux is, INDEPENDENT of the app gate — a no-app project still carries
+// its goal identity into the workspace title.
 export interface UpPlan {
   actions: UpAction[];
-  // The cmux workspace rename — present ONLY under cmux (null otherwise). Renames the
-  // workspace to the plain goal SLUG (no dobby- prefix — the panes carry that; the
-  // workspace title IS the goal identity) so the user can tell which workspace is
-  // which at a glance. Runs after the setup phase and BEFORE the no-app gate, so a
-  // no-app project still gets its workspace renamed.
-  renameWorkspace: { workspace: string; title: string } | null;
+  instructions: Instruction[];
   runSkipped: string | null;
   setup: SetupAction[];
   slug: string;
@@ -958,12 +999,15 @@ export interface UpPlan {
 //   worktree-copy-failed— a `.worktreeinclude` re-materialization copy threw.
 //   setup-extra-failed  — a config `setup[]` extra exited nonzero.
 //   neon-creds-missing  — a neon project without NEON_API_KEY / NEON_PROJECT_ID.
-//   dev-start-failed    — the run phase could not start the app (a failed detached
-//                         spawn, or a neon branch that could not be provisioned —
-//                         both leave the run phase with nothing running; the stderr
-//                         prose names which).
-//   liveness-timeout    — the app never answered the devUrl within the retry wait.
+//   neon-branch-failed  — the neon capability's branch could not be provisioned
+//                         (`bunx neonctl` failed); the stderr prose names it. NOT
+//                         CI-tested (needs real neonctl) — see `provisionNeonBranch`.
+//   liveness-timeout    — a start already in flight never answered the devUrl
+//                         within the retry wait.
 // A consumer branches on these; it must NEVER have to parse prose.
+// (`dev-start-failed` LEFT this enum with TASK 4: `up` starts nothing itself
+// anymore, so there is no start of its own that can fail — a failed START is now
+// something the model that ran the instruction sees in its own stderr.)
 type UpReason =
   | "not-a-git-repo"
   | "config-unreadable"
@@ -971,7 +1015,7 @@ type UpReason =
   | "worktree-copy-failed"
   | "setup-extra-failed"
   | "neon-creds-missing"
-  | "dev-start-failed"
+  | "neon-branch-failed"
   | "liveness-timeout";
 
 // WHERE `up` was when it stopped: the setup phase, the run phase, or the no-app
@@ -996,6 +1040,16 @@ interface UpFacts {
   // The portless dev URL the app was brought up on, or null (no app / not resolved
   // because the run never reached the run phase).
   devUrl: string | null;
+  // What the MODEL must do next — ONLY the applicable ones, ordered `rename`
+  // (cmux) then `start`. Always present (possibly empty): a live app with no cmux
+  // hands back nothing, an in-flight start that never answers hands back nothing
+  // either (the failure IS the report). Each entry is exactly what
+  // `environment.instruction(topic, ctx)` returns — never duplicated text here.
+  instructions: Instruction[];
+  // Whether the devUrl answered the (single, or in-flight-retried) probe. `false`
+  // pairs with an `ok:true` "please start it" report just as often as with an
+  // `ok:false` timeout — it says nothing about success on its own.
+  live: boolean;
   // Whether `up` succeeded. FALSE always pairs with a nonzero exit code.
   ok: boolean;
   phase: UpPhase;
@@ -1040,9 +1094,17 @@ export type UpReport =
 // The exit outcome of a real phase (setup or run): a clean success, or a failure
 // carrying BOTH the human note and its machine-readable reason. Modelled as a union
 // so the two can never drift apart — a failure without a reason does not typecheck.
+// Shared by `executeSetup` (the setup phase) and `executeUp` (the run phase, via
+// `UpRunOutcome` below, which adds the run phase's own `instructions`/`live`).
 type UpOutcome =
   | { exitCode: 0; failure: null; reason: null }
   | { exitCode: number; failure: string; reason: UpReason };
+
+// `executeUp`'s own outcome: everything `UpOutcome` carries, PLUS what the run
+// phase resolved — `instructions` (what the model must do next) and `live`
+// (whether the probe answered). A failure carries an empty instruction list (the
+// failure itself IS the report).
+type UpRunOutcome = UpOutcome & { instructions: Instruction[]; live: boolean };
 
 // The ONE remedy `up` offers, and only for an install-phase failure: re-run with the
 // documented skip seam so a broken/offline install does not block the workspace.
@@ -1056,6 +1118,8 @@ function upFacts(parts: {
   browserPane?: string | null;
   cmux: string | null;
   devUrl?: string | null;
+  instructions: Instruction[];
+  live: boolean;
   phase: UpPhase;
   reason: UpReason | null;
   slug: string | null;
@@ -1068,6 +1132,8 @@ function upFacts(parts: {
     degradedCommand:
       parts.reason === "install-failed" ? DEGRADED_UP_COMMAND : null,
     devUrl,
+    instructions: parts.instructions,
+    live: parts.live,
     ok: parts.reason === null,
     phase: parts.phase,
     reason: parts.reason,
@@ -1075,6 +1141,20 @@ function upFacts(parts: {
     verifyMode: devUrl === null ? "programmatic" : "url",
     workroot: parts.workroot,
   };
+}
+
+// Compute the APPLICABLE instructions for `topics`, in the given order, against the
+// resolved surface context — the single helper every `up` path (real run, dry-run
+// plan, both `hasApp` arms) uses so `applies: false` entries never leak into a
+// report (spec: "instructions holds ONLY applicable ones").
+function applicableInstructions(
+  environment: Environment,
+  topics: Topic[],
+  context: { devUrl: string | null; slug: string; workroot: string }
+): Instruction[] {
+  return topics
+    .map((topic) => environment.instruction(topic, context))
+    .filter((instruction) => instruction.applies);
 }
 
 // The decisions `up` resolves ONCE (git precondition, capabilities, devUrl, cmux,
@@ -1114,7 +1194,7 @@ export function runUp(
 ): UpReport {
   const machineReport = opts.machineReport === true;
   // The environment — resolved ONCE (independent of the app gate) so it feeds the
-  // workspace rename, the plan, and every report arm alike. `cmux` is its
+  // instruction catalogue, the plan, and every report arm alike. `cmux` is its
   // CMUX_WORKSPACE_ID-derived identity, unchanged in shape from the old direct read.
   const environment = detectEnvironment();
   const { cmux } = environment;
@@ -1129,6 +1209,8 @@ export function runUp(
       // and there is no slug without a workroot to take a basename of.
       facts: upFacts({
         cmux,
+        instructions: [],
+        live: false,
         phase: "setup",
         reason: "not-a-git-repo",
         slug: null,
@@ -1140,11 +1222,13 @@ export function runUp(
 
   const slug = basename(workroot);
   // Every arm reports the SAME identity (workroot / slug / cmux) and differs only in
-  // phase, reason and devUrl. The browser pane is discovered at REPORT time (after
-  // any pane this run opened exists) and only for a machine report — a plain `up`
-  // must not pay for cmux IPC nobody reads.
+  // phase, reason, devUrl, instructions and live. The browser pane is discovered at
+  // REPORT time (after any pane this run opened exists) and only for a machine
+  // report — a plain `up` must not pay for cmux IPC nobody reads.
   const reportFacts = (parts: {
     devUrl?: string | null;
+    instructions: Instruction[];
+    live: boolean;
     phase: UpPhase;
     reason: UpReason | null;
   }): UpFacts =>
@@ -1164,7 +1248,12 @@ export function runUp(
   if (loaded && !loaded.ok) {
     return {
       error: loaded.error,
-      facts: reportFacts({ phase: "setup", reason: "config-unreadable" }),
+      facts: reportFacts({
+        instructions: [],
+        live: false,
+        phase: "setup",
+        reason: "config-unreadable",
+      }),
       ok: false,
     };
   }
@@ -1173,23 +1262,33 @@ export function runUp(
   const setupPlan = buildSetupPlan(workroot, config);
   const capabilities = detectCapabilities(cwd);
   const hasApp = capabilities.includes("vite");
-  // The cmux workspace rename — present ONLY under cmux, so it appears in the plan
-  // and runs whether or not there is an app.
-  const renameWorkspace =
-    cmux === null ? null : { title: slug, workspace: cmux };
+  // The workspace rename — an INSTRUCTION now, present whenever cmux is,
+  // INDEPENDENT of the app gate: a no-app project still carries its goal identity
+  // into the workspace title. `devUrl: null` because it is not yet resolved this
+  // early (and the rename instruction never reads it).
+  const renameInstructions = applicableInstructions(environment, ["rename"], {
+    devUrl: null,
+    slug,
+    workroot,
+  });
 
   if (opts.dryRun) {
     // No app → the run phase is skipped, but the FULL plan still shows the setup
-    // phase, the cmux workspace rename (when present), and names the skip reason
+    // phase, the rename instruction (when cmux), and names the skip reason
     // (spec's --dry-run contract).
     if (!hasApp) {
       return {
-        facts: reportFacts({ phase: "noop", reason: null }),
+        facts: reportFacts({
+          instructions: renameInstructions,
+          live: false,
+          phase: "noop",
+          reason: null,
+        }),
         kind: "plan",
         ok: true,
         plan: {
           actions: [],
-          renameWorkspace,
+          instructions: renameInstructions,
           runSkipped: "no app to run",
           setup: setupPlan,
           slug,
@@ -1207,15 +1306,30 @@ export function runUp(
     if (!resolved.ok) {
       return {
         error: resolved.error,
-        facts: reportFacts({ phase: "run", reason: "neon-creds-missing" }),
+        facts: reportFacts({
+          instructions: [],
+          live: false,
+          phase: "run",
+          reason: "neon-creds-missing",
+        }),
         ok: false,
       };
     }
+    // A dry run EXECUTES nothing, so the instructions quoted are what a real run
+    // would hand over ASSUMING nothing is already running — dry-run never curls,
+    // so it cannot know whether the app (or a start) is already live.
+    const instructions = applicableInstructions(
+      environment,
+      ["rename", "start"],
+      { devUrl: resolved.context.devUrl, slug, workroot }
+    );
     return {
-      // A dry run EXECUTES nothing, so the report describes the run it planned: the
-      // phase it would end in, no reason, and the devUrl it resolved.
+      // The report describes the run it planned: the phase it would end in, no
+      // reason, and the devUrl it resolved.
       facts: reportFacts({
         devUrl: resolved.context.devUrl,
+        instructions,
+        live: false,
         phase: "run",
         reason: null,
       }),
@@ -1223,7 +1337,7 @@ export function runUp(
       ok: true,
       plan: {
         actions: buildUpActions(resolved.context),
-        renameWorkspace,
+        instructions,
         runSkipped: null,
         setup: setupPlan,
         slug,
@@ -1238,23 +1352,29 @@ export function runUp(
   if (setupOutcome.reason !== null) {
     return {
       exitCode: setupOutcome.exitCode,
-      facts: reportFacts({ phase: "setup", reason: setupOutcome.reason }),
+      facts: reportFacts({
+        instructions: [],
+        live: false,
+        phase: "setup",
+        reason: setupOutcome.reason,
+      }),
       failure: setupOutcome.failure,
       kind: "ran",
       ok: true,
     };
   }
 
-  // (1b) Rename the workspace to the goal slug — after the setup phase and BEFORE
-  // the no-app gate, so a no-app project's workspace is still renamed. A no-op for
-  // an environment with no workspace concept (terminal). Idempotent by nature
-  // (re-running `up` re-renames to the same title).
-  environment.renameWorkspace(workroot, slug);
-
   // (2) The no-app gate — the graceful no-op, reached only after the setup phase.
+  // The rename instruction is still owed (INDEPENDENT of the app gate) — `up` no
+  // longer renames anything itself, so it is handed back here instead of run.
   if (!hasApp) {
     return {
-      facts: reportFacts({ phase: "noop", reason: null }),
+      facts: reportFacts({
+        instructions: renameInstructions,
+        live: false,
+        phase: "noop",
+        reason: null,
+      }),
       kind: "noop",
       message: "no app to run",
       ok: true,
@@ -1272,7 +1392,12 @@ export function runUp(
   if (!resolved.ok) {
     return {
       error: resolved.error,
-      facts: reportFacts({ phase: "run", reason: "neon-creds-missing" }),
+      facts: reportFacts({
+        instructions: [],
+        live: false,
+        phase: "run",
+        reason: "neon-creds-missing",
+      }),
       ok: false,
     };
   }
@@ -1281,6 +1406,8 @@ export function runUp(
     exitCode: outcome.exitCode,
     facts: reportFacts({
       devUrl: resolved.context.devUrl,
+      instructions: outcome.instructions,
+      live: outcome.live,
       phase: "run",
       reason: outcome.reason,
     }),
@@ -1332,16 +1459,13 @@ function resolveUpContext(
 }
 
 // The ordered `up` plan derived from the resolved decisions: probe → neon branch
-// (when neon) → start (the cmux RUN pane XOR the detached run) → liveness wait →
-// the cmux BROWSER pane. The browser pane comes LAST on purpose: opened while the
-// server is still booting it renders a 404, so it waits for liveness (the run pane
-// keeps opening immediately — watching the server boot is its whole purpose).
-//
-// This is the FRESH-START shape, and it is unconditional: `--dry-run` executes
-// NOTHING (the probe is a planned ACTION, never performed while planning), so there is
-// no already-live plan variant to build. The already-live short-circuit is decided at
-// EXECUTION time by the probe's answer — it skips every start/wait action listed here
-// and only reconciles the browser pane (see executeUp step 1).
+// (when neon) → the liveness wait. `wait` is what a REAL run's in-flight path
+// executes (see `executeUp`) — it is planned unconditionally because `--dry-run`
+// never knows whether a start is already in flight (it never curls). Since TASK 4
+// the start itself (cmux RUN pane XOR the terminal background job) is no longer
+// planned HERE — it is an `Instruction` (see `UpPlan.instructions`), computed
+// alongside this action list and quoted by `run.ts`'s `formatUpPlan` under an
+// `agent:` hand-over.
 function buildUpActions(context: UpContext): UpAction[] {
   const actions: UpAction[] = [{ kind: "probe", url: context.devUrl }];
 
@@ -1353,22 +1477,6 @@ function buildUpActions(context: UpContext): UpAction[] {
     });
   }
 
-  if (context.cmux === null) {
-    actions.push({
-      command: DEV_START_COMMAND,
-      kind: "detached",
-      logRel: ".dobby/dev.log",
-      pidRel: ".dobby/dev.pid",
-    });
-  } else {
-    actions.push({
-      kind: "cmux-run-pane",
-      runName: `dobby-run-${context.slug}`,
-      sendLine: `cd ${context.workroot} && ${DEV_START_COMMAND}`,
-      workspace: context.cmux,
-    });
-  }
-
   actions.push({
     intervalSec: LIVENESS_INTERVAL_SEC,
     kind: "wait",
@@ -1376,83 +1484,105 @@ function buildUpActions(context: UpContext): UpAction[] {
     url: context.devUrl,
   });
 
-  // AFTER the wait — a real run only reaches this once the devUrl responds.
-  if (context.cmux !== null) {
-    actions.push({
-      browserName: `dobby-browser-${context.slug}`,
-      devUrl: context.devUrl,
-      kind: "cmux-browser-pane",
-      workspace: context.cmux,
-    });
-  }
   return actions;
 }
 
-// Execute a real `up` (liveness-first, idempotent). Its cmux/neon MECHANICS need a
-// live server / cmux / neonctl (not CI-tested), but the pane-vs-liveness ORDERING
-// below IS — a real run against stub `cmux`/`curl` bins recording into one log.
-function executeUp(context: UpContext): UpOutcome {
-  // (1) Already up? A single probe short-circuits — under cmux the BROWSER pane is
-  // reconciled (the app IS live here, so it opens immediately: it renders the running
-  // app, never a 404) and the RUN pane is deliberately LEFT ALONE.
-  //
-  // NOTHING is started on this path — no dev-start line is ever sent. The server that
-  // answers the probe need not live in a pane we can see: the user may have closed the
-  // run pane, or the server may be a detached process from an earlier session while
-  // THIS `up` runs under cmux. Recreating the pane and sending `dobby dev` into it
-  // would boot a SECOND dev server against the same portless route for an app that is
-  // already healthy — so a surviving `dobby-run-<slug>` pane simply keeps running, and
-  // a missing one is NOT replaced (there would be nothing useful to run in it).
+// Execute a real `up`: probe once, then decide. `up` no longer starts, opens,
+// sends to, closes or renames anything itself — everything it used to DO comes
+// back as an `Instruction` for the model to carry out. The pane-vs-liveness
+// ORDERING below IS CI-tested — a real run against stub `cmux`/`curl`/`ps` bins
+// recording into one log.
+function executeUp(context: UpContext): UpRunOutcome {
+  const instructionCtx = {
+    devUrl: context.devUrl,
+    slug: context.slug,
+    workroot: context.workroot,
+  };
+  // The rename is owed whenever cmux is present, REGARDLESS of whether the app is
+  // already live or a start is already in flight — it is not something `up` starts
+  // or waits on.
+  const renameInstructions = applicableInstructions(
+    context.environment,
+    ["rename"],
+    instructionCtx
+  );
+
+  // (1) Already up? A single probe decides it. NOTHING is started on this path —
+  // the server that answers the probe need not be one `up` can see (the user may
+  // have closed the run surface, or it may be a detached process from an earlier
+  // session) — so a live app is simply left running.
   if (
     context.devUrl !== null &&
     probeLiveness(context.workroot, context.devUrl)
   ) {
-    context.environment.ensureBrowserSurface(context);
-    return { exitCode: 0, failure: null, reason: null };
-  }
-
-  // (2) Neon branch — create idempotently and rewrite the worktree's .env.local. A
-  // branch that cannot be provisioned aborts the run phase with NOTHING started, so
-  // it reports as `dev-start-failed` (the stderr prose names neonctl); the creds-
-  // missing case is its own reason and was already caught while resolving.
-  if (context.neon !== null) {
-    const failure = provisionNeonBranch(context);
-    if (failure !== null) {
-      return { exitCode: 1, failure, reason: "dev-start-failed" };
-    }
-  }
-
-  // (3) Start: cmux owns the process in the named RUN pane (opened NOW — watching
-  // the server boot is that pane's purpose), else spawn detached. A failed detached
-  // spawn fails `up` NOW (never entering the liveness wait for a server that never
-  // started); the cmux path is owned by cmux and unaffected.
-  if (!context.environment.ensureRunSurface(context)) {
     return {
-      exitCode: 1,
-      failure: "could not start `bunx dobby dev` — see .dobby/dev.log",
-      reason: "dev-start-failed",
+      exitCode: 0,
+      failure: null,
+      instructions: renameInstructions,
+      live: true,
+      reason: null,
     };
   }
 
-  // (4) Wait for liveness (retry loop). Never reachable → fail with the trust hint,
-  // and NO browser pane: a dead/404 browser pane is pure noise.
-  if (
-    context.devUrl === null ||
-    !waitForLiveness(context.workroot, context.devUrl)
-  ) {
+  // (2) Not live — neon branch provisioning stays where it is (only under the
+  // `neon` capability, unchanged): create idempotently and rewrite the worktree's
+  // .env.local, BEFORE deciding whether a start is already in flight or must be
+  // handed back — either way the model's `dobby dev` needs the branch's
+  // connection string already in place. NOT CI-tested (needs real neonctl).
+  if (context.neon !== null) {
+    const failure = provisionNeonBranch(context);
+    if (failure !== null) {
+      return {
+        exitCode: 1,
+        failure,
+        instructions: [],
+        live: false,
+        reason: "neon-branch-failed",
+      };
+    }
+  }
+
+  // (3) Is a start already in flight? A live, OWNED `.dobby/dev.pid` means the
+  // model's `bunx dobby dev` is already booting, so `up` re-probes instead of
+  // handing the start over a second time — the EXISTING retry loop, unchanged.
+  const inFlightPid = liveRegisteredPid(context.workroot);
+  if (inFlightPid !== null) {
+    if (
+      context.devUrl !== null &&
+      waitForLiveness(context.workroot, context.devUrl)
+    ) {
+      return {
+        exitCode: 0,
+        failure: null,
+        instructions: renameInstructions,
+        live: true,
+        reason: null,
+      };
+    }
     return {
       exitCode: 1,
       failure:
         "the app never became reachable — check that the portless daemon is running and the local CA is trusted (`portless trust`)",
+      instructions: [],
+      live: false,
       reason: "liveness-timeout",
     };
   }
 
-  // (5) The app responds → open the browser pane on the devUrl. Deliberately AFTER
-  // the wait: created alongside the boot it would render a 404 until the server came
-  // up (the field annoyance this ordering fixes).
-  context.environment.ensureBrowserSurface(context);
-  return { exitCode: 0, failure: null, reason: null };
+  // (4) Nothing starting — hand the rename (when cmux) and the start back to the
+  // model IMMEDIATELY. No pidfile is written here: whoever RUNS the instruction
+  // owns the registry (`dobby dev` registers its own, on startup).
+  return {
+    exitCode: 0,
+    failure: null,
+    instructions: applicableInstructions(
+      context.environment,
+      ["rename", "start"],
+      instructionCtx
+    ),
+    live: false,
+    reason: null,
+  };
 }
 
 // A single liveness probe: `curl -sf --max-time 5 <url>` (HTTP 200 → alive).
@@ -1603,84 +1733,181 @@ function togglePooler(uri: string, pooled: boolean): string {
 }
 
 // ---------------------------------------------------------------------------
-// `dobby down` — teardown: close kit panes, kill the detached run, delete the neon
-// branch, run teardown[] extras.
+// `dobby down` — teardown: kill the detached run, delete the neon branch, run
+// teardown[] extras. Since TASK 7 `down` no longer closes a cmux surface itself —
+// the close comes back as the `stop` INSTRUCTION (discovered, never executed here;
+// see environment.ts / adapters/cmux.ts's `cmuxStopInstruction`).
 // ---------------------------------------------------------------------------
 
 // One planned `down` action. `run.ts` renders each; `executeDown` performs it.
 export type DownAction =
-  | { kind: "cmux-close"; browserName: string; runName: string }
   | { kind: "kill-pidfile"; pidRel: string }
   | { kind: "neon-delete"; branch: string; projectId: string }
   | { kind: "extra"; run: string };
 
-// The ordered `down` plan for `--dry-run`.
+// The ordered `down` plan for `--dry-run`: down's own actions (kill pidfile →
+// delete neon branch → teardown extras), plus the INSTRUCTIONS the run would hand
+// over to the model (the `stop` topic, applicable only when a kit pane is
+// discovered) — same shape as `DownFacts.instructions`, quoted by `run.ts`'s
+// `formatDownPlan` under an `agent:` hand-over, never rendered as one of down's own
+// action lines.
 export interface DownPlan {
   actions: DownAction[];
+  instructions: Instruction[];
   slug: string;
+  workroot: string;
+}
+
+// WHY `down` failed (or `null` on success), as a CLOSED enum — mirrors `UpReason`.
+//   not-a-git-repo        — the workroot precondition (requireWorkroot threw).
+//   teardown-extra-failed — a config `teardown[]` extra exited nonzero.
+//   neon-delete-failed    — reserved for a failed `neonctl branches delete`; the
+//                           delete stays BEST-EFFORT (unchanged behaviour — task
+//                           constraint), so this member is not yet produced by any
+//                           path. Kept in the enum because the spec names it.
+type DownReason =
+  | "not-a-git-repo"
+  | "neon-delete-failed"
+  | "teardown-extra-failed";
+
+// The machine-readable `down` report: flat, `UpFacts`-style (explicit nulls, never
+// omitted keys). Decided HERE (data); `run.ts` renders it as the sole stdout of
+// `down --json`.
+interface DownFacts {
+  // The CMUX_WORKSPACE_ID value, or null outside cmux.
+  cmux: string | null;
+  // What the MODEL must do next — ONLY the applicable ones: the `stop` topic when a
+  // kit pane was discovered, else empty. Each entry is exactly what
+  // `environment.instruction("stop", ctx)` returns — never duplicated text here.
+  instructions: Instruction[];
+  // Whether `down` succeeded. FALSE always pairs with a nonzero exit code.
+  ok: boolean;
+  // Null on success; the enum member on failure — never prose.
+  reason: DownReason | null;
+  // The goal slug (workroot basename), or null when no workroot resolved.
+  slug: string | null;
+  // The absolute workroot; the directory `down` ran in when none resolved
+  // (not-a-git-repo).
   workroot: string;
 }
 
 // The outcome of `dobby down`:
 //   - `{ ok: false, error }`  — outside a git repo (fail hard).
 //   - `{ ok: true, kind: "plan", plan }` — `--dry-run`: the plan to render.
-//   - `{ ok: true, kind: "ran", exitCode, failure }` — a real teardown executed
-//     (nothing to clean → exit 0 no-op).
+//   - `{ ok: true, kind: "ran", exitCode, failure, childOutput }` — a real
+//     teardown executed (nothing to clean → exit 0 no-op). `childOutput` is a
+//     teardown extra's captured stdout+stderr under `--json` (empty otherwise —
+//     a plain `down` streams it straight to the terminal instead); see
+//     `executeDown`.
+// EVERY arm also carries `facts` — the same outcome as the flat machine report
+// (`down --json`), mirroring `UpReport`.
 export type DownReport =
-  | { ok: false; error: string }
-  | { ok: true; kind: "plan"; plan: DownPlan }
-  | { ok: true; kind: "ran"; exitCode: number; failure: string | null };
+  | { ok: false; error: string; facts: DownFacts }
+  | { ok: true; kind: "plan"; plan: DownPlan; facts: DownFacts }
+  | {
+      ok: true;
+      kind: "ran";
+      childOutput: string;
+      exitCode: number;
+      failure: string | null;
+      facts: DownFacts;
+    };
 
-// The decisions a real `down` needs (the resolved environment for pane discovery,
-// the neon API key for the delete). Derived once, shared with the plan.
+// The decisions a real `down` needs (the neon API key for the delete). Derived
+// once, shared with the plan.
 interface DownContext {
-  cmux: string | null;
-  environment: Environment;
   neonApiKey: string | null;
   slug: string;
   workroot: string;
 }
 
+// Assemble the machine report from what the caller resolved — the `down` sibling of
+// `upFacts`.
+function downFacts(parts: {
+  cmux: string | null;
+  instructions: Instruction[];
+  reason: DownReason | null;
+  slug: string | null;
+  workroot: string;
+}): DownFacts {
+  return {
+    cmux: parts.cmux,
+    instructions: parts.instructions,
+    ok: parts.reason === null,
+    reason: parts.reason,
+    slug: parts.slug,
+    workroot: parts.workroot,
+  };
+}
+
 // Resolve `down` for the git worktree enclosing `cwd`, then either PLAN
 // (`--dry-run`) or execute the teardown. Fails hard outside a git repo. Nothing to
 // clean → exit 0 no-op.
-export function runDown(cwd: string, opts: { dryRun: boolean }): DownReport {
+//
+// `machineReport` (set by `down --json`) changes NO decision — only one mechanic:
+// teardown extras stream their stdout to fd 2 instead of fd 1, so stdout stays the
+// sole JSON object. Pane discovery for `instructions` is NOT gated on
+// `machineReport` — a plain text `down` and `--dry-run` both need to quote the
+// `stop` instruction too, so it runs whenever cmux is present, one `list-panes`
+// call, independent of dryRun/machineReport.
+export function runDown(
+  cwd: string,
+  opts: { dryRun: boolean; machineReport?: boolean }
+): DownReport {
+  const machineReport = opts.machineReport === true;
+  // Resolved ONCE — the single CMUX_WORKSPACE_ID read this command makes.
+  const environment = detectEnvironment();
+  const { cmux } = environment;
+
   let workroot: string;
   try {
     workroot = requireWorkroot(cwd);
   } catch (error) {
     return {
       error: error instanceof Error ? error.message : String(error),
+      facts: downFacts({
+        cmux,
+        instructions: [],
+        reason: "not-a-git-repo",
+        slug: null,
+        workroot: cwd,
+      }),
       ok: false,
     };
   }
 
   const slug = basename(workroot);
   const capabilities = detectCapabilities(cwd);
-  // Resolved ONCE — the single CMUX_WORKSPACE_ID read this command makes.
-  const environment = detectEnvironment();
-  const { cmux } = environment;
   const loaded = loadConfig(cwd);
   const config = loaded?.ok ? loaded.config : null;
   const neonCreds = capabilities.includes("neon")
     ? readNeonCreds(workroot)
     : null;
 
+  // The `stop` instruction — applicable only when a kit pane is discovered (see
+  // `cmuxStopInstruction`); terminal never applies. Computed ONCE, shared by the
+  // plan, the machine report and a real run alike.
+  const instructions = applicableInstructions(environment, ["stop"], {
+    devUrl: null,
+    slug,
+    workroot,
+  });
+
   const actions: DownAction[] = [];
 
-  // (1) Kit panes (cmux only) — discovered + closed live at execution time.
-  if (cmux !== null) {
-    actions.push({
-      browserName: `dobby-browser-${slug}`,
-      kind: "cmux-close",
-      runName: `dobby-run-${slug}`,
-    });
-  }
-  // (2) The detached-run pidfile — kill the group, or clean a stale file.
+  // (1) The detached-run pidfile — kill the group, or clean a stale file.
   if (existsSync(join(workroot, ".dobby", "dev.pid"))) {
     actions.push({ kind: "kill-pidfile", pidRel: ".dobby/dev.pid" });
   }
-  // (3) Neon branch delete (capability + BOTH creds present; missing → skip).
+  // (1b) Every reclaim sidecar (`.dobby/dev.pid.stale.*`) a `dev` registration
+  // race left behind — one may hold ANOTHER run's live, owned pid that its own
+  // restore never landed (review round 3, greptile P1). Swept with the exact
+  // same mechanic as `dev.pid` itself: `killFromPidfile` below applies the
+  // identical ownership check per sidecar and removes it regardless of outcome.
+  for (const pidRel of listStaleSidecars(workroot)) {
+    actions.push({ kind: "kill-pidfile", pidRel });
+  }
+  // (2) Neon branch delete (capability + BOTH creds present; missing → skip).
   if (
     neonCreds !== null &&
     neonCreds.apiKey !== null &&
@@ -1692,39 +1919,72 @@ export function runDown(cwd: string, opts: { dryRun: boolean }): DownReport {
       projectId: neonCreds.projectId,
     });
   }
-  // (4) Config teardown[] extras, sequentially.
+  // (3) Config teardown[] extras, sequentially.
   for (const extra of config?.teardown ?? []) {
     actions.push({ kind: "extra", run: extra });
   }
 
   if (opts.dryRun) {
-    return { kind: "plan", ok: true, plan: { actions, slug, workroot } };
+    return {
+      facts: downFacts({ cmux, instructions, reason: null, slug, workroot }),
+      kind: "plan",
+      ok: true,
+      plan: { actions, instructions, slug, workroot },
+    };
   }
   const context: DownContext = {
-    cmux,
-    environment,
     neonApiKey: neonCreds?.apiKey ?? null,
     slug,
     workroot,
   };
-  return { kind: "ran", ok: true, ...executeDown(context, actions) };
+  const outcome = executeDown(context, actions, machineReport);
+  return {
+    childOutput: outcome.childOutput,
+    exitCode: outcome.exitCode,
+    facts: downFacts({
+      cmux,
+      instructions,
+      reason: outcome.reason,
+      slug,
+      workroot,
+    }),
+    failure: outcome.failure,
+    kind: "ran",
+    ok: true,
+  };
 }
 
 // Execute a real `down` teardown, best-effort (a failing cleanup step never blocks
-// the rest). Only a failing config `teardown[]` extra surfaces in the exit code.
-// The pane-close / kill / neon-delete real work is NOT CI-tested.
+// the rest). Only a failing config `teardown[]` extra surfaces in the exit code /
+// reason today (the neon delete stays best-effort — see `DownReason`). The
+// kill / neon-delete real work is NOT CI-tested.
+//
+// `childOutputToStderr` (set by `runDown`'s `machineReport`) changes HOW a
+// teardown extra is run: a plain `down` still INHERITS the child's stdio (streams
+// straight to the terminal, unchanged); under `--json` the extra is CAPTURED
+// instead (never fd-inherited) and its combined stdout+stderr is accumulated into
+// `childOutput`, for `run.ts`'s `renderDownJson` to write on the SEAM's own stderr
+// string — a fd-inherited child would bypass the in-process capture seam entirely
+// (see downjson.test.ts's "keeps a succeeding teardown extra's output off stdout"
+// SEAM LIMIT comment, which spells out that this capture-and-forward is exactly
+// what the `--json` contract asks for, not a limitation to leave unaddressed).
 function executeDown(
   context: DownContext,
-  actions: DownAction[]
-): { exitCode: number; failure: string | null } {
+  actions: DownAction[],
+  childOutputToStderr: boolean
+): {
+  childOutput: string;
+  exitCode: number;
+  failure: string | null;
+  reason: DownReason | null;
+} {
   let exitCode = 0;
   let failure: string | null = null;
+  let reason: DownReason | null = null;
+  const childOutputParts: string[] = [];
 
   for (const action of actions) {
     switch (action.kind) {
-      case "cmux-close":
-        context.environment.closeSurfaces(context.workroot);
-        break;
       case "kill-pidfile":
         // NOT gated on the current environment — a stale pidfile from an earlier
         // terminal run must still be cleaned up even under a cmux `down` (see
@@ -1738,12 +1998,13 @@ function executeDown(
         deleteNeonBranch(context, action.branch, action.projectId);
         break;
       case "extra": {
-        const code = runInherit("sh", ["-c", action.run], {
-          root: context.workroot,
-        });
-        if (code !== 0 && failure === null) {
+        const code = childOutputToStderr
+          ? runCapturedExtra(action.run, context.workroot, childOutputParts)
+          : runInherit("sh", ["-c", action.run], { root: context.workroot });
+        if (code !== 0 && reason === null) {
           exitCode = code;
           failure = `teardown extra failed (exit ${code}): ${action.run}`;
+          reason = "teardown-extra-failed";
         }
         break;
       }
@@ -1751,11 +2012,29 @@ function executeDown(
         break;
     }
   }
-  return { exitCode, failure };
+  return { childOutput: childOutputParts.join(""), exitCode, failure, reason };
+}
+
+// Run one teardown extra CAPTURED (never fd-inherited), appending its combined
+// stdout+stderr to `parts` (in order) and returning its exit code (1 on a spawn
+// error, mirroring `runInherit`'s own fallback).
+function runCapturedExtra(run: string, root: string, parts: string[]): number {
+  const result = runCapture("sh", ["-c", run], { root });
+  const text = `${result.stdout}${result.stderr}`;
+  if (text !== "") {
+    parts.push(text);
+  }
+  if (result.error) {
+    return 1;
+  }
+  return result.status ?? 1;
 }
 
 // Delete the neon isolation branch (a missing branch is idempotently fine). NOT
-// CI-tested (needs real neonctl).
+// CI-tested (needs real neonctl). Best-effort, unchanged (task constraint): the
+// result is never inspected, so a failed delete never surfaces as
+// `neon-delete-failed` today — `runCapture` never touches the parent's own stdout,
+// so this needs no `childOutputToStderr` thread to keep `--json`'s stdout clean.
 function deleteNeonBranch(
   context: DownContext,
   branch: string,

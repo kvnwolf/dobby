@@ -650,6 +650,11 @@ export function usageCommands(
     { description: "Print a snapshot of the working environment", name: "env" },
     {
       description:
+        "Print the environment's instruction for a topic: start|stop|browser|rename",
+      name: "instructions <topic>",
+    },
+    {
+      description:
         "Run the quality gate (biome, tsc, knip, build, test); file args = biome-only fast path",
       name: "check [file...]",
     },

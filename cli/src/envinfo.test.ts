@@ -28,8 +28,10 @@ import {
 //    is the spec stated outright ("stop `dobby env` reporting `workflowRecipe`");
 //  - the surviving key set is `cli/CONTEXT.md`'s documented `EnvSnapshot` list
 //    (cmux, worktree, branch, capabilities, config, dbTasks, devUrl, runPane,
-//    browserPane) MINUS the one key this task retires, PLUS `browserGuide`
-//    (task 6, "ship the verification protocol inside the CLI", landed since);
+//    browserPane) MINUS the one key this task retires. `browserGuide` briefly
+//    joined that list and has since been RETIRED too: `env` reports facts only,
+//    and the browser guide is served by `dobby instructions browser`, so the
+//    snapshot must carry no such key at all (absent, not null);
 //  - `branch`/`worktree` are the branch name and temp dir THIS suite created;
 //  - `capabilities` are the glossary's fixed signal map (`drizzle-orm` →
 //    `drizzle`, `vitest` → `vitest`) applied to a package.json written here;
@@ -85,12 +87,19 @@ describe("dobby env --json — the workflow recipe is no longer reported", () =>
     expect(JSON.parse(result.stdout)).not.toHaveProperty("workflowRecipe");
   });
 
-  it("carries exactly the ten surviving environment facts and nothing else", async () => {
+  it("omits the browserGuide key: the snapshot reports facts, not instructions", async () => {
+    const result = await run(["env", "--json"], project);
+
+    // The guide moved to `dobby instructions browser`; `env` carries no such
+    // key at all — absent, not a null placeholder.
+    expect(JSON.parse(result.stdout)).not.toHaveProperty("browserGuide");
+  });
+
+  it("carries exactly the nine surviving environment facts and nothing else", async () => {
     const result = await run(["env", "--json"], project);
 
     expect(Object.keys(JSON.parse(result.stdout)).sort()).toEqual([
       "branch",
-      "browserGuide",
       "browserPane",
       "capabilities",
       "cmux",

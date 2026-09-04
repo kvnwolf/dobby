@@ -44,7 +44,7 @@ Present the full triage as a table, then gate with AskUserQuestion: **Apply as p
 The local guard was already proven before intake. Re-check it if the worktree
 changed; then resolve the same mechanical inputs as execute/dispatch:
 
-1. Run **`bunx dobby up --json`**. `ok:false` → STOP and report `reason` plus `degradedCommand` when present. Retain its `devUrl` (possibly null), `verifyMode`, and `workroot`.
+1. Bring the workspace up per **`../execute/references/bring-up.md`** — `bunx dobby up --json`. `ok:false` → STOP and report `reason` plus `degradedCommand` when present. `instructions[]` non-empty → follow the reference (rename then start, in order) and re-run `up --json` before dispatching any fix Agent — this no longer stops the round, it's the normal path. Retain its `devUrl` (possibly null), `verifyMode`, and `workroot`.
 
 For every `fix`, delegate using those resolved values:
 
@@ -110,7 +110,7 @@ Interact with the user in their language. Code, comments, commit messages, ADRs,
 - [ ] Tool taken from the payload's `adapter`; when `candidates` named two bots, the user selected one and fetch/apply/watch all carried the same `--adapter <id>` (each required gate run in turn, all final payloads bound to one common `pr.headRefOid`, the full set restarted on mismatch); summary + confidence read from that selected payload
 - [ ] Every comment triaged (fix / defer / dismiss / outdated) and confirmed at the human gate — nothing auto-fixed
 - [ ] The local guard remained true through fixes/ship/apply/watch (and was re-checked after any worktree change); disappearing markers STOPped instead of switching execution sources
-- [ ] Before any fix Agent, `bunx dobby up --json` succeeded and supplied `devUrl`/`verifyMode`/`workroot` (failure launched zero Agents)
+- [ ] Before any fix Agent, the workspace was brought up per `../execute/references/bring-up.md` (`ok:false` launched zero Agents; non-empty `instructions[]` followed and `up --json` re-run rather than stopping the round) and supplied `devUrl`/`verifyMode`/`workroot`
 - [ ] Small/direct fixes were delegated in sequential batches sized by your own judgment, only non-overlapping work ran together, and shared-state mutations were serialized
 - [ ] Rigorous fixes used scratch task JSON → `bunx dobby build-plan --task … --json` → `../execute/references/build-protocol.md`'s build loop with returned `tasks`, `hasTestSuite.value`, `workRoot`, plus the resolved `devUrl`; architect edited no code
 - [ ] Decision-grade findings evaluated for ADRs; offered and written on approval

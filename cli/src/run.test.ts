@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -12,7 +12,15 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import pkg from "../package.json";
 import { spawnFailure } from "./check.ts";
 import { run } from "./run.ts";
@@ -282,6 +290,15 @@ describe("run() — env command (environment snapshot)", () => {
     ]) {
       expect(env[key], `missing field: ${key}`).toBeDefined();
     }
+  });
+
+  it("prints no browser-guide line: the snapshot reports facts, not instructions", async () => {
+    // The UI-driving guide is served by `dobby instructions browser`; `env`'s
+    // human form must carry no line for it in ANY spelling (`browser guide`,
+    // `browserGuide`, `browser-guide`).
+    const result = await run(["env"], gitProject);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toMatch(/browser[\s_-]?guide/i);
   });
 
   it("reports cmux as the CMUX_WORKSPACE_ID value when the variable is set", async () => {
@@ -3489,14 +3506,15 @@ describe("run() — a flagged live dev falls through to the strict parse", () =>
 // fixed signal map applied to a package.json WE write.
 //
 // Independent sources for every expected value below:
-//   - The no-app message 'no app to run' (up step 0); the cmux command literals
-//     `cmux new-pane` / `--type browser` / `--direction right` / `--surface` /
-//     `cmux send`; the pane names `dobby-browser-<slug>` /
-//     `dobby-run-<slug>`; the detached-state paths `.dobby/dev.pid` /
-//     `.dobby/dev.log`; the neon branch verbs `neonctl branches create` /
-//     `neonctl branches delete` with `--project-id` and the branch `dobby/<slug>` —
-//     each is a LITERAL the spec's up/down recipe states outright, never recomputed
-//     by the code under test. (`supabase stop` no longer appears anywhere.)
+//   - The no-app message 'no app to run' (up step 0); the neon branch verbs
+//     `neonctl branches create` / `neonctl branches delete` with `--project-id` and
+//     the branch `dobby/<slug>`; and — since TASK 4 rewrote up's run phase — the
+//     INSTRUCTION phrases `run_in_background` / `bunx dobby dev` / `cmux send` /
+//     `rename-workspace --workspace '<id>' '<slug>'` plus the `agent:` hand-over
+//     marker: each is a LITERAL the spec's up/down recipe states outright, never
+//     recomputed by the code under test. (`supabase stop` no longer appears
+//     anywhere; nor do up's own `cmux new-pane` / `cmux send` / `spawn detached`
+//     ACTIONS — `up` starts and opens nothing, it hands those over.)
 //   - The slug (workroot basename) and workroot path are read back from the temp
 //     dir WE created (node:path basename / node:fs realpath).
 //   - The NEON_PROJECT_ID value `proj-123` and the teardown marker command are
@@ -3580,6 +3598,22 @@ const NEON_ENV_LOCAL =
 const LIVENESS_RETRIES = "DOBBY_LIVENESS_RETRIES";
 // A probe count no run reaches: the stub `curl` then NEVER succeeds.
 const NEVER_SUCCEEDS = 999;
+// Elapsed time in the POSIX `mm:ss` form — three seconds, well inside the
+// 15-second window a registered run's ownership is judged against.
+const UP_FRESH_ETIME = "00:03";
+// What the `ps` stub reports for an OWNED run process (it contains `dobby dev`).
+const UP_OWNED_COMMAND = "bun /w/node_modules/.bin/dobby dev";
+// The plan's hand-over marker: an instruction is QUOTED under a line beginning
+// `agent:`, never rendered as one of up's own CLI action lines.
+const UP_AGENT_LINE = /^\s*agent:/m;
+// The cmux commands `up` may only ever INSTRUCT, never invoke.
+const UP_ACTING_CMUX = [
+  "send",
+  "new-pane",
+  "rename-tab",
+  "rename-workspace",
+  "close-surface",
+];
 // The dev-start line up types into the run pane — the literal WE expect (never
 // recomputed by the code under test). Asserted as a NEGATIVE on the already-live path:
 // re-running up on a live app must never start a second dev server.
@@ -3604,22 +3638,31 @@ function writeStubBin(dir: string, name: string, body: string): void {
   chmodSync(path, 0o755);
 }
 
-// Build the stub bin dir a REAL `up` run needs, plus the shared action log both
+// Build the stub bin dir a REAL `up` run needs, plus the shared action log the
 // stubs append to (one file = one total order of what up did):
-//   - `cmux`  — records `cmux <argv>` and answers `new-pane` with an
-//     `OK surface:<pid> pane:7 workspace:1` line (the shape the real cmux prints, so
-//     the surface-ref capture succeeds); every other subcommand is a silent exit 0,
-//     which makes pane DISCOVERY find nothing — so a FRESH-START up creates both kit
-//     panes, while an ALREADY-LIVE up (which starts nothing) creates only the browser
-//     pane and never replaces the missing run one.
+//   - `cmux`  — records `cmux <argv>`, answers pane DISCOVERY with `opts.panes`
+//     (absent → no kit pane is found) and `new-pane` with an
+//     `OK surface:<pid> pane:7 workspace:1` line (the shape the real cmux prints);
+//     every other subcommand is a silent exit 0. Since TASK 4 the discovery answer
+//     is what matters: `up` may LIST panes and nothing else.
 //   - `curl`  — records `curl-ok` / `curl-fail` per probe, succeeding from the
 //     `succeedFrom`-th call on (1 = already live, NEVER_SUCCEEDS = unreachable).
+//   - `ps`    — optional: answers the two ownership probes (`-o command=` /
+//     `-o etime=`) for ONE pid, so a registered run can be presented as OWNED or
+//     as somebody else's process.
+//   - `bunx`  — a pure recorder: `up` must never spawn the app itself any more
+//     (and it keeps a regression from fetching the foreign npm `dobby` in a temp
+//     dir with no node_modules).
 //   - `portless` — a safety net only: dobby resolves portless from its OWN bundled
 //     tree, so this is reached solely if that resolution fails (portless absent),
 //     keeping devUrl non-null either way.
 function makeUpStubs(
   track: string[],
-  opts: { succeedFrom: number }
+  opts: {
+    panes?: string;
+    ps?: { command: string; pid: number };
+    succeedFrom: number;
+  }
 ): { binDir: string; log: string } {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "dobby-upstub-")));
   track.push(dir);
@@ -3632,12 +3675,42 @@ function makeUpStubs(
     "cmux",
     `#!/bin/sh
 printf 'cmux %s\\n' "$*" >> ${log}
+case "$*" in
+  *list-pane-surfaces*) printf '%s' '${opts.panes ?? ""}' ; exit 0 ;;
+  *list-panes*) printf 'pane:1\\n' ; exit 0 ;;
+esac
 if [ "$1" = "new-pane" ]; then
   printf 'OK surface:%s pane:7 workspace:1\\n' "$$"
 fi
 exit 0
 `
   );
+  writeStubBin(
+    binDir,
+    "bunx",
+    `#!/bin/sh
+printf 'bunx %s\\n' "$*" >> ${log}
+exit 0
+`
+  );
+  if (opts.ps !== undefined) {
+    writeStubBin(
+      binDir,
+      "ps",
+      `#!/bin/sh
+printf 'ps %s\\n' "$*" >> ${log}
+case "$*" in
+  *${opts.ps.pid}*) ;;
+  *) exit 1 ;;
+esac
+case "$*" in
+  *command*) printf '%s\\n' '${opts.ps.command}' ; exit 0 ;;
+  *etime*) printf '%s\\n' '  ${UP_FRESH_ETIME}' ; exit 0 ;;
+esac
+exit 1
+`
+    );
+  }
   writeStubBin(
     binDir,
     "curl",
@@ -3672,6 +3745,42 @@ function stubRecords(log: string): string[] {
   return readFileSync(log, "utf8")
     .split("\n")
     .filter((line) => line !== "");
+}
+
+// The slice of `up --json` TASK 4 added: the instruction catalogue `up` hands
+// back plus whether the devUrl answered. (The full envelope is pinned in
+// `upjson.test.ts`; these slices read only what they assert on.)
+interface UpFactsReport {
+  instructions: { applies: boolean; text: string; topic: string }[];
+  live: boolean;
+  ok: boolean;
+}
+
+// How many liveness probes really went out.
+const curlProbeCount = (lines: string[]) =>
+  lines.filter((line) => line.startsWith("curl-")).length;
+
+// Every cmux record that ACTS (as opposed to discovering) — the load-bearing
+// negative of TASK 4: `up` may list panes, and nothing else.
+const cmuxActionRecords = (lines: string[]) =>
+  lines.filter(
+    (line) =>
+      line.startsWith("cmux ") &&
+      UP_ACTING_CMUX.some((verb) => line.includes(verb))
+  );
+
+// Where a plan stops listing its OWN actions and starts quoting what it hands
+// over to the agent (-1 when it never does).
+const firstAgentLine = (lines: string[]) =>
+  lines.findIndex((line) => line.trimStart().startsWith("agent:"));
+
+// Register `pid` in the workroot's `.dobby/dev.pid` RIGHT NOW: the write stamps
+// the file's mtime, the reference point the 15-second ownership window is
+// measured against — so it happens inside the test body, never in a shared
+// fixture that could drift out of the window.
+function registerDevPid(repo: string, pid: number): void {
+  mkdirSync(join(repo, ".dobby"), { recursive: true });
+  writeFileSync(join(repo, ".dobby", "dev.pid"), `${pid}\n`);
 }
 
 // --- Slice U1 (tracer bullet): `up` is wired and no-app-gates GRACEFULLY --------
@@ -3751,10 +3860,11 @@ describe("run() — up command (no app capability: graceful no-op)", () => {
     expect(combined(result)).toMatch(/no app to run/i);
   });
 
-  it("still renames the cmux workspace for a no-app project (rename is INDEPENDENT of the app gate)", async () => {
-    // The workspace rename happens WHENEVER cmux is present — a no-app project
-    // (setup phase then 'no app to run') still gets its workspace renamed. Set cmux
-    // for THIS test only (beforeEach cleared it; afterAll restores the original).
+  it("still hands the cmux workspace rename over for a no-app project (rename is INDEPENDENT of the app gate)", async () => {
+    // The workspace rename applies WHENEVER cmux is present — a no-app project
+    // (setup phase then 'no app to run') is still owed its goal identity, so the
+    // rename instruction comes back even with nothing to run. Set cmux for THIS
+    // test only (beforeEach cleared it; afterAll restores the original).
     process.env[CMUX] = "cmux-ws-noapp";
     const repo = makeLifecycleRepo(dirs, {
       pkg: {
@@ -3766,11 +3876,16 @@ describe("run() — up command (no app capability: graceful no-op)", () => {
     const slug = basename(repo);
     const result = await run(["up", "--dry-run"], repo);
     expect(result.exitCode).toBe(0);
-    // The rename line is present (plain slug title) even though the run phase is
-    // skipped...
-    expect(result.stdout).toContain(
-      `cmux rename-workspace --workspace cmux-ws-noapp "${slug}"`
+    // The rename is QUOTED as a hand-over (plain slug title) even though the run
+    // phase is skipped...
+    const lines = result.stdout.split("\n");
+    const agentAt = firstAgentLine(lines);
+    const renameAt = lines.findIndex((l) =>
+      l.includes("rename-workspace --workspace 'cmux-ws-noapp'")
     );
+    expect(agentAt, "expected an `agent:` hand-over line").toBeGreaterThan(-1);
+    expect(renameAt, "expected the workspace rename").toBeGreaterThan(agentAt);
+    expect(lines[renameAt]).toContain(slug);
     // ...proving the rename is NOT gated on the app: 'no app to run' still fires.
     expect(combined(result)).toMatch(/no app to run/i);
   });
@@ -3800,14 +3915,16 @@ describe("run() — up command (fail hard outside a git repo)", () => {
   });
 });
 
-// --- Slice U3 (headline): cmux present -> the two kit panes, in TIME order -------
-// The load-bearing decision: both kit panes are created right of Claude, but at
-// DIFFERENT moments — the run terminal at start time (watching the server boot is
-// its purpose) and the browser pane only AFTER the liveness wait (a pane opened
-// mid-boot renders a 404). All asserted from the --dry-run plan, whose line order IS
-// the execution order; CMUX_WORKSPACE_ID drives the branch. Fixture is vite-ONLY (no
-// neon) so step 2 is skipped and the plan reaches step 3's pane creation.
-describe("run() — up command (cmux present: kit panes in liveness order)", () => {
+// --- Slice U3 (headline, REWRITTEN by TASK 4): cmux present -> the plan HANDS the
+// pane work over ------------------------------------------------------------------
+// `up` no longer opens, sends to, renames or closes a cmux surface. The --dry-run
+// plan therefore lists only up's OWN actions (setup phase, the liveness probe) and
+// QUOTES what the agent must do under a line beginning `agent:` — the workspace
+// rename and the dev start. The discriminator is POSITIONAL: an acting cmux command
+// may appear only inside the quoted hand-over, never before it as an action line.
+// CMUX_WORKSPACE_ID drives the branch; the fixture is vite-ONLY (no neon) so the
+// plan reaches the run phase.
+describe("run() — up command (cmux present: the pane work is handed over, not planned)", () => {
   const dirs: string[] = [];
   let repo: string;
   let slug: string;
@@ -3835,125 +3952,97 @@ describe("run() — up command (cmux present: kit panes in liveness order)", () 
     process.env[CMUX] = "cmux-ws-up";
   });
 
-  it("prints a plan that creates a cmux pane and exits 0 (not the unknown-command branch)", async () => {
+  it("prints a plan that quotes what the agent must do, and exits 0 (not the unknown-command branch)", async () => {
     const result = await run(["up", "--dry-run"], repo);
     expect(result.exitCode).toBe(0);
     // Anti-tautology guard: an unimplemented `up` ALSO exits nonzero via the
     // unknown-command branch — assert this is the genuine up/cmux/dry-run path, and
     // that the plan came back as DATA through the capture seam.
     expect(result.stderr).not.toContain("unknown command");
-    expect(result.stdout).toContain("cmux new-pane");
+    expect(result.stdout).toMatch(UP_AGENT_LINE);
   });
 
-  it("creates the browser pane to the RIGHT of Claude (--type browser --direction right)", async () => {
-    const result = await run(["up", "--dry-run"], repo);
-    expect(
-      hasNoteLine(result.stdout, [
-        /new-pane/,
-        /--type browser/,
-        /--direction right/,
-      ])
-    ).toBe(true);
-  });
-
-  it("opens the run terminal right of Claude and sends it the start line through its captured --surface ref", async () => {
-    const result = await run(["up", "--dry-run"], repo);
-    const out = result.stdout;
-    // The run pane is its OWN `new-pane` (never a split off the browser — the
-    // browser does not exist yet at start time), and it is driven by the surface
-    // ref cmux hands back, not by focus.
-    const runPaneLine = out
-      .split("\n")
-      .find((l) => l.includes("new-pane") && !l.includes("--type browser"));
-    expect(runPaneLine, "expected a run-pane `new-pane` line").toBeDefined();
-    expect(runPaneLine).toContain("--direction right");
-    expect(hasNoteLine(out, [/cmux send/, /--surface/])).toBe(true);
-    // The old layout mechanism is gone: `new-split` cannot create a browser pane,
-    // so deferring the browser required the run pane to be a plain `new-pane`.
-    expect(out).not.toContain("new-split");
-  });
-
-  it("plans the RUN pane BEFORE the liveness wait and the BROWSER pane AFTER it (the 404 fix)", async () => {
+  it("hands the workspace rename over instead of planning it as its own action", async () => {
     const result = await run(["up", "--dry-run"], repo);
     const lines = result.stdout.split("\n");
-    const runPaneAt = lines.findIndex(
-      (l) => l.includes("new-pane") && !l.includes("--type browser")
-    );
-    const waitAt = lines.findIndex((l) => /wait for liveness/.test(l));
-    const browserPaneAt = lines.findIndex((l) => l.includes("--type browser"));
-    // Presence guards first, so no ordering assertion can pass vacuously on a
-    // missing line (findIndex -1 < anything).
-    expect(runPaneAt, "expected a run-pane `new-pane` line").toBeGreaterThan(
-      -1
-    );
-    expect(waitAt, "expected a liveness-wait line").toBeGreaterThan(-1);
+    const agentAt = firstAgentLine(lines);
+    const renameAt = lines.findIndex((l) => l.includes("rename-workspace"));
+    // Presence guards first, so no ordering assertion passes vacuously (-1).
+    expect(agentAt, "expected an `agent:` hand-over line").toBeGreaterThan(-1);
     expect(
-      browserPaneAt,
-      "expected a browser-pane `new-pane --type browser` line"
+      renameAt,
+      "expected the workspace rename in the plan"
     ).toBeGreaterThan(-1);
-    // The invariant: run terminal at start, browser pane only once the app answers.
-    expect(runPaneAt).toBeLessThan(waitAt);
-    expect(browserPaneAt).toBeGreaterThan(waitAt);
-  });
-
-  it("names the panes `dobby-browser-<slug>` and `dobby-run-<slug>` (slug = workroot basename)", async () => {
-    const result = await run(["up", "--dry-run"], repo);
-    // Independent: the slug is the basename of the temp dir WE created (read via
-    // node:path, a different mechanism than the code's git top-level + basename).
-    expect(result.stdout).toContain(`dobby-browser-${slug}`);
-    expect(result.stdout).toContain(`dobby-run-${slug}`);
-  });
-
-  it("sends the workroot-pinned `dobby dev` to the run pane", async () => {
-    const result = await run(["up", "--dry-run"], repo);
-    const sendLine = result.stdout
-      .split("\n")
-      .find((l) => l.includes("cmux send"));
-    expect(sendLine, "expected a `cmux send` line in the plan").toBeDefined();
-    // Pinned to the workroot (cmux has no --cwd on panes, so the `cd <workroot> &&`
-    // prefix is the workroot-pinning invariant) and runs dobby dev.
-    expect(sendLine).toContain(`cd ${repo}`);
-    expect(sendLine).toContain("dobby dev");
-  });
-
-  it("renames the cmux WORKSPACE to the plain goal slug (workspace context passed explicitly)", async () => {
-    const result = await run(["up", "--dry-run"], repo);
-    // The workspace title IS the goal identity: the PLAIN slug (no dobby- prefix —
-    // that prefix is carried by the PANE names). The workspace context is passed
-    // explicitly (--workspace cmux-ws-up, matching the new-pane / list-panes style).
-    // Independent: slug = basename of the temp dir WE created; cmux id = the value
-    // beforeEach injected.
-    expect(result.stdout).toContain(
-      `cmux rename-workspace --workspace cmux-ws-up "${slug}"`
+    // Independent: slug = basename of the temp dir WE created; the cmux id is the
+    // value beforeEach injected.
+    expect(lines[renameAt]).toContain(
+      "rename-workspace --workspace 'cmux-ws-up'"
     );
-    // The rename is distinct from the PANE renames — its title is the bare slug, not
-    // the dobby-browser-/dobby-run- pane forms.
-    const renameLine = result.stdout
-      .split("\n")
-      .find((l) => l.includes("rename-workspace"));
-    expect(renameLine).not.toContain(`dobby-browser-${slug}`);
-    expect(renameLine).not.toContain(`dobby-run-${slug}`);
+    expect(lines[renameAt]).toContain(slug);
+    // The workspace title IS the goal identity: the PLAIN slug, never the
+    // dobby-run-/dobby-browser- PANE forms.
+    expect(lines[renameAt]).not.toContain(`dobby-browser-${slug}`);
+    expect(renameAt).toBeGreaterThan(agentAt);
+  });
+
+  it("hands the workroot-pinned `dobby dev` over instead of sending it to a pane", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    const lines = result.stdout.split("\n");
+    const agentAt = firstAgentLine(lines);
+    const startAt = lines.findIndex((l) => l.includes("bunx dobby dev"));
+    expect(agentAt, "expected an `agent:` hand-over line").toBeGreaterThan(-1);
+    expect(startAt, "expected the dev start in the plan").toBeGreaterThan(-1);
+    // Pinned to the workroot (whatever form the start takes, it names the tree it
+    // runs in — cmux panes carry no --cwd)…
+    expect(result.stdout).toContain(repo);
+    // …and QUOTED, never planned as one of up's own actions.
+    expect(startAt).toBeGreaterThan(agentAt);
+  });
+
+  it("plans no acting cmux command of its own before the hand-over", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    const lines = result.stdout.split("\n");
+    const agentAt = firstAgentLine(lines);
+    expect(agentAt, "expected an `agent:` hand-over line").toBeGreaterThan(-1);
+    const strayActions = lines.filter(
+      (line, index) =>
+        index < agentAt &&
+        UP_ACTING_CMUX.some((verb) => line.includes(`cmux ${verb}`))
+    );
+    expect(strayActions).toEqual([]);
+  });
+
+  it("plans no browser pane of its own (opening one is the agent's job now)", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    const lines = result.stdout.split("\n");
+    const agentAt = firstAgentLine(lines);
+    expect(agentAt, "expected an `agent:` hand-over line").toBeGreaterThan(-1);
+    const browserActions = lines.filter(
+      (line, index) => index < agentAt && line.includes("--type browser")
+    );
+    expect(browserActions).toEqual([]);
   });
 });
 
-// --- Slice U3b (headline): a REAL `up` — the browser pane never precedes liveness -
-// The dry-run plan proves the ORDER is planned; this slice proves the EXECUTION
-// honors it, by running a real `up` (no --dry-run) against STUB binaries on PATH:
-//   - `cmux` appends every invocation (its argv) to a shared log and answers
-//     `new-pane` with an `OK surface:<n> …` line (the shape the real cmux prints), so
-//     the surface-ref capture succeeds without a live cmux;
-//   - `curl` appends each probe to the SAME log WITH its outcome (`curl-ok` /
-//     `curl-fail`).
-// One log ⇒ one TOTAL ORDER of what up really did — the seam that makes the ordering
-// falsifiable: a browser `new-pane` recorded before the first `curl-ok` fails the
-// test, a run that never becomes reachable must record NO browser pane at all, and an
-// up that finds the app ALREADY live must record NO `cmux send` at all (starting a
-// second dev server against a healthy app is the double-start hazard).
+// --- Slice U3b (headline, REWRITTEN by TASK 4): a REAL `up` executes only its own
+// mechanics ------------------------------------------------------------------------
+// The dry-run plan proves what is PLANNED; this slice proves what a real `up` (no
+// --dry-run) actually DOES, against STUB binaries on PATH that record into ONE
+// shared log:
+//   - `cmux` appends every invocation (its argv) and answers pane DISCOVERY with
+//     the surfaces the test declares;
+//   - `curl` appends each probe with its outcome (`curl-ok` / `curl-fail`);
+//   - `bunx` appends anything up tries to spawn.
+// One log ⇒ one TOTAL ORDER of what up really did, which makes the contract
+// falsifiable: after the setup phase up may PROBE and DISCOVER, and nothing else —
+// a `send` / `new-pane` / `rename-workspace` / `close-surface` record, or a spawned
+// `bunx dobby dev`, fails the slice. What it used to DO comes back through
+// `up --json`'s `instructions[]` instead.
 // Every expected value is a literal from the stubs WE wrote (record prefixes, the
-// surface ref, the exit codes), never recomputed by the code under test. The two
-// documented test seams keep the run cheap: `DOBBY_SKIP_INSTALL=1` (no bun install)
-// and `DOBBY_LIVENESS_RETRIES` (no minutes of real retry sleeps).
-describe("run() — up command (real run: the browser pane waits for liveness)", () => {
+// surface ref) or from the task spec (the topics, `live`, the exit codes), never
+// recomputed by the code under test. The two documented test seams keep the run
+// cheap: `DOBBY_SKIP_INSTALL=1` (no bun install) and `DOBBY_LIVENESS_RETRIES`.
+describe("run() — up command (real run: probe and discovery only, the rest is handed back)", () => {
   const dirs: string[] = [];
   let originalCmux: string | undefined;
   let originalSkip: string | undefined;
@@ -3986,134 +4075,123 @@ describe("run() — up command (real run: the browser pane waits for liveness)",
     delete process.env[LIVENESS_RETRIES];
   });
 
-  it("opens the run pane while the app is still dead, then the browser pane only after a probe answers", async () => {
-    // curl fails the first probe (the already-up short-circuit must NOT fire) and
-    // answers from the second on — the first wait attempt, so no retry sleep.
-    const { binDir, log } = makeUpStubs(dirs, { succeedFrom: 2 });
-    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
-    process.env[LIVENESS_RETRIES] = "2";
+  // One real `up --json` run under the stubs, with the kit's run pane already open
+  // in the workspace (so the start instruction can be written around a DISCOVERED
+  // surface ref). Returns the shared action log plus the parsed report.
+  async function realUp(opts: { succeedFrom: number }): Promise<{
+    facts: UpFactsReport;
+    lines: string[];
+    result: { exitCode: number; stderr: string; stdout: string };
+  }> {
     const repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
-
-    const result = await run(["up"], repo);
-    // A resolvable devUrl is a precondition of this path (portless resolves one
-    // locally); a null devUrl would fail the wait, so surface that loudly.
-    expect(result.exitCode, combined(result)).toBe(0);
-
-    const lines = stubRecords(log);
-    const runPaneAt = lines.findIndex(
-      (l) => l.startsWith("cmux new-pane") && !l.includes("--type browser")
-    );
-    const liveAt = lines.findIndex((l) => l.startsWith("curl-ok"));
-    const browserPaneAt = lines.findIndex((l) => l.includes("--type browser"));
-    // Presence guards first, so no ordering assertion passes vacuously (-1).
-    expect(runPaneAt, "expected a run-pane `new-pane` record").toBeGreaterThan(
-      -1
-    );
-    expect(liveAt, "expected a successful curl probe record").toBeGreaterThan(
-      -1
-    );
-    expect(browserPaneAt, "expected a browser-pane record").toBeGreaterThan(-1);
-    // The invariant, both directions: the run pane opened BEFORE the app answered
-    // (its purpose is watching the boot) and the browser pane strictly AFTER.
-    expect(runPaneAt).toBeLessThan(liveAt);
-    expect(browserPaneAt).toBeGreaterThan(liveAt);
-  });
-
-  it("opens NO browser pane when the app never becomes reachable (exit 1, run pane still opened)", async () => {
-    // curl NEVER succeeds; one retry keeps the wait instant. A 404/dead browser pane
-    // is noise — the failure report stays, the pane must not appear.
-    const { binDir, log } = makeUpStubs(dirs, { succeedFrom: NEVER_SUCCEEDS });
+    const { binDir, log } = makeUpStubs(dirs, {
+      panes: `surface:4 dobby-run-${basename(repo)}\n`,
+      succeedFrom: opts.succeedFrom,
+    });
     process.env.PATH = `${binDir}:${originalPath ?? ""}`;
     process.env[LIVENESS_RETRIES] = "1";
-    const repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+    const result = await run(["up", "--json"], repo);
+    return {
+      facts: JSON.parse(result.stdout) as UpFactsReport,
+      lines: stubRecords(log),
+      result,
+    };
+  }
 
-    const result = await run(["up"], repo);
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).not.toContain("unknown command");
-    expect(combined(result)).toMatch(/never became reachable/i);
+  it("hands back the rename and the start when the app is not answering", async () => {
+    const { facts, result } = await realUp({ succeedFrom: NEVER_SUCCEEDS });
+    // A resolvable devUrl is a precondition of this path (portless resolves one
+    // locally); surface a failure loudly.
+    expect(result.exitCode, combined(result)).toBe(0);
+    expect(facts.instructions.map((entry) => entry.topic)).toEqual([
+      "rename",
+      "start",
+    ]);
+  });
 
-    const lines = stubRecords(log);
-    // Positive anchors: the start DID happen (run pane created + the dev line sent),
-    // so the negative below cannot pass vacuously on an up that did nothing.
+  it("writes the start around the DISCOVERED run pane", async () => {
+    const { facts } = await realUp({ succeedFrom: NEVER_SUCCEEDS });
+    const start = facts.instructions.find((entry) => entry.topic === "start");
+    expect(start, "expected a start instruction").toBeDefined();
+    // `surface:4` is invented by the cmux stub THIS file wrote, so text carrying it
+    // proves real pane discovery ran.
+    expect(start?.text).toContain("surface:4");
+  });
+
+  it("discovers panes but never opens, sends to, renames or closes a cmux surface", async () => {
+    const { lines } = await realUp({ succeedFrom: NEVER_SUCCEEDS });
+    // Positive anchor first, so the negative cannot pass on a run that never
+    // reached cmux at all.
     expect(
-      lines.some(
-        (l) => l.startsWith("cmux new-pane") && !l.includes("--type browser")
-      )
+      lines.some((l) => l.startsWith("cmux ") && l.includes("list-pane")),
+      "expected pane discovery to run"
     ).toBe(true);
-    expect(lines.some((l) => l.startsWith("cmux send"))).toBe(true);
-    // The load-bearing negative: no browser pane was ever created or named.
-    expect(lines.some((l) => l.includes("--type browser"))).toBe(false);
-    expect(lines.some((l) => l.includes("dobby-browser-"))).toBe(false);
+    expect(cmuxActionRecords(lines)).toEqual([]);
   });
 
-  it("opens the browser pane immediately when up finds the app ALREADY live (no wait to defer it)", async () => {
-    // The already-up short-circuit: the very first probe answers, so the app is live
-    // NOW — deferring the browser pane would serve nobody.
-    const { binDir, log } = makeUpStubs(dirs, { succeedFrom: 1 });
-    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
-    const repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
-
-    const result = await run(["up"], repo);
-    expect(result.exitCode, combined(result)).toBe(0);
-
-    const lines = stubRecords(log);
-    // Exactly one probe was needed (the short-circuit) and the browser pane opened.
-    expect(lines.filter((l) => l.startsWith("curl-ok")).length).toBe(1);
-    expect(lines.some((l) => l.includes("--type browser"))).toBe(true);
-  });
-
-  it("starts NOTHING when the app is ALREADY live and the run pane is gone (no double start)", async () => {
-    // The double-start hazard: the stub cmux answers pane DISCOVERY with nothing, so
-    // the `dobby-run-<slug>` pane is MISSING — the state after the user closed it, or
-    // when the server that answers the probe is a detached process from an earlier
-    // session and THIS up runs under cmux. Recreating that pane and sending it
-    // `dobby dev` would boot a SECOND dev server against the same portless route for
-    // an app that is already healthy, so up must send nothing and create no run pane.
-    const { binDir, log } = makeUpStubs(dirs, { succeedFrom: 1 });
-    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
-    const repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
-
-    const result = await run(["up"], repo);
-    expect(result.exitCode, combined(result)).toBe(0);
-
-    const lines = stubRecords(log);
-    // Positive anchor: up really took the already-live path (one answering probe) and
-    // really talked to cmux (the browser pane), so the negatives below cannot pass
-    // vacuously on a run that did nothing at all.
-    expect(lines.filter((l) => l.startsWith("curl-ok")).length).toBe(1);
-    expect(lines.some((l) => l.includes("--type browser"))).toBe(true);
-    // The load-bearing negatives: no dev-start line was sent to any surface, and no
-    // run (non-browser) pane was created to send one into.
-    expect(lines.some((l) => l.startsWith("cmux send"))).toBe(false);
-    expect(lines.some((l) => l.includes(DEV_START_LINE))).toBe(false);
+  it("probes the devUrl exactly once and spawns nothing when no start is in flight", async () => {
+    const { lines } = await realUp({ succeedFrom: NEVER_SUCCEEDS });
+    // The retry loop belongs to a start that is ALREADY in flight; with nothing
+    // starting there is one probe, and no dev server of up's own.
+    expect(curlProbeCount(lines)).toBe(1);
     expect(
-      lines.some(
-        (l) => l.startsWith("cmux new-pane") && !l.includes("--type browser")
-      )
+      lines.some((l) => l.startsWith("bunx ") && l.includes(DEV_START_LINE))
     ).toBe(false);
+  });
+
+  it("exits 0 with the start handed back when the app is unreachable and nothing is starting", async () => {
+    // The behaviour change: an app that does not answer is no longer a FAILURE —
+    // it is the normal "please start it" answer, so `up` reports live:false and
+    // succeeds.
+    const { facts, result } = await realUp({ succeedFrom: NEVER_SUCCEEDS });
+    expect(result.stderr).not.toContain("unknown command");
+    expect([result.exitCode, facts.ok, facts.live]).toEqual([0, true, false]);
+  });
+
+  it("reports the app as live and asks for no start when it already answers", async () => {
+    // The already-live path: one probe answers, so there is nothing to start — only
+    // the cmux workspace rename is still owed.
+    const { facts, lines, result } = await realUp({ succeedFrom: 1 });
+    expect(result.exitCode, combined(result)).toBe(0);
+    expect([
+      facts.live,
+      facts.instructions.map((e) => e.topic).join(","),
+    ]).toEqual([true, "rename"]);
+    expect(curlProbeCount(lines)).toBe(1);
+    expect(lines.some((l) => l.includes(DEV_START_LINE))).toBe(false);
   });
 });
 
-// --- Slice U4: NO cmux -> detached run + pidfile/log plan (the discriminator) ----
-// Without a cmux workspace the start path spawns `dobby dev` DETACHED, with pid +
-// log under <workroot>/.dobby/. The absence of any `cmux new-pane` is the
-// discriminator proving the cmux branch was NOT taken.
-describe("run() — up command (no cmux: detached run + pidfile plan)", () => {
+// --- Slice U4 (REWRITTEN by TASK 4): NO cmux -> the background-job instruction ----
+// Without a cmux workspace `up` no longer spawns `dobby dev` DETACHED itself: it
+// hands the terminal host's background-job instruction over (`run_in_background` +
+// `bunx dobby dev`). The absence of any cmux command is still the discriminator
+// proving the cmux branch was NOT taken; the absence of a detached-spawn action is
+// the new one. The one thing `up` still WAITS for is a start already in flight —
+// a live, OWNED `.dobby/dev.pid` — and a boot that never answers is the single
+// `liveness-timeout` failure left.
+describe("run() — up command (no cmux: the terminal start is handed back)", () => {
   const dirs: string[] = [];
+  let child: ChildProcess | undefined;
   let repo: string;
   let originalCmux: string | undefined;
+  let originalSkip: string | undefined;
+  let originalRetries: string | undefined;
+  let originalPath: string | undefined;
 
   beforeAll(() => {
     originalCmux = process.env[CMUX];
+    originalSkip = process.env[SKIP_INSTALL];
+    originalRetries = process.env[LIVENESS_RETRIES];
+    originalPath = process.env.PATH;
     repo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
   });
 
   afterAll(() => {
-    if (originalCmux === undefined) {
-      delete process.env[CMUX];
-    } else {
-      process.env[CMUX] = originalCmux;
-    }
+    restoreEnv(CMUX, originalCmux);
+    restoreEnv(SKIP_INSTALL, originalSkip);
+    restoreEnv(LIVENESS_RETRIES, originalRetries);
+    restoreEnv("PATH", originalPath);
     for (const d of dirs) {
       rmSync(d, { force: true, recursive: true });
     }
@@ -4122,44 +4200,97 @@ describe("run() — up command (no cmux: detached run + pidfile plan)", () => {
 
   beforeEach(() => {
     delete process.env[CMUX];
+    process.env[SKIP_INSTALL] = "1";
+    process.env.PATH = originalPath;
   });
 
-  it("plans a detached `dobby dev` with pid + log under .dobby/ when CMUX_WORKSPACE_ID is unset", async () => {
+  afterEach(() => {
+    // Never leak a `sleep` out of the suite, whatever the assertions did.
+    child?.kill("SIGKILL");
+    child = undefined;
+  });
+
+  it("plans the background-job start instruction when CMUX_WORKSPACE_ID is unset", async () => {
     const result = await run(["up", "--dry-run"], repo);
     expect(result.exitCode).toBe(0);
-    const out = result.stdout;
-    expect(out).toContain("dobby dev");
-    expect(out).toContain(".dobby/dev.pid");
-    expect(out).toContain(".dobby/dev.log");
+    expect(result.stdout).toMatch(UP_AGENT_LINE);
+    // The terminal host's own start form: a background Bash job in the workroot.
+    expect(result.stdout).toContain("run_in_background");
+    expect(result.stdout).toContain("bunx dobby dev");
   });
 
   it("plans NO cmux pane creation without a cmux workspace (the start-path discriminator)", async () => {
     const result = await run(["up", "--dry-run"], repo);
     // Positive anchor so the negative is not vacuously true on an empty/unimplemented
-    // output: a real detached plan IS produced (exit 0, spawning dobby dev) and it
-    // carries NO cmux pane creation.
+    // output: a real plan IS produced (exit 0, naming the dev start) and it carries
+    // no cmux pane creation.
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("dobby dev");
+    expect(result.stdout).toContain("bunx dobby dev");
     expect(result.stdout).not.toContain("cmux new-pane");
   });
 
   it("plans NO cmux workspace rename without a cmux workspace", async () => {
     const result = await run(["up", "--dry-run"], repo);
-    // Positive anchor (a real detached plan IS produced) so the negative is not
-    // vacuously true: with cmux unset there is no workspace to rename.
+    // Positive anchor (a real plan IS produced) so the negative is not vacuously
+    // true: with cmux unset there is no workspace to rename.
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("dobby dev");
+    expect(result.stdout).toContain("bunx dobby dev");
     expect(result.stdout).not.toContain("rename-workspace");
+  });
+
+  it("plans no detached spawn of its own", async () => {
+    const result = await run(["up", "--dry-run"], repo);
+    // Positive anchor, then the removal: starting the app is the agent's job, so
+    // up's own plan carries no detached-spawn action.
+    expect(result.stdout).toContain("bunx dobby dev");
+    for (const literal of ["spawn detached", "nohup"]) {
+      expect(result.stdout, `plan still carries: ${literal}`).not.toContain(
+        literal
+      );
+    }
+  });
+
+  it("waits out a start already in flight and fails with the liveness timeout when it never answers", async () => {
+    // A LIVE, OWNED `.dobby/dev.pid` means the model's `bunx dobby dev` is booting,
+    // so up re-probes instead of handing the start over again. `sleep 300` is a real
+    // long-lived child; the `ps` stub is what makes it look OWNED (its command line
+    // contains `dobby dev`, its elapsed time is inside the window around the
+    // pidfile's mtime).
+    const inFlightRepo = makeLifecycleRepo(dirs, { pkg: VITE_PKG });
+    child = spawn("sleep", ["300"], { stdio: "ignore" });
+    const { pid } = child;
+    if (pid === undefined) {
+      throw new Error("test fixture: the long-lived child failed to spawn");
+    }
+    const { binDir, log } = makeUpStubs(dirs, {
+      ps: { command: UP_OWNED_COMMAND, pid },
+      succeedFrom: NEVER_SUCCEEDS,
+    });
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    process.env[LIVENESS_RETRIES] = "2";
+    registerDevPid(inFlightRepo, pid);
+
+    const result = await run(["up", "--json"], inFlightRepo);
+    expect(result.exitCode).not.toBe(0);
+    const facts = JSON.parse(result.stdout) as UpFactsReport & {
+      reason: string | null;
+    };
+    expect([facts.ok, facts.reason]).toEqual([false, "liveness-timeout"]);
+    // The retry loop really ran: more than the single probe a NOT-starting
+    // workspace pays for.
+    expect(curlProbeCount(stubRecords(log))).toBeGreaterThan(1);
   });
 });
 
-// --- Slice U-start: the started `dobby dev` command ------------------------------
-// `up` starts `dobby dev` (via a cmux pane or a detached spawn); the start command is
-// plain `bunx dobby dev` — no share/tunnel flags (the feature was removed), and no
-// `--ngrok` anywhere in up's plan (the inner dev owns the portless wrapper). Asserted
-// from the --dry-run plan; the fixture is vite-ONLY (no neon) so the plan reaches the
-// start action.
-describe("run() — up command (the started dev command)", () => {
+// --- Slice U-start (REWRITTEN by TASK 4): the HANDED-OVER `dobby dev` command -----
+// `up` no longer starts `dobby dev` — it hands the start instruction back, in the
+// form of the detected environment (cmux: sent into the discovered run pane;
+// terminal: a background Bash job). Either way the command inside it is plain
+// `bunx dobby dev` — no share/tunnel flags (the feature was removed), and no
+// `--ngrok` anywhere in up's plan (the inner dev owns the portless wrapper).
+// Asserted from the --dry-run plan; the fixture is vite-ONLY (no neon) so the plan
+// reaches the start.
+describe("run() — up command (the handed-over dev command)", () => {
   const dirs: string[] = [];
   let repo: string;
   let originalCmux: string | undefined;
@@ -4185,29 +4316,33 @@ describe("run() — up command (the started dev command)", () => {
     delete process.env[CMUX];
   });
 
-  it("cmux: the pane command is plain `bunx dobby dev` (no share flags)", async () => {
+  it("cmux: the handed-over command is plain `bunx dobby dev` (no share flags)", async () => {
     process.env[CMUX] = "cmux-ws-start";
     const result = await run(["up", "--dry-run"], repo);
     expect(result.exitCode).toBe(0);
-    const sendLine = result.stdout
-      .split("\n")
-      .find((l) => l.includes("cmux send"));
-    expect(sendLine, "expected a `cmux send` line").toBeDefined();
-    expect(sendLine).toContain("bunx dobby dev");
-    expect(sendLine).not.toContain("--no-share");
+    const lines = result.stdout.split("\n");
+    const agentAt = firstAgentLine(lines);
+    const startAt = lines.findIndex((l) => l.includes("bunx dobby dev"));
+    expect(agentAt, "expected an `agent:` hand-over line").toBeGreaterThan(-1);
+    expect(startAt, "expected the dev start in the plan").toBeGreaterThan(
+      agentAt
+    );
+    expect(lines[startAt]).not.toContain("--no-share");
     // `--ngrok` is never in up's plan — the inner dev owns the portless wrapper.
     expect(result.stdout).not.toContain("--ngrok");
   });
 
-  it("no cmux: the detached command is plain `bunx dobby dev` (no share flags)", async () => {
+  it("no cmux: the handed-over command is plain `bunx dobby dev` (no share flags)", async () => {
     const result = await run(["up", "--dry-run"], repo);
     expect(result.exitCode).toBe(0);
-    const detachedLine = result.stdout
-      .split("\n")
-      .find((l) => l.includes("spawn detached"));
-    expect(detachedLine, "expected a `spawn detached` line").toBeDefined();
-    expect(detachedLine).toContain("bunx dobby dev");
-    expect(detachedLine).not.toContain("--no-share");
+    const lines = result.stdout.split("\n");
+    const agentAt = firstAgentLine(lines);
+    const startAt = lines.findIndex((l) => l.includes("bunx dobby dev"));
+    expect(agentAt, "expected an `agent:` hand-over line").toBeGreaterThan(-1);
+    expect(startAt, "expected the dev start in the plan").toBeGreaterThan(
+      agentAt
+    );
+    expect(lines[startAt]).not.toContain("--no-share");
   });
 
   it("plans no share degrade note (the share feature was removed)", async () => {

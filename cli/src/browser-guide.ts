@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// The verification protocol `dobby env` reports as `browserGuide`, so QA
-// stops rediscovering the UI-driver ladder every run. Two variants, picked by
-// whether a cmux workspace is present (the SAME `CMUX_WORKSPACE_ID` fact
-// `collectEnv` already reports as `cmux`):
+// The verification protocol `dobby instructions browser` delivers (as the
+// `browser` topic's `text`), so QA stops rediscovering the UI-driver ladder every
+// run. Two variants, picked by whether a cmux workspace is present (the SAME
+// `CMUX_WORKSPACE_ID` fact `collectEnv` already reports as `cmux`):
 //
 //  - cmux present: the vendored cmux-browser protocol (Rung 1 of the ladder
 //    described in the root CONTEXT.md glossary) — open, read the URL, snapshot
@@ -18,21 +18,16 @@ import { fileURLToPath } from "node:url";
 //    to Rung 3 (curl-only), mirroring the SAME ladder's later rungs.
 //
 // Both variants are module-level constants: read once from disk at import time,
-// so every call answers the identical bytes with no network of its own.
+// so every call answers the identical bytes with no network of its own. Exported
+// so the environment adapters (`adapters/cmux.ts` / `adapters/terminal.ts`) can use
+// them directly by deep path — the cmux adapter's `browser` catalogue entry answers
+// `CMUX_GUIDE`; terminal's answers `NON_CMUX_GUIDE`.
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const VENDOR_DIR = join(MODULE_DIR, "vendor", "cmux-browser");
 
-const CMUX_GUIDE = buildCmuxGuide();
-const NON_CMUX_GUIDE = buildNonCmuxGuide();
-
-// The verification guide for the detected environment. `cmux` is the same
-// `CMUX_WORKSPACE_ID`-derived fact (`null` when unset/empty) `collectEnv`
-// already reports, so the guide returned here always agrees with the `cmux`
-// field in the same snapshot.
-export function browserGuideFor(cmux: string | null): string {
-  return cmux === null ? NON_CMUX_GUIDE : CMUX_GUIDE;
-}
+export const CMUX_GUIDE = buildCmuxGuide();
+export const NON_CMUX_GUIDE = buildNonCmuxGuide();
 
 // The cmux-browser protocol: the vendored upstream skill + command reference,
 // under one header naming the driver explicitly.
