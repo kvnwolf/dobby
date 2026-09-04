@@ -15,7 +15,7 @@ The end of a work session, closed end-to-end. If the goal's PR is still OPEN, `/
 bunx dobby finish --preflight --json
 ```
 
-One call, run from wherever the session already stands, reports where that is (`inWorktree`, `worktreePath`, `mainRoot`), the branch (`branch`), the repository's own trunk (`defaultBranch` — Step 3 switches to it, never to a hard-coded `main`), the PR (`pr.state` / `pr.mergedAt` / `pr.url`, via `gh`), the uncommitted work a teardown would lose (`dirty.count` / `dirty.files`, untracked included), the contract (`dobbyInstalled`), and the mechanic Step 3 reads (`branchDeleteSafe`). Branch on `verdict`:
+One call, run from wherever the session already stands, reports where that is (`inWorktree`, `worktreePath`, `mainRoot`), the branch (`branch`), the repository's own trunk (`defaultBranch: string | null` — resolved by an ordered cascade: remote head, then remote-tracking `main`/`master`, then local `main`/`master`, else `null` when nothing names one; Step 3 switches to it, never to a hard-coded `main`), the PR (`pr.state` / `pr.mergedAt` / `pr.url`, via `gh`), the uncommitted work a teardown would lose (`dirty.count` / `dirty.files`, untracked included), the contract (`dobbyInstalled`), and the mechanic Step 3 reads (`branchDeleteSafe`). Branch on `verdict`:
 
 - **`blocked`** — `dobbyInstalled: false`: `dobby down` is the mandatory pre-removal teardown and has no fallback. **STOP** and point the user at `/dobby:onboard` (or `/dobby:migrate-config` for a repo moving off an old contract). This is the ONLY blocking condition.
 - **`safe`** — a MERGED PR and a clean tree. Proceed to Step 2 without a prompt.
@@ -71,12 +71,22 @@ Branch on the preflight's `inWorktree`.
     git branch -D <branch>               # force-delete: after a squash-merge, -d always refuses a legitimately-merged branch
     ```
 
-- **`inWorktree: false`** — a plain checkout has no worktree to remove; return to the default branch and delete the goal's branch:
+- **`inWorktree: false`** — a plain checkout has no worktree to remove; read `defaultBranch` before switching:
+  - **a string** — return to it and delete the goal's branch:
 
-  ```bash
-  git switch <defaultBranch>
-  git branch -D <branch>               # force-delete: after a squash-merge, -d always refuses a legitimately-merged branch
-  ```
+    ```bash
+    git switch <defaultBranch>
+    git branch -D <branch>               # force-delete: after a squash-merge, -d always refuses a legitimately-merged branch
+    ```
+  - **`null`** — do NOT guess: the preflight could not determine the trunk (`origin/HEAD` is unset and neither `main` nor `master` exists). STOP the teardown here — no `AskUserQuestion`, just a plain-text note naming exactly what the operator runs once they know the trunk name:
+
+    ```
+    git switch <trunk>
+    git branch -D <branch>
+    git pull
+    ```
+
+    End the stage there: the PR is merged and the run is torn down — nothing here is half-way, only the branch cleanup is left for the operator to finish by hand.
 
 `-D` is deliberate in both cases: `branchDeleteSafe: true` IS the safe-to-delete signal. When it is false, the only thing authorizing the delete is the user's explicit "destroy anyway" from Step 1 — carry that acceptance forward, and if they cancelled, nothing here runs at all.
 
@@ -88,7 +98,7 @@ Bring `mainRoot` up to date with the merge:
 git pull        # on mainRoot
 ```
 
-On a plain checkout, Step 3 already switched `mainRoot` onto `defaultBranch`, so this pulls that branch. Inside a linked worktree, `mainRoot` was never switched — this pulls whatever branch the main checkout already has checked out.
+On a plain checkout where Step 3 switched `mainRoot` onto a known `defaultBranch`, this pulls that branch. When Step 3 stopped for an unknown `defaultBranch` (`null`), there was no switch to follow — Step 4 does not run; the operator's own `git pull`, named in Step 3's note, closes it once they've picked a trunk. Inside a linked worktree, `mainRoot` was never switched — this pulls whatever branch the main checkout already has checked out.
 
 On a conflict or divergence (the pull doesn't fast-forward cleanly), **report it and stop — never force.** Show what git said and let the user reconcile; `/dobby:finish` does not rebase, reset, or force-pull.
 
@@ -114,6 +124,6 @@ Interact with the user in their language. Write any note you persist in English;
 - [ ] The PR merged ONLY on the user's explicit "Merge & finish" selection, and only after `bunx dobby pr watch [--adapter <selected id>] --await-review --deadline 60 --json` answered `merge-ready` with commit-scoped evidence (multi-adapter ambiguity selected mechanically; every required adapter validated the SAME `pr.headRefOid`, with the whole set restarted on mismatch; Greptile: passing review check AND `summary.reviewedHeadOid == pr.headRefOid`; CodeRabbit: passing current-commit review check; stale/missing evidence remained `open-unreviewed`, never review-by-silence); any other verdict reported and NOT merged, `feedback-present` routed to `/dobby:address-review`; squash merge pinned to the common validated SHA (`gh pr merge <pr.url> --match-head-commit <pr.headRefOid> --squash`)
 - [ ] After the merge, the preflight re-run (same cwd) and read as MERGED / `safe` before Step 2 — never assumed
 - [ ] `bunx dobby down --json` run before removal, from the workroot the session stands in; kills the detached run, deletes the Neon branch, runs `teardown[]` extras; `ok`/`reason` read and any `instructions[]` (`stop`) carried out to close the now-empty kit panes; a no-app project no-ops cleanly; a reported failure surfaced for the user's call, not auto-forced
-- [ ] Branched on `inWorktree`: TRUE → native `ExitWorktree(remove)` tried first (cwd restored to main; `discard_changes` only after the explicit Step 1 confirmation); on "no active worktree session" fell back to raw `git worktree remove <worktreePath>` + `git branch -D <branch>` from `mainRoot`; on "branch refused as unmerged" (the directory is already gone) fell back to `git branch -D <branch>` ONLY, never `git worktree remove` on a path ExitWorktree already deleted; FALSE → `git switch <defaultBranch>` then `git branch -D <branch>` — `-D` in every case because `branchDeleteSafe` (gh MERGED), not git ancestry, is the safe-to-delete signal
-- [ ] `git pull` on `mainRoot` — the branch Step 3 left it on (`defaultBranch` on a plain checkout, unchanged inside a linked worktree); on conflict/divergence reported and stopped — never forced
+- [ ] Branched on `inWorktree`: TRUE → native `ExitWorktree(remove)` tried first (cwd restored to main; `discard_changes` only after the explicit Step 1 confirmation); on "no active worktree session" fell back to raw `git worktree remove <worktreePath>` + `git branch -D <branch>` from `mainRoot`; on "branch refused as unmerged" (the directory is already gone) fell back to `git branch -D <branch>` ONLY, never `git worktree remove` on a path ExitWorktree already deleted; FALSE → read `defaultBranch`: a string → `git switch <defaultBranch>` then `git branch -D <branch>`; `null` → STOPPED with a plain-text note (no AskUserQuestion) naming `git switch <trunk>` / `git branch -D <branch>` / `git pull` for the operator, ending the stage with the PR merged and the run torn down — `-D` in every completed case because `branchDeleteSafe` (gh MERGED), not git ancestry, is the safe-to-delete signal
+- [ ] `git pull` on `mainRoot` run ONLY when a switch happened — the branch Step 3 left it on (`defaultBranch` on a plain checkout, unchanged inside a linked worktree); skipped when Step 3 stopped for a `null` `defaultBranch`; on conflict/divergence reported and stopped — never forced
 - [ ] Ended with an AskUserQuestion gate (goal closed; start the next goal via `/dobby:scope` recommended, or stop here); `/dobby:scope` invoked through the Skill tool on selection

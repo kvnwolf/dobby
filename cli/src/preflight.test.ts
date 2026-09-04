@@ -266,7 +266,7 @@ afterAll(() => {
 interface FinishPreflight {
   branch: string;
   branchDeleteSafe: boolean;
-  defaultBranch: string;
+  defaultBranch: string | null;
   dirty: { count: number; files: string[] };
   dobbyInstalled: boolean;
   inWorktree: boolean;
@@ -876,14 +876,25 @@ describe("finish --preflight — bare worktree, installed main checkout", () => 
 // ===========================================================================
 // Slice 13 — `defaultBranch`. The finish skill switches to the trunk before it
 // deletes a goal branch, and `main` is an assumption, not a fact: plenty of repos
-// still trunk on `master`, and some on a house name entirely. The answer is the
-// repository's OWN remote head (`refs/remotes/origin/HEAD` → `origin/<name>`),
-// with `"main"` as the fallback when there is no remote head to read.
+// still trunk on `master`, and some on a house name entirely. The answer is
+// resolved AT THE MAIN CHECKOUT by an ordered cascade, FIRST HIT WINS:
+//   1. the repository's own remote head — `refs/remotes/origin/HEAD` →
+//      `origin/<name>`, the `origin/` prefix stripped;
+//   2. failing that, the remote-tracking refs: `origin/main` → `"main"`, else
+//      `origin/master` → `"master"`;
+//   3. failing that (no remote refs at all), the LOCAL branches: `main` →
+//      `"main"`, else `master` → `"master"`;
+//   4. failing all of it, `null` — the preflight ADMITS it does not know rather
+//      than guessing a trunk the finish skill would then try to switch to.
+// The verdict never depends on the answer: an unknown trunk is a fact reported,
+// not a reason to block or ask for confirmation.
 //
 // Every expected value is a name WE chose and wrote into the fixture with plain
-// git (`--initial-branch` + `git remote set-head`), never a name read back the way
-// the code reads it — and each fixture stands on a goal branch of a DIFFERENT
-// name, so a preflight that echoed the current branch fails these outright.
+// git (`--initial-branch`, `git push <local>:<remote>`, `git remote set-head`),
+// never a name read back the way the code reads it — and each fixture stands on a
+// goal branch of a DIFFERENT name, so a preflight that echoed the current branch
+// fails these outright. `null` / `unknown` are the spec's own literals for the
+// last step.
 // ===========================================================================
 
 // A main checkout whose trunk is `trunk`, published to a throwaway BARE origin
@@ -907,27 +918,95 @@ function makeRemoteHeadCheckout(trunk: string): string {
   return mainRoot;
 }
 
+// Whether the repo carries a remote head at all — git's own answer to the very
+// question step 1 asks. The step-2 fixtures assert this is FALSE before they
+// assert anything about the cascade, so a passing case can never be step 1 in
+// disguise.
+function hasRemoteHead(root: string): boolean {
+  try {
+    gitIn(root, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Leave the repo with NO remote head, whatever git built the fixture: recent git
+// may materialize `refs/remotes/origin/HEAD` on a plain `fetch`, and a fixture
+// meant to exercise the cascade's SECOND step must not carry one. A repo that
+// never had one throws here — same end state, so the throw is swallowed.
+function clearRemoteHead(root: string): void {
+  try {
+    gitIn(root, ["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"]);
+  } catch {
+    // no remote head to clear — already the state we want
+  }
+}
+
+// A main checkout PUBLISHED to a throwaway bare origin under a remote branch name
+// of our choosing and with NO remote head, then left standing on `goal`: the shape
+// that makes the cascade's second step observable. `pushAs` defaults to the local
+// name; passing a DIFFERENT one is what makes the remote and local answers
+// disagree, so the step that answered is visible in the result.
+function makePushedCheckout(opts: { local: string; pushAs?: string }): string {
+  const mainRoot = makeMainCheckout({
+    branch: opts.local,
+    config: true,
+    dobby: true,
+  });
+  const bare = realpathSync(
+    mkdtempSync(join(tmpdir(), "dobby-preflight-pushed-"))
+  );
+  scratchDirs.push(bare);
+  gitIn(bare, ["init", "-q", "--bare"]);
+  gitIn(mainRoot, ["remote", "add", "origin", bare]);
+  gitIn(mainRoot, [
+    "push",
+    "-q",
+    "origin",
+    `${opts.local}:${opts.pushAs ?? opts.local}`,
+  ]);
+  gitIn(mainRoot, ["fetch", "-q", "origin"]);
+  clearRemoteHead(mainRoot);
+  gitIn(mainRoot, ["switch", "-q", "-c", "goal"]);
+  return mainRoot;
+}
+
+// A main checkout with NO remote at all, born on `trunk` and left standing on
+// `goal` — the cascade's third and fourth steps, where the only branch names in
+// the repository are LOCAL ones.
+function makeLocalOnlyCheckout(trunk: string): string {
+  const mainRoot = makeMainCheckout({
+    branch: trunk,
+    config: true,
+    dobby: true,
+  });
+  gitIn(mainRoot, ["switch", "-q", "-c", "goal"]);
+  return mainRoot;
+}
+
 // Text mode prints the same fact in whatever prose the CLI likes: `defaultBranch`,
 // `default branch`, `default-branch` all carry it.
 const DEFAULT_BRANCH_LABEL = /default.?branch/i;
 
-describe("finish --preflight — the repository's default branch", () => {
+// The unknown trunk has to reach a human reader as ONE statement — the label and
+// the word `unknown` together on one line, not two substrings that merely both
+// occur somewhere in the report. Column padding between them is presentational.
+const DEFAULT_BRANCH_UNKNOWN = /default.?branch:?[ \t]*unknown/i;
+
+describe("finish --preflight — the default branch from the remote head", () => {
   let masterTrunk: string;
   let houseTrunk: string;
-  let noRemote: string;
+  let houseTrunkOverLocalMain: string;
 
   beforeAll(() => {
     masterTrunk = makeRemoteHeadCheckout("master");
     houseTrunk = makeRemoteHeadCheckout("trunk");
-    // Born on `develop` and never pushed anywhere: there is no remote head to
-    // read, and the LOCAL trunk is deliberately not `main` — so the fallback can
-    // only be answered by the spec's constant, never by reading this repo.
-    noRemote = makeMainCheckout({
-      branch: "develop",
-      config: true,
-      dobby: true,
-    });
-    gitIn(noRemote, ["switch", "-q", "-c", "goal"]);
+    // The remote head says `trunk`, and a local `main` sits right next to it —
+    // the two conventional-name steps below would answer `main`. Only the ORDER
+    // of the cascade decides which of the two names comes back.
+    houseTrunkOverLocalMain = makeRemoteHeadCheckout("trunk");
+    gitIn(houseTrunkOverLocalMain, ["branch", "main"]);
   });
 
   it("reports master when the remote head points at master", async () => {
@@ -948,15 +1027,106 @@ describe("finish --preflight — the repository's default branch", () => {
     }).toEqual({ branch: "goal", defaultBranch: "trunk" });
   });
 
-  it("falls back to main when there is no remote head to read", async () => {
-    const preflight = await finishPreflight(noRemote);
-    expect(preflight.defaultBranch).toBe("main");
+  it("prefers the remote head over a local branch of a conventional name", async () => {
+    const preflight = await finishPreflight(houseTrunkOverLocalMain);
+    expect(preflight.defaultBranch).toBe("trunk");
   });
 
   it("prints the default branch for a human reader too", async () => {
     const result = await run(["finish", "--preflight"], houseTrunk);
     expect(result.stdout).toMatch(DEFAULT_BRANCH_LABEL);
     expect(result.stdout).toContain("trunk");
+  });
+});
+
+describe("finish --preflight — the default branch from the remote branches", () => {
+  let pushedMaster: string;
+  let pushedMain: string;
+  let pushedAsMaster: string;
+
+  beforeAll(() => {
+    pushedMaster = makePushedCheckout({ local: "master" });
+    pushedMain = makePushedCheckout({ local: "main" });
+    // Published as `master` from a local `main`: the remote knows one trunk name
+    // and the working copy another, so the answer names WHICH ref the cascade
+    // read. Local-branches-first — or no remote step at all — answers `main`.
+    pushedAsMaster = makePushedCheckout({ local: "main", pushAs: "master" });
+  });
+
+  it("reports master from the remote branches when no remote head is set", async () => {
+    expect(
+      hasRemoteHead(pushedMaster),
+      "fixture must leave origin/HEAD unset"
+    ).toBe(false);
+    const preflight = await finishPreflight(pushedMaster);
+    expect(preflight.defaultBranch).toBe("master");
+  });
+
+  it("reports main from the remote branches when no remote head is set", async () => {
+    expect(
+      hasRemoteHead(pushedMain),
+      "fixture must leave origin/HEAD unset"
+    ).toBe(false);
+    const preflight = await finishPreflight(pushedMain);
+    expect(preflight.defaultBranch).toBe("main");
+  });
+
+  it("prefers the remote branch over a local branch of a conventional name", async () => {
+    expect(
+      hasRemoteHead(pushedAsMaster),
+      "fixture must leave origin/HEAD unset"
+    ).toBe(false);
+    const preflight = await finishPreflight(pushedAsMaster);
+    expect(preflight.defaultBranch).toBe("master");
+  });
+});
+
+describe("finish --preflight — the default branch from the local branches", () => {
+  let localMaster: string;
+  let localMain: string;
+
+  beforeAll(() => {
+    localMaster = makeLocalOnlyCheckout("master");
+    localMain = makeLocalOnlyCheckout("main");
+  });
+
+  it("reports master from the local branches when the repo has no remote", async () => {
+    const preflight = await finishPreflight(localMaster);
+    expect(preflight.defaultBranch).toBe("master");
+  });
+
+  it("reports main from the local branches when the repo has no remote", async () => {
+    const preflight = await finishPreflight(localMain);
+    expect(preflight.defaultBranch).toBe("main");
+  });
+});
+
+describe("finish --preflight — a default branch nothing in the repo names", () => {
+  let noTrunkNames: string;
+
+  beforeAll(() => {
+    // Born on `develop` and never pushed anywhere: no remote head, no remote
+    // branches, and NEITHER `main` NOR `master` locally. There is no trunk to
+    // find, so the only honest answer is that there is none.
+    noTrunkNames = makeLocalOnlyCheckout("develop");
+  });
+
+  it("admits it does not know the trunk rather than guessing main", async () => {
+    const preflight = await finishPreflight(noTrunkNames);
+    expect(preflight.defaultBranch).toBe(null);
+  });
+
+  it("still verdicts the close safe, the trunk being no part of the verdict", async () => {
+    const preflight = await finishPreflight(noTrunkNames);
+    expect({
+      defaultBranch: preflight.defaultBranch,
+      verdict: preflight.verdict,
+    }).toEqual({ defaultBranch: null, verdict: "safe" });
+  });
+
+  it("tells a human reader the default branch is unknown", async () => {
+    const result = await run(["finish", "--preflight"], noTrunkNames);
+    expect(result.stdout).toMatch(DEFAULT_BRANCH_UNKNOWN);
   });
 });
 

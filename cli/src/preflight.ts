@@ -67,10 +67,12 @@ type Verdict = "blocked" | "confirm-required" | "safe";
 interface FinishPreflight {
   branch: string;
   branchDeleteSafe: boolean;
-  // The repository's own trunk — `refs/remotes/origin/HEAD`, resolved at
-  // `mainRoot` — never the goal branch the session stands on. Falls back to the
-  // constant `"main"` when there is no remote head to read.
-  defaultBranch: string;
+  // The repository's own trunk — resolved AT `mainRoot`, never the goal branch
+  // the session stands on — by an ordered cascade, first hit wins: the remote
+  // head, then the remote-tracking `main`/`master`, then the LOCAL `main`/
+  // `master`, else `null` when nothing in the repo names one. `null` is an
+  // honest "I don't know", never a guess.
+  defaultBranch: string | null;
   dirty: DirtyTree;
   dobbyInstalled: boolean;
   // True iff the session's workroot is a LINKED worktree (git's own definition,
@@ -127,27 +129,56 @@ function currentBranch(root: string): string {
   return result.status === 0 && name !== "" && name !== "HEAD" ? name : "HEAD";
 }
 
-// The repository's own trunk — the fallback the finish skill switches to
-// before it force-deletes a goal branch. `"main"` is an assumption, not a
-// fact, so this reads the repo's own remote head (`refs/remotes/origin/HEAD`,
-// which `git symbolic-ref` answers as `origin/<name>`) and strips the
-// `origin/` prefix. Any failure — no remote, no remote head set — falls back
-// to the constant below, never to the LOCAL trunk (which may not exist, or
-// may not even be the repo's real trunk).
-const DEFAULT_BRANCH_FALLBACK = "main";
+// The repository's own trunk — the branch the finish skill switches to before
+// it force-deletes a goal branch. `"main"` is an assumption, not a fact, so
+// this reads the repo itself through an ORDERED cascade, first hit wins:
+//   1. `refs/remotes/origin/HEAD` (`git symbolic-ref` answers `origin/<name>`;
+//      the `origin/` prefix is stripped);
+//   2. failing that, the remote-tracking refs: `origin/main`, else
+//      `origin/master`;
+//   3. failing that (no remote refs at all), the LOCAL branches: `main`, else
+//      `master`;
+//   4. failing all of it, `null` — an honest "I don't know" rather than a
+//      guessed `"main"` the finish skill would then try to switch to.
+// Remote names are checked BEFORE local ones at every tier: a repo whose local
+// `main` was pushed under a different remote name must answer with what the
+// REMOTE actually calls trunk, not the local convention.
 const REMOTE_HEAD_PREFIX = "origin/";
+const CONVENTIONAL_TRUNK_NAMES = ["main", "master"] as const;
 
-function defaultBranchAt(root: string): string {
-  const result = runCapture(
+function defaultBranchAt(root: string): string | null {
+  const head = runCapture(
     "git",
     ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
     { root }
   );
-  const ref = result.stdout.trim();
-  if (result.status !== 0 || !ref.startsWith(REMOTE_HEAD_PREFIX)) {
-    return DEFAULT_BRANCH_FALLBACK;
+  const ref = head.stdout.trim();
+  if (head.status === 0 && ref.startsWith(REMOTE_HEAD_PREFIX)) {
+    return ref.slice(REMOTE_HEAD_PREFIX.length);
   }
-  return ref.slice(REMOTE_HEAD_PREFIX.length);
+
+  for (const name of CONVENTIONAL_TRUNK_NAMES) {
+    if (refExists(root, `refs/remotes/origin/${name}`)) {
+      return name;
+    }
+  }
+
+  for (const name of CONVENTIONAL_TRUNK_NAMES) {
+    if (refExists(root, `refs/heads/${name}`)) {
+      return name;
+    }
+  }
+
+  return null;
+}
+
+// Whether `ref` exists in `root`'s repository — `git show-ref --verify` reads
+// a fully-qualified ref name and exits nonzero when it does not resolve.
+function refExists(root: string, ref: string): boolean {
+  const result = runCapture("git", ["show-ref", "--verify", "--quiet", ref], {
+    root,
+  });
+  return result.status === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -327,7 +358,7 @@ function formatFinishText(payload: FinishPreflight): string {
     `verdict:         ${payload.verdict}`,
     `inWorktree:      ${payload.inWorktree}`,
     `branch:          ${payload.branch}`,
-    `defaultBranch:   ${payload.defaultBranch}`,
+    `defaultBranch:   ${payload.defaultBranch ?? "unknown"}`,
     `worktreePath:    ${payload.worktreePath ?? "-"}`,
     `mainRoot:        ${payload.mainRoot}`,
     `pr:              ${pr}`,
