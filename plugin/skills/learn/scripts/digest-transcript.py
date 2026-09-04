@@ -51,8 +51,9 @@ from typing import Any, Iterator
 #
 # The segment right before `skills/` is ANCHORED to `dobby` or `plugin`, never an
 # open `.*`. The kit moved its skills under `plugin/`, so a live banner reads
-# `…/dobby/plugin/skills/<name>` (and `…/dobby/.claude/worktrees/<x>/plugin/
-# skills/<name>` from a worktree), while the pre-plugin era read
+# `…/dobby/plugin/skills/<name>` (and the same banner one directory deeper from
+# a worktree Claude Code opened natively — the segment before `skills/` is
+# still `plugin`), while the pre-plugin era read
 # `…/dobby/skills/<name>`; both are covered. An open `…/dobby/.*skills/` would
 # ALSO swallow `…/dobby/.claude/skills/<name>` — a PROJECT skill of the dobby
 # checkout, not a kit skill — and the header must name only the /dobby:* skills

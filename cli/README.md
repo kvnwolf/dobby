@@ -442,21 +442,17 @@ dobby build-plan --task /tmp/one-task.json --json   # one ad-hoc task, no STATE.
 
 The table is found by its **header row** (`#` / `Task` / `Depends on` / `Affected areas` / `Verify recipe`, with `Description`, `Test-first` and `Destructive` optional), so a non-task table inside the spec is skipped. The answer carries `tasks[]` — the per-task instruction data verbatim (`id`, `title`, `spec`, `decisions`, `constraints`, `areas[]`, `verifyRecipe`, `testFirst`, `destructive`, `dependsOn[]`), the exact shape `build-protocol.md` consumes — plus `hasTestSuite` (`{value, specSays, disagreement}`, the repo's own `vitest` capability against what the spec claims), `manualVerifySetup`, `preconditions` (`{missing, danglingDeps, cycles, ok}`), and `workRoot`. There is no wave grouping: `dependsOn` carries each row's dependency ids unchanged, so a task can start the moment its own dependencies are done, and a `destructive` task is flagged rather than isolated — the coordinator serializes it at dispatch time. **Failing preconditions exit 1 with the payload still on stdout**, so the caller can show exactly which task and which cell.
 
-### `dobby scope preflight` · `dobby finish --preflight` · `dobby migrate`
+### `dobby finish --preflight` · `dobby migrate`
 
-The read-only verdicts a destructive or planning step asks for **before** it acts. None of them creates, enters, or removes anything — they compute the predicate, the decision stays with the caller.
+The read-only verdicts a destructive or planning step asks for **before** it acts. Neither creates, enters, or removes anything — they compute the predicate, the decision stays with the caller.
 
 ```sh
-dobby scope preflight --slug csv-export --json
 dobby finish --preflight --json
-dobby finish --preflight --slug csv-export --json
 dobby migrate preflight --json
 dobby migrate verify --json
 ```
 
-`scope preflight` reports what the goal would take (branch `worktree-<slug>`, directory `.claude/worktrees/<slug>/`), whether either is already taken (plus a collision-free `suggestedSlug`), whether this session is already **inside** a worktree, and whether the repo carries the dobby contract. Parallel worktrees are informational — never a refusal.
-
-`finish --preflight` answers the teardown verdict for one goal: `safe` (a **merged** PR and a clean tree), `blocked` (dobby is not installed, so the mandatory `dobby down` cannot run — that outranks every other signal), else `confirm-required`; it also reports which removal mechanism applies and whether the branch is safe to delete.
+`finish --preflight` answers the teardown verdict for one goal, resolved from wherever the session stands: `safe` (a **merged** PR and a clean tree), `blocked` (dobby is not installed **at the workroot the session stands in** — the mandatory `dobby down` cannot run — that outranks every other signal), else `confirm-required`; it also reports whether the session stands in a linked worktree at all (`inWorktree`, `worktreePath`, `mainRoot`), the repository's own default branch (`defaultBranch: string | null`, with `defaultBranchSource` naming what answered it — the PR's own base branch FIRST, when the PR exists and named one (`"pr-base"`); only when there is no usable base does the git cascade run, resolved at `mainRoot` — `origin/HEAD` (only while the ref it names still exists — a stale/dangling head is treated as unset; `"origin-head"`), then remote-tracking `main`/`master` (`"remote-conventional"`), then local `main`/`master` (`"local-conventional"`), else `null`/`null` when nothing names one), and whether the branch is safe to delete.
 
 `dobby migrate preflight` says whether a repo still needs the config migration (naming each legacy signal and snapshotting what the migration must carry across); `dobby migrate verify` runs the gate in-process and reports the environment read back plus whatever was left behind. Both **exit 0 with a payload for every verdict** — they inform, they never refuse.
 

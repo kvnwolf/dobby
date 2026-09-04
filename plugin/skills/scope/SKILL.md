@@ -4,11 +4,11 @@ description: Start a work session — normalize the goal (free-text prompt, or t
 argument-hint: "[goal, or tracker issue — GitHub #/URL or Linear VON-123]"
 ---
 
-The front door of a work session. Normalize the goal, put the session in its own worktree, create the shared work-session doc, and map the relevant code — so every later stage (interview → research → spec → execute → wrap) runs isolated on a goal-named branch with grounding and one place to persist its output.
+The front door of a work session. Normalize the goal, create the shared work-session doc, bring the workspace up, and map the relevant code — so every later stage (interview → research → spec → execute → wrap) runs grounded with one place to persist its output. **The worktree belongs to the operator**: scope no longer creates, names, or enters one — the operator opens it before invoking `/dobby:scope` (`claude --worktree`, an IDE, `git worktree add`), or works directly on a branch. Scope runs from wherever it is invoked. **One session per goal** stays good advice — parallel goals want parallel worktrees, opened by the operator, not stacked into one session.
 
-**The mechanics belong to the CLI; the judgment and every gate belong here.** `bunx dobby goal parse` resolves the goal, `bunx dobby scope preflight` says what the worktree would take, `bunx dobby up` brings it up, `bunx dobby state` owns `STATE.md`. Read each `--json` payload and BRANCH on it — never re-derive a fact one of them already reports.
+**The mechanics belong to the CLI; the judgment and every gate belong here.** `bunx dobby goal parse` resolves the goal, `bunx dobby up` brings the workspace up, `bunx dobby state` owns `STATE.md`. Read each `--json` payload and BRANCH on it — never re-derive a fact one of them already reports.
 
-Each of them runs the repo's **LOCAL** `dobby`. Before Step 1's FIRST `bunx dobby`, require the executable marker `node_modules/.bin/dobby` under the current repo root. Missing → **STOP before running `bunx` or creating anything** and point at `/dobby:onboard` (or `/dobby:migrate-config` for a repo moving off an old contract); never let `bunx` resolve an npm package remotely. Do **not** require `dobby.config.json` at this front door: config absence is a valid pre-onboarding scope path. The local bin can still normalize/preflight and create `STATE.md`; later, `configPresent:false` skips only bring-up and records the `/dobby:onboard` follow-up. A defensive `dobbyInstalled:false` from preflight also STOPs. There is no fallback.
+Each of them runs the repo's **LOCAL** `dobby`. Before Step 1's FIRST `bunx dobby`, require the executable marker `node_modules/.bin/dobby` under the current repo root. Missing → **STOP before running `bunx` or creating anything** and point at `/dobby:onboard` (or `/dobby:migrate-config` for a repo moving off an old contract); never let `bunx` resolve an npm package remotely. Do **not** require `dobby.config.json` at this front door: config absence is a valid pre-onboarding scope path. The local bin can still normalize the goal and create `STATE.md`; later, an absent `dobby.config.json` skips only bring-up and records the `/dobby:onboard` follow-up. There is no fallback.
 
 ## Step 1: Normalize the input into a goal
 
@@ -22,7 +22,7 @@ The payload settles everything this step used to reason about:
 
 - **`source`** — `prompt`, `github` or `linear`. The pattern set is **gated by the configured tracker** (`dobby.config.json#tracker`, absent → github), so there is no config to read yourself and no cross-pattern ambiguity: a github project parses `#123`/github.com issue URLs and never `VON-123`; a linear project parses `VON-123`/linear.app URLs and never `#123`; free text is always a goal.
 - **`id` / `url`** — the bare id (`42`, `VON-123`) and the URL when the goal was one.
-- **`slug`** — the starting kebab-case slug for the worktree (Step 2), with `slugCollision` as an early warning.
+- **`slug`** — the starting kebab-case slug `goal parse` derives from the goal. Scope does not act on it — the worktree, if any, is the operator's — but the field stays in the payload.
 - **`lifecycleLink`** — `Closes #42` / `Fixes VON-123`, the PR-body magic word. Record it in `## Source` next to the backend and id — the id is what makes the session's goal traceable later: `/dobby:commit` sources the goal reference from that line and hands it back to `goal parse` to re-resolve the magic word against the configured tracker. The link itself is there so a human reads `## Source` and lands on the issue.
 - **`hardStop`** — non-null means the goal names an issue this session cannot read (D8): **STOP the stage** and report it verbatim. An issue goal has no free-text fallback; a free-text goal always continues.
 
@@ -35,61 +35,35 @@ bunx dobby claim <id> --json
 - **github** — done when the payload says `claimed: true` (the CLI creates `status:in-progress` before assigning, so a fresh repo never loses the in-progress signal).
 - **linear** — the payload is a **delegation descriptor** (`delegate: "mcp"`, `op: "claim"`, `assignee`, `state: "In Progress"`, `team`) instead of an action: execute it through whichever Linear MCP tool ToolSearch resolves, per the `claim` row of the delegation table in `../backlog/references/trackers.md` — never hardcode a tool name. **This claim is the kit's one and only Linear-MCP write point**; In Review (on PR open) and Done (on merge) come from Linear's native GitHub integration off the PR body's `lifecycleLink`, never from the kit. If the MCP cannot read the issue, **STOP the stage** — that is the Linear half of the D8 hard stop, which `goal parse` cannot see from outside the MCP.
 
-## Step 2: Set up the work-session worktree
+## Step 2: Bring the workspace up
 
-Before anything else touches the codebase, put the session in its own worktree so the whole goal — every stage after this — runs isolated on a goal-named branch. This step runs entirely before `STATE.md` is created (it lands at the worktree root, which becomes the session's repo root once you enter it).
-
-### 2a. Preflight the slug
-
-Settle the slug first — the worktree dir and the branch are named after it, so it has to read like the goal (no prompt, no confirmation either way):
-
-- **Free-text goal** — take `slug` from Step 1 as-is; it is already a few kebab-case words off the goal text.
-- **Issue goal** — compose it: Step 1's `slug` LITERALLY as the PREFIX, then up to FOUR kebab-case words off the issue TITLE you fetched in Step 1 — `issue-42-add-csv-export` (github), `von-123-fix-stale-session-cache` (linear). The id leads because it is the part that must survive clipping in tab and pane titles; never rebuild it from `id`/`source` (no `gh-42`, no `#42`, no `VON-123`) — the CLI is the only authority on an issue's slug stem. A title that was unreadable, or that slugifies to nothing (emoji-, CJK- or punctuation-only), degrades to the prefix alone — never a trailing `-`.
-
-Then ask what that slug would take:
+From the current workroot — wherever the operator put this session (a worktree, a branch, whatever) — check for the dobby contract:
 
 ```bash
-bunx dobby scope preflight --slug <slug> --json
+test -f dobby.config.json
 ```
 
-Branch on the payload in this order:
-
-- **`nested.insideWorktree: true`** — this session already owns a goal's worktree (`nested.currentSlug`), and the native `EnterWorktree` cannot nest. **Soft-STOP the stage** with a plain-text note (not AskUserQuestion): open a **new cmux pane / `claude` session** and run `/dobby:scope <new goal>` there — one goal per pane, no nesting. Do **not** auto-exit, auto-remove, or stack a second worktree.
-- **`collision.branchExists` or `collision.dirExists`** — the name belongs to another goal. Re-run the preflight with `suggestedSlug` (or your own distinguishing word) so this goal gets its own worktree instead of clobbering an existing one.
-- **`existingWorktrees`** — INFORMATIONAL, never a refusal. The invariant is **one session per goal**, not "one worktree on the machine": parallel worktrees for independent goals are fine and expected (cmux runs one goal per pane), so `.claude/worktrees/` legitimately holds worktrees from OTHER sessions/panes. Do not refuse because the list is non-empty — nesting is the only thing 2a blocks.
-- **`configPresent` / `dobbyInstalled`** — the dobby contract, read at the main checkout the worktree is cut from. `dobbyInstalled: false` is the hard stop stated above (nothing has been created yet — stop here, not after a worktree exists); `configPresent` decides 2c vs 2d.
-
-### 2b. Create and enter the worktree
-
-**Use the `EnterWorktree` tool** with the collision-free slug as its `name` (this native tool must be invoked explicitly — call it, don't shell out to `git worktree add`):
-
-- `EnterWorktree({ name: "<slug>" })` creates and enters `.claude/worktrees/<slug>/` on branch `worktree-<slug>` — the `path` and `branch` the preflight reported — based on the default `fresh` ref (`origin/HEAD`). The session's working directory is now the worktree root.
-
-### 2c. Bring the workspace up (blocking)
-
-When the preflight reported **`configPresent: true`**, run from the worktree root:
+**Present:** run
 
 ```bash
 bunx dobby up --json
 ```
 
-Bring the workspace up per **`../execute/references/bring-up.md`** — the shared two-step protocol: `dobby up` owns the **setup phase** end-to-end (installs dependencies, re-materializes the gitignored env/config files a fresh worktree needs — the `.worktreeinclude` set, idempotently — then runs any `setup[]` extras from the config), then probes the **run phase** once. Run it directly (Bash), in parallel with the exploration researcher you dispatch in Step 4. This is the NORMAL path with an app, not a degraded one: when `instructions[]` comes back non-empty, follow the reference yourself — carry out `rename` (cmux only) then `start`, then re-run `up --json` — no gate here, no AskUserQuestion; that only happens on `ok: false` below. (`up` is idempotent, so `/dobby:execute` Step 2 re-runs it later without double-starting.)
+Bring the workspace up per **`../execute/references/bring-up.md`** — the shared two-step protocol: `dobby up` owns the **setup phase** end-to-end (installs dependencies, re-materializes the gitignored env/config files this workroot needs — the `.worktreeinclude` set, idempotently — then runs any `setup[]` extras from the config), then probes the **run phase** once. Run it directly (Bash), in parallel with the exploration researcher you dispatch in Step 4. This is the NORMAL path with an app, not a degraded one: when `instructions[]` comes back non-empty, follow the reference yourself — carry out `rename` (cmux only) then `start`, then re-run `up --json` — no gate here, no AskUserQuestion; that only happens on `ok: false` below. (`up` is idempotent, so `/dobby:execute` Step 2 re-runs it later without double-starting.)
 
 Read the payload:
 
-- **`ok: true`** — the worktree comes up at `devUrl` once you've carried out any `instructions[]` (`browserPane` reports the kit browser pane as a discovered fact — null until something opens one; `verifyMode` tells later stages how they will verify). `phase: "noop"` means a no-app project (a library / CLI / plugin like dobby itself): the setup phase ran, there is nothing to serve, and that is a clean success — under cmux it still carries a `rename` instruction to carry out.
+- **`ok: true`** — the workspace comes up at `devUrl` once you've carried out any `instructions[]` (`browserPane` reports the kit browser pane as a discovered fact — null until something opens one; `verifyMode` tells later stages how they will verify). `phase: "noop"` means a no-app project (a library / CLI / plugin like dobby itself): the setup phase ran, there is nothing to serve, and that is a clean success — under cmux it still carries a `rename` instruction to carry out.
 - **`ok: false`** — bring-up FAILED. `reason` is the machine-readable cause (`install-failed`, `worktree-copy-failed`, `setup-extra-failed`, `neon-creds-missing`, `neon-branch-failed`, `liveness-timeout`, `config-unreadable`, `not-a-git-repo`); the prose is on stderr.
 
-**Bring-up failure blocks the stage** — "worktree usable or nothing." Report the failing command, the `reason`, and its stderr first. Then present an **AskUserQuestion** — legitimate here, not a mid-flow interruption: a bring-up failure BLOCKS the stage, so the gate is the handoff, and it fires ONLY on `ok: false` — never on a non-empty `instructions[]`, which is the normal path above. Two options, and only these two:
+**Bring-up failure blocks the stage** — "workspace usable or nothing." Report the failing command, the `reason`, and its stderr first. Then present an **AskUserQuestion** — legitimate here, not a mid-flow interruption: a bring-up failure BLOCKS the stage, so the gate is the handoff, and it fires ONLY on `ok: false` — never on a non-empty `instructions[]`, which is the normal path above. Two options, and only these two:
 
-- **(a) "Abort & fix" (Recommended)** — the default. Remove the just-created worktree via the **`ExitWorktree` tool** in `remove` mode (this same session created it and the tree is clean, so removal tears down the dir + branch and restores the original working directory; the tool guards destructive removal via its `discard_changes` flag — set it since there's nothing to keep), then **STOP the stage**. The user fixes the underlying problem and re-runs `/dobby:scope` fresh (a clean removal here means no leftover to trip the Step 2a nesting/collision checks).
-- **(b) "Continue degraded"** — keep the worktree and proceed without carrying out the bring-up protocol. Name explicitly what is lost: the model did not carry out the `start` (or `rename`) instruction, so there is no registered run and no cmux surface — the app runs only if the user starts it by hand (`/dobby:finish`'s `down` still cleans up whatever DID register). When the payload carries a non-null `degradedCommand` (install-phase failures only), name it as the mechanical degraded bring-up: it skips just the install; the model still carries out any `instructions[]` afterward.
+- **(a) "Abort & fix" (Recommended)** — the default. There is no worktree the kit made to remove — just **STOP the stage**. The user fixes the underlying problem and re-runs `/dobby:scope`.
+- **(b) "Continue degraded"** — proceed without carrying out the bring-up protocol. Name explicitly what is lost: the model did not carry out the `start` (or `rename`) instruction, so there is no registered run and no cmux surface — the app runs only if the user starts it by hand (`/dobby:finish`'s `down` still cleans up whatever DID register). When the payload carries a non-null `degradedCommand` (install-phase failures only), name it as the mechanical degraded bring-up: it skips just the install; the model still carries out any `instructions[]` afterward.
 
 **Transparency rule (non-negotiable): a degraded bring-up is never silent.** If (b) is chosen, surface it in all three places — record it as an **Environment note** in `STATE.md`, state it plainly in the Step 5 scope checkpoint, AND restate it in the Next-step handoff line — never buried where the user must ask "didn't you say you'd open a browser/server?". Deviating from the abort default WITHOUT the user's explicit (b) selection is a stage violation. The note's home in `STATE.md` is the **`## Exploration` body**, written in Step 5 — see there.
 
-### 2d. No config to run from
-
-**`configPresent: false`** (the repo has `dobby` but was never onboarded) — skip the bring-up; there is nothing for `dobby` to run. Say plainly that it was skipped and that `/dobby:onboard` establishes the contract for next time, then **continue the stage** — the worktree is still valid and `state init` still works.
+**Absent** (no `dobby.config.json` — the repo has `dobby` but was never onboarded): skip the bring-up; there is nothing for `dobby` to run. Say plainly that it was skipped and that `/dobby:onboard` establishes the contract for next time, then **continue the stage** — `state init` still works.
 
 ## Step 3: Create the work-session doc
 
@@ -97,7 +71,7 @@ Read the payload:
 bunx dobby state init --goal "<the goal>" --source "<source>"
 ```
 
-`state init` owns the document end to end: it writes `STATE.md` at the repo root (the worktree root you just entered) with the canonical skeleton — the `# Work session:` title (the `--goal` value verbatim) plus the seven sections every later stage appends to, in fixed order: `## Goal`, `## Source`, `## Exploration`, `## Findings (interview)`, `## Research`, `## Spec`, `## Work log`, each body `_pending_` except the two the flags fill — and it ensures `STATE.md` is in `.gitignore` (working memory, never a committed artifact; `/dobby:wrap` disposes of it at the end). Never hand-write the skeleton, never add the gitignore line yourself, never rename or re-order a section.
+`state init` owns the document end to end: it writes `STATE.md` at the session's workroot — the git top-level scope was invoked from (the directory `up` just operated in, when Step 2 ran it), wherever the operator put this session — with the canonical skeleton — the `# Work session:` title (the `--goal` value verbatim) plus the seven sections every later stage appends to, in fixed order: `## Goal`, `## Source`, `## Exploration`, `## Findings (interview)`, `## Research`, `## Spec`, `## Work log`, each body `_pending_` except the two the flags fill — and it ensures `STATE.md` is in `.gitignore` (working memory, never a committed artifact; `/dobby:wrap` disposes of it at the end). Never hand-write the skeleton, never add the gitignore line yourself, never rename or re-order a section.
 
 `--source` carries what `goal parse` reported: `prompt`, or the backend plus the id and its lifecycle link (e.g. `github #123 — Closes #123`). `## Goal` and `## Source` are **write-once** — fill them here or they stay `_pending_` for the whole session.
 
@@ -113,7 +87,7 @@ Dispatch a `researcher` agent (Agent tool, `subagent_type: "dobby:researcher"`) 
 
 ## Step 5: Checkpoint and record
 
-Present a concise summary to the user (relevant code areas, patterns, how the goal fits) so they can correct misunderstandings early — and, if Step 2c ended degraded, what is NOT running. Then write that same summary into the doc:
+Present a concise summary to the user (relevant code areas, patterns, how the goal fits) so they can correct misunderstandings early — and, if Step 2 ended degraded, what is NOT running. Then write that same summary into the doc:
 
 ```bash
 bunx dobby state set Exploration --stdin <<'MD'
@@ -146,13 +120,11 @@ Interact with the user in their language. Write what you persist — `STATE.md` 
 - [ ] Goal normalized via `bunx dobby goal parse "<arg>" --json` (never by reading `dobby.config.json#tracker` or matching issue patterns by hand); asked in plain text if the input was empty
 - [ ] `hardStop` honored: non-null → stage STOPPED and reported (D8); a free-text goal always continues
 - [ ] If `source` is an issue: fetched per **view goal — the exception** in `../backlog/references/trackers.md`, then claimed with `bunx dobby claim <id> --json` — github when `claimed: true`; linear by executing the returned `{delegate:"mcp", op:"claim"}` descriptor through the ToolSearch-resolved tool (the kit's ONLY Linear-MCP write point; In Review / Done stay Linear-native), stage STOPPED if the MCP cannot read it
-- [ ] Slug settled before the preflight: taken as-is from `goal parse` for a free-text goal; for an issue goal, the parse's `slug` used literally as the PREFIX plus up to four kebab-case words off the fetched TITLE (`issue-42-add-csv-export`, `von-123-fix-stale-session-cache`), degraded to the prefix alone when no usable title was readable
-- [ ] `bunx dobby scope preflight --slug <slug> --json` run before touching the tree; `nested.insideWorktree` → soft-STOP ("open a new pane"), collision → retried with `suggestedSlug`, `existingWorktrees` treated as informational (parallel goals never refused)
-- [ ] Worktree created + entered via the `EnterWorktree` tool with the collision-free slug (branch `worktree-<slug>`, `.claude/worktrees/<slug>/`)
-- [ ] `bunx dobby up --json` run per `../execute/references/bring-up.md` when `configPresent`; `ok:true` with non-empty `instructions[]` followed (rename then start) as the NORMAL path, no gate; `ok:true`/`phase:"noop"` reported as clean success (rename instruction still carried out under cmux); `ok:false` → `reason` + stderr reported, then the two-option AskUserQuestion — **(a) abort (default/recommended)** `ExitWorktree(remove)` → stopped, or **(b) continue degraded** only on the explicit selection, naming `degradedCommand` when non-null
+- [ ] No preflight run, no worktree created or entered — the worktree (if any) belongs to the operator, and scope ran wherever it was invoked
+- [ ] `dobby.config.json` presence decided bring-up: present → `bunx dobby up --json` run per `../execute/references/bring-up.md`; `ok:true` with non-empty `instructions[]` followed (rename then start) as the NORMAL path, no gate; `ok:true`/`phase:"noop"` reported as clean success (rename instruction still carried out under cmux); `ok:false` → `reason` + stderr reported, then the two-option AskUserQuestion — **(a) abort (default/recommended)** → stage stopped (no worktree to remove), or **(b) continue degraded** only on the explicit selection, naming `degradedCommand` when non-null
 - [ ] Degradation surfaced in all three places (STATE.md Environment note + Step 5 checkpoint + Next-step handoff), the note FOLDED into `## Exploration` as a bold `**Environment note:**` lead — no new heading
-- [ ] Defensive `dobbyInstalled:false` → stage STOPPED before anything was created; `configPresent:false` → bring-up skipped with an `/dobby:onboard` note and the stage CONTINUED through local `state init`
-- [ ] `STATE.md` created with `bunx dobby state init --goal … --source …` (the engine owns the seven-section skeleton AND the gitignore entry); `--source` carries the backend, id and lifecycle link; a refusal (existing `STATE.md`) stopped the stage
+- [ ] Absent `dobby.config.json` → bring-up skipped with an `/dobby:onboard` note and the stage CONTINUED through local `state init`
+- [ ] `STATE.md` created at the session's workroot with `bunx dobby state init --goal … --source …` (the engine owns the seven-section skeleton AND the gitignore entry); `--source` carries the backend, id and lifecycle link; a refusal (existing `STATE.md`) stopped the stage
 - [ ] Codebase explored with a `researcher` agent; `CONTEXT.md` + ADRs read if present
 - [ ] Researcher cross-referenced the goal's claims against the code and surfaced contradictions (not just a file map)
 - [ ] Exploration returned as a compressed, context-budgeted digest (depth on what matters; pointer for a full map if needed)

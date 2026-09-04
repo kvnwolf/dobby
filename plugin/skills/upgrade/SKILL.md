@@ -35,7 +35,7 @@ bun update @kvnwolf/dobby --latest
 
 Each release that asks something of a consumer ships a note at `references/v<minor>.md`. Read, in ascending order, ONLY the files whose version falls inside the jump (above the previously installed version, up to and including the latest), and execute their actions. A version with no file asks nothing of a consumer — don't hunt for missing files.
 
-Notes so far: `references/v0.7.md`, `references/v0.8.md`, `references/v0.9.md`, `references/v0.12.md`, `references/v0.14.md`, `references/v0.15.md`.
+Notes so far: `references/v0.7.md`, `references/v0.8.md`, `references/v0.9.md`, `references/v0.12.md`, `references/v0.14.md`, `references/v0.15.md`, `references/v0.16.md`.
 
 ## Step 4: Re-run the gate
 

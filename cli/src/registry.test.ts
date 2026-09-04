@@ -17,9 +17,10 @@ import { run } from "./run.ts";
 //
 // Where every expected value comes from (all INDEPENDENT of the code):
 //  - The command list (ship, release, state, build-plan, repro, review, pr,
-//    tracker, claim, goal, kb, adr, finish, scope, migrate, and the artifact-lint
+//    tracker, claim, goal, kb, adr, finish, migrate, and the artifact-lint
 //    family) and the option list (23 string options + 5 booleans) are enumerated
-//    by the spec verbatim.
+//    by the spec verbatim. `scope` is NOT among them: the worktree belongs to the
+//    operator, so dobby has no scope command to advertise or dispatch.
 //  - `Usage: dobby` and the `Commands:` header are the CLI's established, already
 //    contracted help literals.
 //  - "an out-of-place flag is an error naming the flag and the command, plus the
@@ -346,12 +347,13 @@ const dispatchedCommands: {
   // registry entries (flag allowlist, subcommand token validation, usage listing)
   // are still covered by the slices around this one, all of which reject before
   // any handler runs.
-  // `finish --preflight`, `scope preflight` and `migrate preflight|verify` are
-  // IMPLEMENTED (see `preflight.test.ts` and `migrate.test.ts`, which own their
-  // contracts) — they are no longer stubs, so their rows are gone from this
-  // table. Their registry entries (flag allowlist, subcommand token validation,
-  // usage listing) stay covered by the slices around this one, all of which
-  // reject before any handler runs.
+  // `finish --preflight` and `migrate preflight|verify` are IMPLEMENTED (see
+  // `preflight.test.ts` and `migrate.test.ts`, which own their contracts) — they
+  // are no longer stubs, so their rows are gone from this table. Their registry
+  // entries (flag allowlist, subcommand token validation, usage listing) stay
+  // covered by the slices around this one, all of which reject before any handler
+  // runs. `scope preflight` is DELETED outright — `preflight.test.ts` owns that
+  // contract too (the invocation is now an ordinary unknown command).
   // `spec lint` and `map lint` both DEFAULT to a document inside the workroot
   // (the live `STATE.md`, the newest `docs/maps/*.md`) — this repo's own, from an
   // in-repo fixture — so each is handed a target that does not exist instead: the
@@ -594,7 +596,6 @@ const advertisedCommands = [
   "kb",
   "adr",
   "finish",
-  "scope",
   "migrate",
   "spec",
   "map",

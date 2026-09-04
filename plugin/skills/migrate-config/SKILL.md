@@ -166,7 +166,7 @@ Rewrite the config to the shrunken schema (`../onboard/references/dobby-config.m
 
 ## Step 8: Delete `.conductor/` — HUMAN GATE
 
-The kit **dropped Conductor support** — one execution host remains (terminal, with cmux enrichment). Everything `.conductor/` did is now absorbed elsewhere: workspace-as-worktree and the env-file copy are handled by native `EnterWorktree` + `dobby up`'s setup phase; `auto_run_after_setup` and the run lifecycle are `dobby up`/`down`; the Neon branch-per-worktree provisioning (admin's `setup.sh`/`archive.sh` `neonctl` glue) now lives in `dobby up`/`down`, reading `NEON_API_KEY` + `NEON_PROJECT_ID` from `.env.local`.
+The kit **dropped Conductor support** — one execution host remains (terminal, with cmux enrichment). Everything `.conductor/` did is now absorbed elsewhere: workspace-as-worktree is the operator's own call (whatever worktree they open, or a plain checkout), and the env-file copy is handled by `dobby up`'s setup phase; `auto_run_after_setup` and the run lifecycle are `dobby up`/`down`; the Neon branch-per-worktree provisioning (admin's `setup.sh`/`archive.sh` `neonctl` glue) now lives in `dobby up`/`down`, reading `NEON_API_KEY` + `NEON_PROJECT_ID` from `.env.local`.
 
 > **HUMAN GATE — this is destructive and irreversible.** Note the rationale (Conductor removal is recorded in the kit's Conductor-removal ADR, which supersedes ADR-0005 — everything Conductor did is documented there for a possible future re-add) and confirm before running `rm -rf .conductor`. Running the kit under Conductor becomes unsupported after this.
 

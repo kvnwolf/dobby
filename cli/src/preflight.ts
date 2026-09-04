@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import { type CheckGroup, type CheckNote, check } from "./check.ts";
 import type {
   CommandContext,
@@ -23,19 +23,14 @@ import {
 // gate stays in the SKILL, so a preflight never creates, enters, or removes
 // anything itself (it only computes the predicate the skill gates on).
 //
-//   - `scope preflight --slug <slug>` — what the goal WOULD take (branch
-//     `worktree-<slug>`, path `.claude/worktrees/<slug>/`), whether either is
-//     already taken (and a collision-free variant when so), whether this session
-//     is already INSIDE a kit worktree (the native EnterWorktree cannot nest),
-//     and whether the repo carries the dobby contract. Parallel worktrees are
-//     INFORMATIONAL — `existingWorktrees` is never a refusal signal, and entering
-//     the worktree stays native (EnterWorktree).
-//   - `finish --preflight [--slug <slug>]` — the teardown verdict for ONE goal:
-//     `safe` (MERGED PR + clean tree), `blocked` (dobby is not installed, so the
-//     mandatory `dobby down` cannot run — it outranks every other signal), else
-//     `confirm-required`. It also reports WHICH removal mechanism applies
-//     (`ExitWorktree` same-session, raw git for an orphan) and whether the branch
-//     is safe to force-delete. Both stay native/manual in the skill.
+//   - `finish --preflight` — the teardown verdict for the goal the session
+//     CURRENTLY stands on: `safe` (MERGED PR + clean tree), `blocked` (dobby is
+//     not installed, so the mandatory `dobby down` cannot run — it outranks
+//     every other signal), else `confirm-required`. It also reports whether the
+//     session stands inside a linked worktree (`inWorktree`, whoever made it)
+//     and whether the branch is safe to force-delete. The worktree belongs to
+//     the OPERATOR — this preflight never creates, names, or targets one by
+//     slug; it only reports where the session already stands.
 //   - `migrate preflight|verify` — whether a repo still needs the config
 //     migration (naming each legacy signal and snapshotting the facts the
 //     migration must carry across), and whether a migrated repo is healthy (the
@@ -44,32 +39,13 @@ import {
 // EVERY preflight here is an ACTION command: it fails HARD outside a git
 // repository (`requireWorkroot`) rather than answering with a degraded verdict a
 // skill might act on. Every child process goes through `runner.ts` with its cwd
-// pinned to the workroot; `git -C <path>` targets another worktree WITHOUT ever
-// unpinning the spawn.
+// pinned to the workroot.
 //
 // node:*-only (ADR-0008) — vitest imports this under Node, Bun runs it in prod.
-
-// The kit's literal naming, shared by both preflights: branch `worktree-<slug>`
-// at `<mainRoot>/.claude/worktrees/<slug>/`. Stated verbatim in scope/SKILL.md
-// and finish/SKILL.md — the ONE place this CLI spells it.
-const BRANCH_PREFIX = "worktree-";
-const WORKTREES_SEGMENTS = [".claude", "worktrees"] as const;
-
-// How far `suggestedSlug` probes for a free variant (`<slug>-2`, `-3`, …) before
-// giving up. A repo with 98 colliding variants of one slug is not a real case.
-const MAX_SLUG_SUFFIX = 99;
 
 // The two `git status --porcelain` status columns plus their trailing space: the
 // path starts at index 3 of every line.
 const PORCELAIN_PATH_OFFSET = 3;
-
-// One kit worktree as both preflights report it (scope's `existingWorktrees`,
-// finish's `candidates`): the goal slug, its branch, and its absolute path.
-interface WorktreeRef {
-  branch: string;
-  path: string;
-  slug: string;
-}
 
 // The `gh pr view` answer, projected to the three fields the skills read. Passed
 // THROUGH unchanged — the preflight never re-derives a merge verdict from git.
@@ -78,6 +54,24 @@ interface PullRequest {
   state: string;
   url: string;
 }
+
+// The raw `gh pr view` answer BEFORE it is projected down to `PullRequest`:
+// `baseRefName` drives `defaultBranch` resolution but is never itself part of
+// the payload's `pr` field (the skills only ever read the original three).
+interface PullRequestAnswer extends PullRequest {
+  baseRefName: string | null;
+}
+
+// Which step of the resolution answered `defaultBranch` — reported ALONGSIDE the
+// name so the skill (and a human reader) can tell a forge-recorded fact from a
+// guess: `"pr-base"` beats every git-cascade step, which is why it is checked
+// FIRST and, when it fires, none of the cascade runs at all.
+type DefaultBranchSource =
+  | "pr-base"
+  | "origin-head"
+  | "remote-conventional"
+  | "local-conventional"
+  | null;
 
 // The uncommitted work a teardown would destroy: `git status --porcelain` lines,
 // UNTRACKED files included (losing those is exactly what the gate protects).
@@ -88,91 +82,32 @@ interface DirtyTree {
 
 type Verdict = "blocked" | "confirm-required" | "safe";
 
-interface ScopePreflight {
-  branch: string;
-  collision: { branchExists: boolean; dirExists: boolean };
-  configPresent: boolean;
-  dobbyInstalled: boolean;
-  existingWorktrees: WorktreeRef[];
-  mainRoot: string;
-  nested: {
-    currentSlug: string | null;
-    insideWorktree: boolean;
-    worktreeRoot: string | null;
-  };
-  path: string;
-  slug: string;
-  suggestedSlug: string | null;
-}
-
 interface FinishPreflight {
-  // Null ONLY when no target could be resolved (run from the main checkout with
-  // no `--slug`): the payload then carries the candidates and blocks.
-  branch: string | null;
+  branch: string;
   branchDeleteSafe: boolean;
-  candidates: WorktreeRef[];
+  // The repository's own trunk. The PR's own `baseRefName` is the FORGE-recorded
+  // fact and is checked first; only when there is no usable base (no PR, or one
+  // whose answer carries no base) does the git cascade — resolved AT `mainRoot`,
+  // never the goal branch the session stands on — run: the remote head, then the
+  // remote-tracking `main`/`master`, then the LOCAL `main`/`master`, else `null`
+  // when nothing in the repo names one. `null` is an honest "I don't know",
+  // never a guess.
+  defaultBranch: string | null;
+  // WHICH step answered `defaultBranch`: `"pr-base"` (the forge), `"origin-head"`,
+  // `"remote-conventional"`, `"local-conventional"` (the three cascade steps), or
+  // `null` alongside a `null` `defaultBranch` when nothing answered.
+  defaultBranchSource: DefaultBranchSource;
   dirty: DirtyTree;
   dobbyInstalled: boolean;
+  // True iff the session's workroot is a LINKED worktree (git's own definition,
+  // via `linkedWorktreeMain`) — whoever made it: `claude --worktree`, an IDE, a
+  // bare `git worktree add`. The kit no longer makes or names worktrees itself.
+  inWorktree: boolean;
   mainRoot: string;
-  mode: "orphan" | "same-session";
   pr: PullRequest | null;
   reasons: string[];
-  removeMechanism: "ExitWorktree" | "raw-git";
-  slug: string | null;
   verdict: Verdict;
   worktreePath: string | null;
-}
-
-// Where the invocation is standing, resolved ONCE per preflight:
-//   - `workroot` — the git top-level of the cwd (every spawn is pinned here).
-//   - `mainRoot` — the MAIN checkout: the workroot itself, or (in a linked
-//     worktree) the parent of the common `.git` dir via `linkedWorktreeMain`.
-//   - `current`  — the KIT worktree the cwd sits in, or null. Kit-ness is
-//     positional: a linked worktree whose parent directory is exactly
-//     `<mainRoot>/.claude/worktrees`. A linked worktree somewhere else is a
-//     worktree the kit did not make, so it is not "inside a goal".
-interface Location {
-  current: { root: string; slug: string } | null;
-  mainRoot: string;
-  workroot: string;
-}
-
-// Resolve the location, or THROW (requireWorkroot) outside a git repository —
-// the action-command contract both preflights open with.
-function resolveLocation(cwd: string): Location {
-  const workroot = requireWorkroot(cwd);
-  const main = linkedWorktreeMain(workroot);
-  const mainRoot = main ?? workroot;
-  // `workroot` is the git TOP-LEVEL, so a cwd deep inside a worktree still
-  // resolves to that worktree's ROOT — which is what `nested.worktreeRoot` is.
-  const inKitDir =
-    main !== null && dirname(workroot) === worktreesDir(mainRoot);
-  return {
-    current: inKitDir ? { root: workroot, slug: basename(workroot) } : null,
-    mainRoot,
-    workroot,
-  };
-}
-
-// The directory the kit's worktrees live in: `<mainRoot>/.claude/worktrees`.
-function worktreesDir(mainRoot: string): string {
-  return join(mainRoot, ...WORKTREES_SEGMENTS);
-}
-
-// Where the goal's worktree lives on disk (absolute).
-function worktreeDir(mainRoot: string, slug: string): string {
-  return join(worktreesDir(mainRoot), slug);
-}
-
-// The branch a goal takes.
-function branchFor(slug: string): string {
-  return `${BRANCH_PREFIX}${slug}`;
-}
-
-// A string option's value, or null when absent (a bare boolean flag counts as
-// absent — `--slug` without a value cannot name a goal).
-function stringOption(value: boolean | string | undefined): string | null {
-  return typeof value === "string" && value !== "" ? value : null;
 }
 
 // The hard-error result for a thrown precondition (outside a git repo).
@@ -202,159 +137,118 @@ function dobbyInstalledAt(root: string): boolean {
   return existsSync(join(root, "node_modules", ".bin", "dobby"));
 }
 
-// Whether the branch exists, via `git show-ref --verify --quiet
-// refs/heads/<branch>` (scope/SKILL.md's own check): exit 0 = exists. Refs are
-// shared across a repo's worktrees, so the workroot-pinned spawn sees them all —
-// including a branch with NO worktree directory, which nothing on disk reveals.
-function branchExists(location: Location, branch: string): boolean {
+// The branch HEAD is on, or "HEAD" when it is DETACHED — pointing straight at a
+// commit, with no branch to move. `git symbolic-ref --quiet HEAD` asks exactly
+// that question: it exits nonzero precisely when HEAD is not a symbolic ref —
+// unlike `rev-parse --abbrev-ref HEAD` (answers the literal string "HEAD") or
+// `branch --show-current` (answers an empty line), which both answer a detached
+// HEAD with something branch-shaped.
+function currentBranch(root: string): string {
   const result = runCapture(
     "git",
-    ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
-    { root: location.workroot }
+    ["symbolic-ref", "--quiet", "--short", "HEAD"],
+    { root }
   );
-  return !result.error && result.status === 0;
+  const name = result.stdout.trim();
+  return result.status === 0 && name !== "" && name !== "HEAD" ? name : "HEAD";
 }
 
-// The KIT worktrees this repo currently has, from `git worktree list
-// --porcelain`. Filtered POSITIONALLY to direct children of
-// `<mainRoot>/.claude/worktrees` — which drops the main checkout (git lists it
-// too) and any worktree made outside the kit's layout. Tolerant: a failed git
-// call yields an empty list (the field is informational in both payloads).
-function listKitWorktrees(location: Location): WorktreeRef[] {
-  const result = runCapture("git", ["worktree", "list", "--porcelain"], {
-    root: location.workroot,
+// The repository's own trunk — the branch the finish skill switches to before
+// it force-deletes a goal branch. The PR's own `baseRefName` is the FORGE's
+// recorded fact and is checked first (`resolveDefaultBranch`); this function is
+// the FALLBACK the forge cannot answer, so `"main"` stays an assumption, never a
+// guess: it reads the repo itself through an ORDERED cascade, first hit wins:
+//   1. `refs/remotes/origin/HEAD` (`git symbolic-ref` answers `origin/<name>`;
+//      the `origin/` prefix is stripped) — but ONLY while `refs/remotes/
+//      origin/<name>` still exists. A DANGLING head (the symbolic ref
+//      resolves to a branch this clone no longer tracks — the remote's
+//      default was renamed/deleted and `origin/HEAD` was never refreshed)
+//      reads exactly like an unset head: the cascade continues to tier 2
+//      rather than answering with a name nothing tracks;
+//   2. failing that, the remote-tracking refs: `origin/main`, else
+//      `origin/master`;
+//   3. failing that (no remote refs at all), the LOCAL branches: `main`, else
+//      `master`;
+//   4. failing all of it, `null` — an honest "I don't know" rather than a
+//      guessed `"main"` the finish skill would then try to switch to.
+// Remote names are checked BEFORE local ones at every tier: a repo whose local
+// `main` was pushed under a different remote name must answer with what the
+// REMOTE actually calls trunk, not the local convention.
+const REMOTE_HEAD_PREFIX = "origin/";
+const CONVENTIONAL_TRUNK_NAMES = ["main", "master"] as const;
+
+interface ResolvedDefaultBranch {
+  defaultBranch: string | null;
+  defaultBranchSource: DefaultBranchSource;
+}
+
+// The forge FIRST, the git cascade only when there is no usable base: `pr` is
+// null, or its `baseRefName` is missing/empty (an older gh, or a malformed
+// answer) — both read as "no usable base" and fall through identically.
+function resolveDefaultBranch(
+  mainRoot: string,
+  pr: PullRequestAnswer | null
+): ResolvedDefaultBranch {
+  if (pr !== null && pr.baseRefName !== null && pr.baseRefName !== "") {
+    return { defaultBranch: pr.baseRefName, defaultBranchSource: "pr-base" };
+  }
+  return defaultBranchAt(mainRoot);
+}
+
+function defaultBranchAt(root: string): ResolvedDefaultBranch {
+  const head = runCapture(
+    "git",
+    ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+    { root }
+  );
+  const ref = head.stdout.trim();
+  if (head.status === 0 && ref.startsWith(REMOTE_HEAD_PREFIX)) {
+    const target = ref.slice(REMOTE_HEAD_PREFIX.length);
+    // A dangling `origin/HEAD` — the symbolic ref resolves, but the branch it
+    // names no longer exists as a remote-tracking ref (the remote's default
+    // branch was renamed/deleted and this clone's HEAD was never updated) —
+    // reads exactly like an UNSET head: the cascade continues to tier 2
+    // rather than answering with a name nothing tracks.
+    if (refExists(root, `refs/remotes/origin/${target}`)) {
+      return { defaultBranch: target, defaultBranchSource: "origin-head" };
+    }
+  }
+
+  for (const name of CONVENTIONAL_TRUNK_NAMES) {
+    if (refExists(root, `refs/remotes/origin/${name}`)) {
+      return {
+        defaultBranch: name,
+        defaultBranchSource: "remote-conventional",
+      };
+    }
+  }
+
+  for (const name of CONVENTIONAL_TRUNK_NAMES) {
+    if (refExists(root, `refs/heads/${name}`)) {
+      return { defaultBranch: name, defaultBranchSource: "local-conventional" };
+    }
+  }
+
+  return { defaultBranch: null, defaultBranchSource: null };
+}
+
+// Whether `ref` exists in `root`'s repository — `git show-ref --verify` reads
+// a fully-qualified ref name and exits nonzero when it does not resolve.
+function refExists(root: string, ref: string): boolean {
+  const result = runCapture("git", ["show-ref", "--verify", "--quiet", ref], {
+    root,
   });
-  if (result.error || result.status !== 0) {
-    return [];
-  }
-
-  const kitDir = worktreesDir(location.mainRoot);
-  const refs: WorktreeRef[] = [];
-  let path: string | null = null;
-  let branch: string | null = null;
-  // Each record is `worktree <path>` + optional `HEAD`/`branch` lines; a new
-  // `worktree` line (or the end of the output) closes the previous record.
-  const flush = (): void => {
-    if (path !== null && dirname(path) === kitDir) {
-      const slug = basename(path);
-      // A DETACHED kit worktree has no `branch` line — fall back to the branch
-      // the slug implies rather than dropping the worktree from the list.
-      refs.push({ branch: branch ?? branchFor(slug), path, slug });
-    }
-    path = null;
-    branch = null;
-  };
-
-  for (const line of result.stdout.split("\n")) {
-    if (line.startsWith("worktree ")) {
-      flush();
-      path = line.slice("worktree ".length).trim();
-    } else if (line.startsWith("branch refs/heads/")) {
-      branch = line.slice("branch refs/heads/".length).trim();
-    }
-  }
-  flush();
-  return refs;
+  return result.status === 0;
 }
 
 // ---------------------------------------------------------------------------
-// `dobby scope preflight --slug <slug>`
-// ---------------------------------------------------------------------------
-
-export function runScopePreflight(context: CommandContext): CommandResult {
-  let location: Location;
-  try {
-    location = resolveLocation(context.cwd);
-  } catch (error) {
-    return hardError(error);
-  }
-
-  // The git precondition comes FIRST (the action-command contract), the flag
-  // check second — outside a repo there is nothing to preflight for any slug.
-  const slug = stringOption(context.options.slug);
-  if (slug === null) {
-    return {
-      error:
-        "scope preflight requires --slug <slug> — the kebab-case goal slug the branch (worktree-<slug>) and worktree directory are named after",
-      exitCode: 1,
-    };
-  }
-
-  const collision = {
-    branchExists: branchExists(location, branchFor(slug)),
-    dirExists: existsSync(worktreeDir(location.mainRoot, slug)),
-  };
-  const collides = collision.branchExists || collision.dirExists;
-
-  const payload: ScopePreflight = {
-    branch: branchFor(slug),
-    collision,
-    // The contract signals are read at the MAIN checkout: that is the repo the
-    // new worktree is cut FROM, and the root `/dobby:onboard` establishes.
-    configPresent: existsSync(join(location.mainRoot, "dobby.config.json")),
-    dobbyInstalled: dobbyInstalledAt(location.mainRoot),
-    // INFORMATIONAL — parallel goals in parallel worktrees are normal and this
-    // list is never a refusal signal (scope only blocks on NESTING).
-    existingWorktrees: listKitWorktrees(location),
-    mainRoot: location.mainRoot,
-    nested: {
-      currentSlug: location.current?.slug ?? null,
-      insideWorktree: location.current !== null,
-      worktreeRoot: location.current?.root ?? null,
-    },
-    // The spec's literal display form: relative to `mainRoot`, trailing slash.
-    path: `.claude/worktrees/${slug}/`,
-    slug,
-    suggestedSlug: collides ? suggestSlug(location, slug) : null,
-  };
-
-  return rendered(payload, context.options, formatScopeText);
-}
-
-// The first collision-free variant of `slug` (`<slug>-2`, `<slug>-3`, …): free
-// means NEITHER the branch nor the directory exists. Keeps the original slug as
-// a prefix so the suggestion still reads as the same goal. Null in the absurd
-// case where every probed variant is taken.
-function suggestSlug(location: Location, slug: string): string | null {
-  for (let suffix = 2; suffix <= MAX_SLUG_SUFFIX; suffix += 1) {
-    const candidate = `${slug}-${suffix}`;
-    const taken =
-      branchExists(location, branchFor(candidate)) ||
-      existsSync(worktreeDir(location.mainRoot, candidate));
-    if (!taken) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-function formatScopeText(payload: ScopePreflight): string {
-  const nested = payload.nested.insideWorktree
-    ? `inside ${payload.nested.currentSlug} (${payload.nested.worktreeRoot})`
-    : "no";
-  const slugs = payload.existingWorktrees.map((ref) => ref.slug);
-  return `${[
-    `slug:              ${payload.slug}`,
-    `branch:            ${payload.branch}`,
-    `path:              ${payload.path}`,
-    `mainRoot:          ${payload.mainRoot}`,
-    `collision:         branch=${payload.collision.branchExists} dir=${payload.collision.dirExists}`,
-    `suggestedSlug:     ${payload.suggestedSlug ?? "-"}`,
-    `nested:            ${nested}`,
-    `configPresent:     ${payload.configPresent}`,
-    `dobbyInstalled:    ${payload.dobbyInstalled}`,
-    `existingWorktrees: ${slugs.length === 0 ? "-" : slugs.join(", ")}`,
-  ].join("\n")}\n`;
-}
-
-// ---------------------------------------------------------------------------
-// `dobby finish --preflight [--slug <slug>]`
+// `dobby finish --preflight`
 // ---------------------------------------------------------------------------
 
 export function runFinishPreflight(context: CommandContext): CommandResult {
-  let location: Location;
+  let workroot: string;
   try {
-    location = resolveLocation(context.cwd);
+    workroot = requireWorkroot(context.cwd);
   } catch (error) {
     return hardError(error);
   }
@@ -362,29 +256,34 @@ export function runFinishPreflight(context: CommandContext): CommandResult {
   if (context.options.preflight !== true) {
     return {
       error:
-        "finish takes --preflight — the CLI computes the teardown verdict; the removal itself stays in the skill (native ExitWorktree, or raw git for an orphan)",
+        "finish takes --preflight — the CLI computes the teardown verdict; the removal itself stays in the skill (native ExitWorktree when the session entered the worktree, or raw git otherwise)",
       exitCode: 1,
     };
   }
 
-  const candidates = listKitWorktrees(location);
-  const target = resolveTarget(location, stringOption(context.options.slug));
-  if (target === null) {
-    return rendered(
-      unresolvedTarget(location, candidates),
-      context.options,
-      formatFinishText
-    );
-  }
+  // A LINKED worktree (git's own definition — its git dir differs from the
+  // common git dir) puts the session INSIDE a goal; `mainRoot` is the checkout
+  // it hangs off. A plain checkout is its own main root, with nothing to tear
+  // down but the branch.
+  const linkedMain = linkedWorktreeMain(workroot);
+  const inWorktree = linkedMain !== null;
+  const mainRoot = linkedMain ?? workroot;
+  const worktreePath = inWorktree ? workroot : null;
 
-  const branch = branchFor(target.slug);
-  const worktreePath = worktreeDir(location.mainRoot, target.slug);
-  const pr = readPullRequest(location, branch);
-  const dirty = readDirtyTree(location, worktreePath);
-  // `dobby down` runs INSIDE the target worktree, where module resolution walks
-  // up: the worktree sits under the main checkout, so main's install serves it.
-  const dobbyInstalled =
-    dobbyInstalledAt(worktreePath) || dobbyInstalledAt(location.mainRoot);
+  const branch = currentBranch(workroot);
+  const prAnswer = readPullRequest(workroot, branch);
+  const dirty = readDirtyTree(workroot);
+  // Per-tree, not per-checkout: `node_modules/` is gitignored, so a linked
+  // worktree and its main checkout are installed INDEPENDENTLY of each other.
+  const dobbyInstalled = dobbyInstalledAt(workroot);
+  const { defaultBranch, defaultBranchSource } = resolveDefaultBranch(
+    mainRoot,
+    prAnswer
+  );
+  // The payload's `pr` field is the SAME three-field projection the skills have
+  // always read — `baseRefName` feeds `defaultBranch` resolution above and is
+  // never itself part of the payload.
+  const pr = projectPullRequest(prAnswer);
 
   const { reasons, verdict } = judgeTeardown({
     branch,
@@ -401,74 +300,19 @@ export function runFinishPreflight(context: CommandContext): CommandResult {
     // authoritative signal — which is why this is derived from `pr.state` and
     // never from git, and why the skill force-deletes (`-D`) once it holds.
     branchDeleteSafe: pr?.state === "MERGED",
-    candidates,
+    defaultBranch,
+    defaultBranchSource,
     dirty,
     dobbyInstalled,
-    mainRoot: location.mainRoot,
-    mode: target.mode,
+    inWorktree,
+    mainRoot,
     pr,
     reasons,
-    // Native ExitWorktree removes ONLY worktrees the CURRENT session created (and
-    // restores the cwd afterwards); an orphan must be torn down with raw git from
-    // the main checkout instead.
-    removeMechanism:
-      target.mode === "same-session" ? "ExitWorktree" : "raw-git",
-    slug: target.slug,
     verdict,
     worktreePath,
   };
 
   return rendered(payload, context.options, formatFinishText);
-}
-
-// Which goal this finish targets, and in which mode:
-//   - SAME-SESSION — the cwd is inside a kit worktree and `--slug` either agrees
-//     or was omitted. This is the session that owns the worktree, so the native
-//     ExitWorktree can remove it.
-//   - ORPHAN — a `--slug` naming some OTHER goal (the session that created it is
-//     gone, or this session sits elsewhere). Teardown falls back to raw git.
-// Null when neither applies (the main checkout with no `--slug`): nothing is
-// resolvable, so the payload blocks and hands back the candidate list.
-function resolveTarget(
-  location: Location,
-  requested: string | null
-): { mode: FinishPreflight["mode"]; slug: string } | null {
-  const { current } = location;
-  if (current !== null && (requested === null || requested === current.slug)) {
-    return { mode: "same-session", slug: current.slug };
-  }
-  if (requested !== null) {
-    return { mode: "orphan", slug: requested };
-  }
-  return null;
-}
-
-// The payload for "no target": every fact that needs a target is null/empty, the
-// verdict blocks, and `candidates` carries what the skill can offer the user.
-// This is the ONE verdict outside `judgeTeardown`'s three rules — not a teardown
-// judgement at all, but the answer to "which goal?": there is nothing to compute
-// until the skill picks a target, so the payload refuses instead of guessing.
-function unresolvedTarget(
-  location: Location,
-  candidates: WorktreeRef[]
-): FinishPreflight {
-  return {
-    branch: null,
-    branchDeleteSafe: false,
-    candidates,
-    dirty: { count: 0, files: [] },
-    dobbyInstalled: dobbyInstalledAt(location.mainRoot),
-    mainRoot: location.mainRoot,
-    mode: "orphan",
-    pr: null,
-    reasons: [
-      "no target worktree — run finish from inside the goal's worktree, or name it with --slug <slug> (see `candidates`)",
-    ],
-    removeMechanism: "raw-git",
-    slug: null,
-    verdict: "blocked",
-    worktreePath: null,
-  };
 }
 
 // The verdict + the reasons behind it — exactly the three spec rules, nothing
@@ -479,9 +323,6 @@ function unresolvedTarget(
 //   - SAFE is the ONLY reason-less outcome: a MERGED PR and a clean tree.
 //   - CONFIRM-REQUIRED otherwise, each reason naming exactly what the skill must
 //     show at its destructive-action gate.
-// A worktree DIRECTORY that is already gone is deliberately NOT a blocker: the
-// leftover branch (and the stale `git worktree` registration) is still a
-// legitimate thing to clean up, and there is nothing left to lose.
 function judgeTeardown(input: {
   branch: string;
   dirty: DirtyTree;
@@ -518,25 +359,29 @@ function judgeTeardown(input: {
     : { reasons, verdict: "confirm-required" };
 }
 
-// The branch's pull request via `gh pr view <branch> --json state,mergedAt,url`
-// (finish/SKILL.md's own call). NULL whenever gh cannot answer — no gh on PATH,
-// no repo remote, or gh's "no pull requests found" exit 1 — because an ABSENT PR
-// must read as "unknown", never as a merge signal. The three fields are passed
-// through as gh reported them; nothing here re-derives merge state from git.
+// The branch's pull request via `gh pr view <branch> --json
+// state,mergedAt,url,baseRefName` (finish/SKILL.md's own call). NULL whenever gh
+// cannot answer — no gh on PATH, no repo remote, or gh's "no pull requests
+// found" exit 1 — because an ABSENT PR must read as "unknown", never as a merge
+// signal. The four fields are passed through as gh reported them; nothing here
+// re-derives merge state from git. `baseRefName` drives `defaultBranch`
+// resolution ONLY — the payload's own `pr` field never carries it
+// (`projectPullRequest`).
 function readPullRequest(
-  location: Location,
+  root: string,
   branch: string
-): PullRequest | null {
+): PullRequestAnswer | null {
   const result = runCapture(
     "gh",
-    ["pr", "view", branch, "--json", "state,mergedAt,url"],
-    { root: location.workroot }
+    ["pr", "view", branch, "--json", "state,mergedAt,url,baseRefName"],
+    { root }
   );
   if (result.error || result.status !== 0) {
     return null;
   }
   try {
     const data = JSON.parse(result.stdout) as {
+      baseRefName?: unknown;
       mergedAt?: unknown;
       state?: unknown;
       url?: unknown;
@@ -545,6 +390,8 @@ function readPullRequest(
       return null;
     }
     return {
+      baseRefName:
+        typeof data.baseRefName === "string" ? data.baseRefName : null,
       // gh reports `mergedAt: null` for anything not merged.
       mergedAt: typeof data.mergedAt === "string" ? data.mergedAt : null,
       state: data.state,
@@ -555,21 +402,20 @@ function readPullRequest(
   }
 }
 
-// The target worktree's uncommitted work: bare `git status --porcelain` (the
-// finish skill's literal), so UNTRACKED files count too — losing those is exactly
-// what the destructive gate protects against. The spawn stays pinned to the
-// workroot; `-C <path>` is what points git at the (possibly foreign) worktree.
-// Tolerant: a missing directory or a failed git call reads as clean — a worktree
-// that is no longer on disk has no uncommitted work left to lose.
-function readDirtyTree(location: Location, worktreePath: string): DirtyTree {
-  if (!existsSync(worktreePath)) {
-    return { count: 0, files: [] };
-  }
-  const result = runCapture(
-    "git",
-    ["-C", worktreePath, "status", "--porcelain"],
-    { root: location.workroot }
-  );
+// The payload's `pr` field: the SAME three fields the skills have always read,
+// `baseRefName` dropped — it exists only to drive `defaultBranch` resolution.
+function projectPullRequest(pr: PullRequestAnswer | null): PullRequest | null {
+  return pr === null
+    ? null
+    : { mergedAt: pr.mergedAt, state: pr.state, url: pr.url };
+}
+
+// The session's uncommitted work: bare `git status --porcelain` at the workroot
+// itself (the finish skill's literal), so UNTRACKED files count too — losing
+// those is exactly what the destructive gate protects against. Tolerant: a
+// failed git call reads as clean.
+function readDirtyTree(root: string): DirtyTree {
+  const result = runCapture("git", ["status", "--porcelain"], { root });
   if (result.error || result.status !== 0) {
     return { count: 0, files: [] };
   }
@@ -595,17 +441,16 @@ function formatFinishText(payload: FinishPreflight): string {
       : `${payload.pr.state} (${payload.pr.url}${payload.pr.mergedAt === null ? "" : `, merged ${payload.pr.mergedAt}`})`;
   const lines = [
     `verdict:         ${payload.verdict}`,
-    `mode:            ${payload.mode}`,
-    `slug:            ${payload.slug ?? "-"}`,
-    `branch:          ${payload.branch ?? "-"}`,
+    `inWorktree:      ${payload.inWorktree}`,
+    `branch:          ${payload.branch}`,
+    `defaultBranch:   ${payload.defaultBranch ?? "unknown"}`,
+    `defaultBranchSource: ${payload.defaultBranchSource ?? "unknown"}`,
     `worktreePath:    ${payload.worktreePath ?? "-"}`,
     `mainRoot:        ${payload.mainRoot}`,
     `pr:              ${pr}`,
     `dirty:           ${payload.dirty.count}${payload.dirty.count === 0 ? "" : ` (${payload.dirty.files.join(", ")})`}`,
     `dobbyInstalled:  ${payload.dobbyInstalled}`,
-    `removeMechanism: ${payload.removeMechanism}`,
     `branchDeleteSafe:${payload.branchDeleteSafe}`,
-    `candidates:      ${payload.candidates.length === 0 ? "-" : payload.candidates.map((ref) => ref.slug).join(", ")}`,
   ];
   for (const reason of payload.reasons) {
     lines.push(`  - ${reason}`);

@@ -34,11 +34,7 @@ import {
   type UpPlan,
   type UpReport,
 } from "./lifecycle.ts";
-import {
-  runFinishPreflight,
-  runMigrate,
-  runScopePreflight,
-} from "./preflight.ts";
+import { runFinishPreflight, runMigrate } from "./preflight.ts";
 import { runRelease } from "./release.ts";
 import { runRepro } from "./repro.ts";
 import { runPr, runReview } from "./review.ts";
@@ -217,7 +213,7 @@ const COMMANDS: Readonly<Record<string, CommandEntry>> = {
   down: { flags: ["dry-run", "json"] },
   env: { flags: JSON_FLAG },
   finish: {
-    flags: ["json", "preflight", "slug"],
+    flags: ["json", "preflight"],
     handler: runFinishPreflight,
   },
   goal: {
@@ -282,11 +278,6 @@ const COMMANDS: Readonly<Record<string, CommandEntry>> = {
     handler: runReview,
     subcommands: { apply: ["plan", "stdin", "dry-run"], fetch: [] },
   },
-  scope: {
-    flags: JSON_FLAG,
-    handler: runScopePreflight,
-    subcommands: { preflight: ["slug", "goal", "source"] },
-  },
   ship: {
     flags: ["json", "message-file", "pr-body-file"],
     handler: runShip,
@@ -307,8 +298,7 @@ const COMMANDS: Readonly<Record<string, CommandEntry>> = {
     subcommands: {
       "append-worklog": ["file", "stdin", "task"],
       // `--goal` / `--source` fill the Goal and Source bodies of the skeleton
-      // `init` writes (the surface `/dobby:scope` calls); both options already
-      // exist globally (allowlisted for `scope preflight`).
+      // `init` writes (the surface `/dobby:scope` calls).
       init: ["goal", "source"],
       // No `--file` (unlike the artifact-lint commands): `state lint` judges the
       // ONE document the engine owns, `<workroot>/STATE.md`, so a target flag

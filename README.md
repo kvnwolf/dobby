@@ -23,7 +23,7 @@ Then start your first session from any project:
 
 ### The CLI
 
-The repo also ships **`@kvnwolf/dobby`**, the kit's **mechanical execution layer** — a Bun CLI installed as each project's single devDependency (added by `/dobby:onboard`). It detects a project's capabilities from its dependencies and infers every task zero-config (à la Vercel): the quality gate (`dobby check` — also the edit hook, `dobby check --fix` the pre-commit gate, and `dobby check --pre-push` the git-hook backstop that refuses a red push) and the run lifecycle (`dobby up` / `dobby down` / `dobby dev`), where `dobby up` also brings a fresh worktree up (installs deps, materializes the env files, installs the pre-push hook) and probes it, handing back the instructions to start it (`dobby instructions <topic>`) — the two-step protocol every skill/agent follows. It mechanizes the kit's ceremonies too, so the skills keep the judgment and hand the mechanics over: `dobby ship` (stage → gate in-process → commit → push → PR), `dobby release` (the whole publish spine behind a per-target adapter), `dobby state` (the `STATE.md` engine), `dobby build-plan`, `dobby review` / `dobby pr watch`, the scope/finish/migrate preflights, the tracker + KB + ADR writers, and the artifact linters. It bundles the toolchain (Biome, TypeScript, knip, taze, portless) and ships every tool's config as a default: for biome, vite, vitest, and drizzle-kit, dobby passes its shipped, capability-picked preset through the tool's native config flag when the repo has no file of its own (**override by presence**), so a delta-less project carries only `package.json`, `tsconfig.json`, and `dobby.config.json` — you write a tool config file only to carry a real delta, and deleting it restores the default (a biome delta extends dobby's two FLAT presets, `biome/core` + `biome/react`, directly — biome's `extends` is one-level, so a react consumer lists both; without deltas, no `biome.jsonc` ships at all). External builders go through dobby too: a Vercel project sets its Build Command to `bunx dobby build`. Skills invoke it via `bunx dobby` (the local pinned bin). Full command reference: **[`cli/README.md`](./cli/README.md)** (the npm package front page). Releases are cut with `/dobby:release`, which runs `dobby release` and answers the two judgments it stops for (the version question and the notes).
+The repo also ships **`@kvnwolf/dobby`**, the kit's **mechanical execution layer** — a Bun CLI installed as each project's single devDependency (added by `/dobby:onboard`). It detects a project's capabilities from its dependencies and infers every task zero-config (à la Vercel): the quality gate (`dobby check` — also the edit hook, `dobby check --fix` the pre-commit gate, and `dobby check --pre-push` the git-hook backstop that refuses a red push) and the run lifecycle (`dobby up` / `dobby down` / `dobby dev`), where `dobby up` also brings a fresh worktree up (installs deps, materializes the env files, installs the pre-push hook) and probes it, handing back the instructions to start it (`dobby instructions <topic>`) — the two-step protocol every skill/agent follows. It mechanizes the kit's ceremonies too, so the skills keep the judgment and hand the mechanics over: `dobby ship` (stage → gate in-process → commit → push → PR), `dobby release` (the whole publish spine behind a per-target adapter), `dobby state` (the `STATE.md` engine), `dobby build-plan`, `dobby review` / `dobby pr watch`, the finish/migrate preflights, the tracker + KB + ADR writers, and the artifact linters. It bundles the toolchain (Biome, TypeScript, knip, taze, portless) and ships every tool's config as a default: for biome, vite, vitest, and drizzle-kit, dobby passes its shipped, capability-picked preset through the tool's native config flag when the repo has no file of its own (**override by presence**), so a delta-less project carries only `package.json`, `tsconfig.json`, and `dobby.config.json` — you write a tool config file only to carry a real delta, and deleting it restores the default (a biome delta extends dobby's two FLAT presets, `biome/core` + `biome/react`, directly — biome's `extends` is one-level, so a react consumer lists both; without deltas, no `biome.jsonc` ships at all). External builders go through dobby too: a Vercel project sets its Build Command to `bunx dobby build`. Skills invoke it via `bunx dobby` (the local pinned bin). Full command reference: **[`cli/README.md`](./cli/README.md)** (the npm package front page). Releases are cut with `/dobby:release`, which runs `dobby release` and answers the two judgments it stops for (the version question and the notes).
 
 ## The mental model
 
@@ -56,11 +56,11 @@ Each of the five agent prompt bodies is authoritative in `plugin/agents/`, and e
 
 ## Where it runs: the terminal host
 
-dobby runs in a plain `claude` session — your terminal, including over ssh, and inside **cmux** (the manaflow-ai native macOS terminal). The kit owns the whole worktree + run lifecycle itself, mechanized by the `@kvnwolf/dobby` CLI:
+dobby runs in a plain `claude` session — your terminal, including over ssh, and inside **cmux** (the manaflow-ai native macOS terminal) — operated inside whatever checkout or worktree you already opened. The kit owns the run lifecycle itself, mechanized by the `@kvnwolf/dobby` CLI:
 
-- `/dobby:scope` creates and enters a per-goal git worktree, brings it up with `bunx dobby up`, then grounds the goal through researchers so the main-thread architect can plan from evidence.
+- `/dobby:scope` grounds the goal wherever the session already stands — a worktree you opened (`claude --worktree`, an IDE, `git worktree add`) or a plain checkout on a branch — brings it up with `bunx dobby up`, then grounds the goal through researchers so the main-thread architect can plan from evidence.
 - `/dobby:execute` re-runs `bunx dobby up` — idempotent and liveness-first, so a re-run never double-starts — then dispatches the plan's workers directly, following the shared dispatch protocol.
-- `/dobby:finish` merges the goal's PR when it's still open (gated — your explicit call), then tears it all down with `bunx dobby down`.
+- `/dobby:finish` merges the goal's PR when it's still open (gated — your explicit call), tears the run down with `bunx dobby down`, and — only when the session stands in a worktree — offers to remove it.
 
 `dobby up` no longer starts anything itself — it prepares the workspace, probes it, and hands back the instructions the model carries out: under **cmux** (`CMUX_WORKSPACE_ID` is set in every cmux pane) that means opening a named run pane and, once the app reports live (never on a booting 404), a named browser pane; on a plain ssh/tmux session it means a background `Bash` job instead. `dobby instructions <topic>` answers the same catalogue directly (`start`, `stop`, `browser`, `rename`), and QA drives the UI by following `dobby instructions browser` — cmux's own browser CLI ladder under cmux, a different guide under Claude Desktop or t3 code.
 
@@ -72,7 +72,7 @@ The coordinator and QA reach the running app the same way everywhere: `bunx dobb
 
 - **Node 24+** — required by `portless`.
 - **`portless`** — bundled inside `@kvnwolf/dobby` (your single devDependency, added by `/dobby:onboard`), plus a one-time `portless trust` (it needs sudo once to install a local CA and bind `:443`).
-- **Claude Code** recent enough for native worktrees: `EnterWorktree`/`ExitWorktree` land in **≥ 2.1.72**; transcript relocation (so `/dobby:mark`/`/dobby:learn` still resolve a session after the worktree moves) lands in **≥ 2.1.198**.
+- **Claude Code** recent enough for native worktrees, if you use them to isolate a goal (`claude --worktree`, `ExitWorktree`): **≥ 2.1.72**; transcript relocation (so `/dobby:mark`/`/dobby:learn` still resolve a session after the worktree moves) lands in **≥ 2.1.198**.
 
 ## The lifecycle
 
@@ -94,10 +94,10 @@ A work session moves through six stages. Each stage ends by asking which command
 /dobby:commit       docs synced, message + PR body authored, then `dobby ship`
       │             (gate → commit → push → PR) and the watch to a verdict
       │
-/dobby:finish       merge the PR (your call), tear down the worktree
+/dobby:finish       merge the PR (your call), tear down the run
 ```
 
-`/dobby:finish` is the closing step: if the PR is still open, it offers to **merge** it first — your explicit selection at its gate, squash-merged, and only once `dobby pr watch` says merge-ready — and then `bunx dobby down` runs the config's teardown, kills the registered run process, deletes the per-worktree Neon branch, and hands back the instruction to close any cmux pane it opened; finally it removes the per-goal worktree + branch and pulls the main checkout. It's gated like every other stage: `/dobby:commit`'s handoff question offers it once the PR is merge-ready, and nothing — the merge included — runs until you pick it.
+`/dobby:finish` is the closing step: if the PR is still open, it offers to **merge** it first — your explicit selection at its gate, squash-merged, and only once `dobby pr watch` says merge-ready — and then `bunx dobby down` runs the config's teardown, kills the registered run process, deletes the per-worktree Neon branch, and hands back the instruction to close any cmux pane it opened; then, only when the session stands in a worktree, it offers to remove that worktree + branch — otherwise it returns to `main` and deletes the goal's branch — and pulls the main checkout either way. It's gated like every other stage: `/dobby:commit`'s handoff question offers it once the PR is merge-ready, and nothing — the merge included — runs until you pick it.
 
 **The push is guarded twice.** `/dobby:commit` never runs the gate by hand — `dobby ship` composes it in-process, and a red gate commits nothing — and the **pre-push backstop** (the git hook `dobby up` installs) re-runs it on `git push`, so a red tree can't reach the remote even when the commit happened outside the kit. The mechanized half of the convention rules rides the same path: they fire on every Edit/Write through the edit hook and again at push, so conformance no longer depends on a skill having been read.
 
@@ -195,13 +195,13 @@ Then comes `/dobby:commit`: it syncs the docs and authors the conventional-commi
 /dobby:finish
 ```
 
-The whole session ran inside a per-goal worktree that `/dobby:scope` created — so once your PR is merge-ready, one more step merges it and retires the worktree:
+If the whole session ran inside a worktree you opened for this goal, once your PR is merge-ready one more step merges it and retires that worktree:
 
 ```
 /dobby:scope … → interview → research → spec → execute → wrap → commit → /dobby:finish (merges, then tears down)
 ```
 
-`/dobby:finish` confirms the PR is actually **merged** (if it's still open, closed, or the tree is dirty, it shows the state and asks before merging or destroying anything — on an open PR with a clean tree, "Merge & finish" is one of the options: it squash-merges once `dobby pr watch` reports merge-ready, then re-checks and continues), then runs `bunx dobby down` (teardown extras, kills the registered run process, deletes the Neon branch, hands back the instruction to close any cmux pane it opened), removes the worktree and its branch, and pulls your main checkout. If the original session died and left an **orphaned** worktree behind, run `/dobby:finish` anyway — it falls back to a raw-git cleanup after verifying the branch was merged and confirming with you.
+`/dobby:finish` confirms the PR is actually **merged** (if it's still open, closed, or the tree is dirty, it shows the state and asks before merging or destroying anything — on an open PR with a clean tree, "Merge & finish" is one of the options: it squash-merges once `dobby pr watch` reports merge-ready, then re-checks and continues), then runs `bunx dobby down` (teardown extras, kills the registered run process, deletes the Neon branch, hands back the instruction to close any cmux pane it opened); if the session stands in a worktree it then offers to remove that worktree and its branch, and if it's an **orphaned** worktree from a session that died before running `/dobby:finish`, it falls back to a raw-git cleanup after verifying the branch was merged and confirming with you — otherwise, on a plain checkout, it returns to `main` and deletes the goal's branch. Either way it pulls your main checkout.
 
 ## When to use what
 
@@ -225,7 +225,7 @@ The whole session ran inside a per-goal worktree that `/dobby:scope` created —
 | A brand-new empty repo | `/dobby:onboard` — scaffolds it and picks the issue tracker (GitHub Issues by default, or Linear / local `BACKLOG.md`) |
 | A repo on an older dobby — or still on vite-plus / the legacy `.claude/commit.config.yml` | `/dobby:upgrade` — bumps to the latest and walks the per-version upgrade notes; a legacy repo is routed through `/dobby:migrate-config` (the one-time move onto `@kvnwolf/dobby` + `dobby.config.json`) |
 | Work is done, ship it | `/dobby:commit` |
-| The PR is merge-ready (or already merged) and the worktree needs retiring | `/dobby:finish` — it offers the merge, then cleans up |
+| The PR is merge-ready (or already merged) and the run/worktree needs retiring | `/dobby:finish` — it offers the merge, then cleans up |
 | A merged version ready to publish | `/dobby:release` — from the main checkout; npm or a Homebrew cask, per `dobby.config.json`'s `release` key |
 | A review bot or reviewer left comments on your PR | `/dobby:address-review` |
 | Structuring or refactoring a module's files | `/dobby:module-conventions` (auto-activates) |
@@ -297,8 +297,7 @@ These couple to Claude Code's session storage (`~/.claude/projects`) on purpose 
 | A hook blocked my `git push` | The pre-push backstop found a red gate on the tree being pushed | Read the findings it printed (they're the whole list, not a sample) and fix them — or, when you're pushing a WIP branch on purpose, `git push --no-verify` as a conscious bypass |
 | Execute drifted from the loop logic | The dispatch protocol must be followed as written, not paraphrased | Re-run `/dobby:execute`; the skill's `references/build-protocol.md` is the canonical protocol |
 | `portless` prompts for sudo / fails to bind `:443` on first run | First-time CA install + privileged port | Run `portless trust` once (surfaced by `/dobby:onboard`); it's a one-time setup, later runs don't need it |
-| An old session died and left a worktree in `.claude/worktrees/` | The session couldn't run `/dobby:finish` before exiting | Run `/dobby:finish` anyway — it detects the orphan, checks the PR (offering the merge if it's still open), confirms with you, and cleans up via raw git |
-| `/dobby:scope` stops ("open a new pane") | Nesting — THIS session is already inside a worktree, and the native tool can't nest (parallel worktrees from OTHER sessions are fine and don't trigger this) | Open a new cmux pane / `claude` session for the new goal and run `/dobby:scope <goal>` there — one goal per pane, no nesting |
+| An old session died and left its worktree behind | The session couldn't run `/dobby:finish` before exiting | Run `/dobby:finish` anyway — it detects the orphan, checks the PR (offering the merge if it's still open), confirms with you, and cleans up via raw git |
 
 ## Recovery quick reference
 
