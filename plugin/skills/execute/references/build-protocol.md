@@ -6,15 +6,21 @@ It is not a runtime for a tool to execute — it is what the interactive Archite
 
 ## Launch workers named
 
-Every worker is dispatched as a NAMED subagent — the Agent tool's `name` argument, never an anonymous call:
+Every worker is dispatched as a NAMED subagent — the Agent tool's `name` argument, never an anonymous call. `subagent_type` is the agent DEFINITION; `name` is the per-task ADDRESS, and the two are not interchangeable:
 
-- Test-author → `dobby:test-author`
-- Implementor → `dobby:implementor`
-- QA → `dobby:qa`
+- Test-author → `subagent_type: "dobby:test-author"`, `name: "test-author-t<id>"`
+- Implementor → `subagent_type: "dobby:implementor"`, `name: "implementor-t<id>"`
+- QA → `subagent_type: "dobby:qa"`, `name: "qa-t<id>"`
 
-Naming is not a style choice. Only a NAMED dispatch produces a sibling roster the worker can read, and only a worker who can see that roster has anyone addressable to reach with `SendMessage` — dispatch a worker anonymously and it has no roster to consult and no sibling it can name, so it silently falls back to returning its verdict alone with no fix conversation possible. Every dispatch in this protocol carries a name for exactly this reason.
+`<id>` is the task's own id from the plan (`tasks[].id` from `build-plan`). The Agent tool's `name` argument accepts only letters, digits, `_`, and `-` (max 64 chars) — a `:` is rejected, which is exactly why the definition id (`dobby:implementor`) can never double as the name. One name per role is not enough either: with several tasks in flight at once, a bare `implementor` would collide across tasks, so the name carries the task id and gives each task's workers their own distinguishable address.
+
+Naming is not a style choice. A NAMED worker is addressable by `SendMessage` under that name, and its dispatch instruction (below) is what tells it who its siblings are — an anonymous worker has no address of its own and no siblings named to it, so it silently falls back to returning its verdict alone with no fix conversation possible. Every dispatch in this protocol carries a name for exactly this reason.
+
+That sibling roster is exactly what belongs in the dispatch instruction: open it with the task's three names, so the worker knows exactly who its siblings are without having to discover them — e.g. `You are implementor-t2; the test-author is test-author-t2; QA will be qa-t2.`
 
 Before a worker's FIRST use of `SendMessage`, it must load the deferred tool with `ToolSearch({query: 'select:SendMessage'})` — the tool does not exist in a fresh worker's toolset until then, and a worker that skips this step cannot reach anyone.
+
+**A task's three workers are dispatched ONCE each, and stay alive for the whole task.** Every later round — a QA defect, a test-contract problem, a re-check after a fix — reaches that SAME name by `SendMessage`; the Architect never dispatches a replacement worker for a role mid-task. "Alive" means NOT REPLACED, not necessarily still running: `SendMessage` to a name resumes that agent from its own transcript with its context intact, so a worker that has already returned a verdict is still the right one to message. Treat a worker as gone only once its task reaches a terminal status (`done`, `blocked`, `needs-human`) — never before.
 
 ## Require CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS unset
 
@@ -29,7 +35,7 @@ Two exceptions hold a task back even once its dependencies clear:
 - **Overlapping writers.** `dobby build-plan` emits each task's `areas` — compare a ready task's `Affected areas` against every task currently in flight before dispatching it, as NORMALISED PATHS (strip a trailing slash, strip a leading `./`) rather than as opaque strings matched for exact equality: one area being a PREFIX of the other counts as overlap, so a task naming a directory and a task naming a file inside it describe overlapping ground even though the labels aren't identical. If any pair overlaps, the ready task waits for the in-flight one to finish, exactly as if it depended on it, rather than starting alongside it. Two implementors mid-edit on the same file is not a hypothetical: without this check, their edits overwrite or interleave each other in the shared tree, and a gate run against that tree judges a mix of both tasks' unfinished code, not either task cleanly.
 - **A destructive task** (one that mutates shared backend state during its proof) is dispatched alone, with nothing else touching the shared backend at the same time, because two destructive proofs racing each other corrupt both.
 
-This check only ever sees what the plan wrote down. It closes the common collision — two tasks naming the same code at different depths — and it closes the collision two tasks used to hide under genuinely UNRELATED labels for the same file, too: `dobby spec lint` requires every `Affected areas` entry to be a real repository path (an existing directory/file, or one whose parent already exists for a path a task will create), rejecting free-prose labels ("the gate", "CLI checks") at SPEC TIME, before the plan is ever dispatched — two tasks touching the same ground are forced to name the same path, so the overlap check above actually sees the overlap. Areas that name real paths are what make this check work at all; a task left vague here (naming a whole directory when a file would do) still weakens its own protection. What remains is genuinely irreducible: a task can still touch a file it never declared in its `Affected areas` at all, and no static comparison — lint or dispatch — can catch that, because prose written before anyone has touched the code can't know what an implementor will actually open. Where that residual gap is hit for real, nothing here PREVENTS the collision — but the serialised Exit gate below still DETECTS it: the gate always judges the current whole tree, so a sibling's edit to an undeclared file shows up there as a finding the implementor does not own, which it reports and leaves alone per the coordination guards. That is detection, not prevention, and the difference matters — don't read the area check as airtight just because most collisions never reach the gate to find out.
+This check only ever sees what the plan wrote down. It closes the common collision — two tasks naming the same code at different depths — and it closes the collision two tasks used to hide under genuinely UNRELATED labels for the same file, too: `dobby spec lint` requires every `Affected areas` entry to be a real repository path (an existing directory/file, or one whose nearest existing ancestor is inside the repo, for a path a task will create — a task may create a path several levels deep under a directory that exists, or that an earlier task creates), rejecting free-prose labels ("the gate", "CLI checks") at SPEC TIME, before the plan is ever dispatched — two tasks touching the same ground are forced to name the same path, so the overlap check above actually sees the overlap. Prefer naming FILES over a whole directory from the first draft, too: a task whose area is an entire directory serialises every sibling task that also touches something in that directory, even one that never comes near the same file. Areas that name real paths are what make this check work at all; a task left vague here (naming a whole directory when a file would do) still weakens its own protection. What remains is genuinely irreducible: a task can still touch a file it never declared in its `Affected areas` at all, and no static comparison — lint or dispatch — can catch that, because prose written before anyone has touched the code can't know what an implementor will actually open. Where that residual gap is hit for real, nothing here PREVENTS the collision — but the serialised Exit gate below still DETECTS it: the gate always judges the current whole tree, so a sibling's edit to an undeclared file shows up there as a finding the implementor does not own, which it reports and leaves alone per the coordination guards. That is detection, not prevention, and the difference matters — don't read the area check as airtight just because most collisions never reach the gate to find out.
 
 ## The per-task loop
 
@@ -47,8 +53,8 @@ This is the loop that closes a failure. QA does not stop at a verdict when it fi
 
 ### Route the failure to whoever can fix it
 
-- **A code defect** — QA sends its findings directly to `dobby:implementor`, the implementor that still holds this task's context, rather than a fresh worker that would have to re-read everything from nothing. The message describes what QA OBSERVED — the failing behaviour — not a guess at the fix.
-- **A test-contract problem** — when the failure traces back to the tests themselves rather than the implementation, QA sends its findings directly to `dobby:test-author` instead. A message to the test-author describes expected BEHAVIOUR only: it never quotes, pastes, or shows any snippet or fragment of the implementation. Quoting the code is exactly what the test-author's blindness to it is meant to prevent — a test-author who never sees the implementation writes tests that pin behaviour, not ones that tautologically confirm whatever the code already does.
+- **A code defect** — QA sends its findings directly to `implementor-t<id>`, the implementor that still holds this task's context, rather than a fresh worker that would have to re-read everything from nothing. The message describes what QA OBSERVED — the failing behaviour — not a guess at the fix.
+- **A test-contract problem** — when the failure traces back to the tests themselves rather than the implementation, QA sends its findings directly to `test-author-t<id>` instead. A message to the test-author describes expected BEHAVIOUR only: it never quotes, pastes, or shows any snippet or fragment of the implementation. Quoting the code is exactly what the test-author's blindness to it is meant to prevent — a test-author who never sees the implementation writes tests that pin behaviour, not ones that tautologically confirm whatever the code already does.
 
 ### Number every message, so the count lives in the text
 
@@ -58,7 +64,7 @@ The fix conversation is capped at five rounds. If a round five message still doe
 
 ### Failures nothing a writer can fix
 
-Not every failure belongs in this conversation. An environment failure — a dead browser, a missing session, an expired credential, anything QA can't attribute to the code or the tests — goes straight to the Architect, never to `dobby:implementor` or `dobby:test-author` or any other writer: there is nothing for either of them to implement or test away. Reporting an environment failure to the Architect does not spend a round; the five-round cap counts only rounds where a writer had a real chance to fix something.
+Not every failure belongs in this conversation. An environment failure — a dead browser, a missing session, an expired credential, anything QA can't attribute to the code or the tests — goes straight to the Architect, never to `implementor-t<id>` or `test-author-t<id>` or any other writer: there is nothing for either of them to implement or test away. Reporting an environment failure to the Architect does not spend a round; the five-round cap counts only rounds where a writer had a real chance to fix something.
 
 If a message in this conversation can't be delivered at all — the addressed sibling has died mid-task — the sender reports that to the Architect rather than retrying blindly; a sibling that has already died isn't going to answer a second attempt either. That round still counts toward the five, even though the message never landed, so an unlucky death can't be used to dodge the cap.
 
@@ -90,6 +96,27 @@ Say what died the moment it happens — name the task and its terminal status (`
 Every worker appends its own record before it returns — the Architect never transcribes on a worker's behalf. Immediately before reporting back, a worker writes its entry to a scratch file and runs `dobby state append-worklog --task <id> --file <that file>` itself.
 
 What reaches the Architect is a short verdict only: pass, fail, or blocked, plus one line on why. Nothing longer. That short verdict is what preserves the context isolation this protocol depends on — the Architect never reads a worker's full reasoning trail, only its outcome, so its own context stays small enough to run the whole plan without drowning in every task's detail.
+
+## Report progress after every step
+
+Print a per-step status table every time ANY worker of ANY task returns a verdict, and every time a fix-round message lands (a round starting or ending) — not only at task boundaries, and not only at the close of the run. This is the user's live view of the whole plan while it runs.
+
+One row per PLANNED task (its `#` and title), one column per step THAT TASK actually has — `Test-author` only for a test-first task in a repo with a suite, plus `Implementor` and `QA` — and one emoji per cell:
+
+- ⚪ not started
+- 🔄 in progress (add the round number once past round 1, e.g. `🔄 round 2 (fix)`)
+- ❌ failed, in fix conversation (name the round, e.g. `❌ round 2`)
+- ✅ passed
+- — not applicable (e.g. `Test-author` for a task that isn't test-first)
+
+Example:
+
+| # | Task | Test-author | Implementor | QA |
+| --- | --- | --- | --- | --- |
+| 1 | Add rate limiter | ✅ | ✅ | 🔄 round 2 (fix) |
+| 2 | Update docs | — | 🔄 | ⚪ |
+
+This table complements, rather than replaces, the one-line narration of task starts/deaths (unchanged) and the closing summary table below — it's the running view; the summary table is the final tally.
 
 ## Keep the run's state in STATE.md
 

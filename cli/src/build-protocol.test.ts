@@ -40,8 +40,10 @@ import { describe, expect, it } from "vitest";
 //    decisions name character-for-character — nothing is inferred about them.
 //  - "This task must not describe a Workflow anywhere" is the constraint stated
 //    as a ban, so the ban is what is asserted.
-//  - The `dobby:`-qualified agent ids are the kit's mandatory namespacing rule
-//    (CLAUDE.md, CONTEXT.md `Namespacing`).
+//  - `dobby:<role>` stays the kit's mandatory namespacing rule for cross-
+//    references (CLAUDE.md, CONTEXT.md `Namespacing`) and is what a dispatch's
+//    `subagent_type` names; the ADDRESS a sibling messages is the separate
+//    per-task `name`, `<role>-t<id>`.
 // ===========================================================================
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -573,10 +575,11 @@ describe("the dispatch protocol — the run record", () => {
 //    consume a round" is the decision, stated as three separate facts.
 //  - "the sender reports to the Architect rather than retrying blindly, and the
 //    round still counts" is the constraint, verbatim.
-//  - The `dobby:`-qualified addressee ids are the kit's mandatory namespacing
-//    rule (CLAUDE.md, CONTEXT.md `Namespacing`) — and the name is literally the
-//    answer to "who does QA message", since a worker can only reach a sibling it
-//    can name.
+//  - `dobby:<role>` is the kit's mandatory namespacing rule (CLAUDE.md,
+//    CONTEXT.md `Namespacing`) for the `subagent_type`, never the address a
+//    sibling messages — the per-task `name`, `<role>-t<id>`, is literally the
+//    answer to "who does QA message", since a worker can only reach a sibling
+//    it can name.
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
@@ -591,7 +594,7 @@ describe("the fix conversation — routing a failure", () => {
       statesJoinedRule(
         readProtocol(),
         /\bQA\b/,
-        /dobby:implementor/,
+        /implementor-t<id>/,
         SENDS,
         /defect|failure|failing/i
       ),
@@ -604,7 +607,7 @@ describe("the fix conversation — routing a failure", () => {
       statesJoinedRule(
         readProtocol(),
         /\bQA\b/,
-        /dobby:test-author/,
+        /test-author-t<id>/,
         SENDS,
         /contract/i
       ),
@@ -616,7 +619,7 @@ describe("the fix conversation — routing a failure", () => {
     expect(
       statesJoinedRule(
         readProtocol(),
-        /dobby:test-author/,
+        /test-author-t<id>/,
         /behaviou?r/i,
         /quote|verbatim|snippet|fragment|implementation/i,
         NEGATION
