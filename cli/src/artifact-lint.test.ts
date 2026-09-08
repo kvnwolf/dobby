@@ -127,6 +127,7 @@ const SAYS_NESTED_REFERENCE = /detail\.md|deeper\.md/;
 const SAYS_AREA_PATH = /real path|does not exist/i;
 const SAYS_AREA_CANONICAL = /canonically|canonical/i;
 const SAYS_AREA_EMPHASIS = /markdown emphasis/i;
+const SAYS_TASK_ID = /worker address/i;
 
 // ===========================================================================
 // FIXTURES — the `## Spec` artifact.
@@ -446,6 +447,49 @@ describe("dobby spec lint — the task table", () => {
     expect(result.exitCode).toBe(1);
     expect(reportOf(result)).toMatch(SAYS_TABLE);
   });
+});
+
+// ===========================================================================
+// Slice 3a — the `#` cell's shape. The dispatch protocol interpolates it
+// verbatim into a worker's Agent `name` as `<role>-t<id>`, so a plan whose id
+// carries a slash, a space, or too many characters would produce an invalid
+// Agent name and fail the very first worker dispatch (Greptile finding on
+// build-protocol.md:15) — this is the lint that catches that before build.
+// ===========================================================================
+
+describe("dobby spec lint — the task id shape", () => {
+  const idRow = (id: string) =>
+    `| ${id} | Command registry | Per-command flag allowlist plus one stub per session command. | — | cli/src/run.ts | yes | no | dobby env --fix → exit 1 naming the flag and the command |`;
+
+  it("rejects a `#` cell shaped like a path (`api/v2`)", async () => {
+    const root = makeSpecRepo(withTable(taskTable([idRow("api/v2")])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    expect(reportOf(result)).toMatch(SAYS_TASK_ID);
+  });
+
+  it("rejects a `#` cell containing a space (`task 1`)", async () => {
+    const root = makeSpecRepo(withTable(taskTable([idRow("task 1")])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    expect(reportOf(result)).toMatch(SAYS_TASK_ID);
+  });
+
+  it("rejects a `#` cell longer than 21 characters", async () => {
+    const root = makeSpecRepo(withTable(taskTable([idRow("a".repeat(22))])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    expect(reportOf(result)).toMatch(SAYS_TASK_ID);
+  });
+
+  it.each(["1", "t-2", "A_3"])(
+    "accepts a plain, worker-address-safe `#` cell (%s)",
+    async (id) => {
+      const root = makeSpecRepo(withTable(taskTable([idRow(id)])));
+      const result = await run(["spec", "lint"], root);
+      expect(result.exitCode).toBe(0);
+    }
+  );
 });
 
 // ===========================================================================

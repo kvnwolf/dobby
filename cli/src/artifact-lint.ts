@@ -370,6 +370,16 @@ const BANNED_VERIFY_COMMAND =
 // this shape before existence is even checked.
 const AREA_PATH_SHAPE = /^[\w./$-]+$/;
 
+// The `#` cell is interpolated verbatim into a worker's Agent `name` as
+// `<role>-t<id>` (build-protocol.md), whose own shape is
+// `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` — letters, digits, `_`, `-`, max 64
+// chars total. `test-author-t` is the longest role prefix at 13 chars, so
+// capping the id at 21 chars keeps every address well under that ceiling
+// with room to spare. An id like `api/v2` or `task 1` would produce an
+// invalid Agent name and fail the very first worker dispatch, so this shape
+// is enforced here rather than discovered at dispatch time.
+const TASK_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,20}$/;
+
 // A backtick or asterisk left INSIDE an area value — unlike `_`, which a real
 // snake_case path segment legitimately carries (`splitCellMembers` in
 // buildplan.ts never strips one for exactly that reason), a backtick or
@@ -629,6 +639,7 @@ function lintTaskTable(
   const columns = taskColumns(table);
   const rows = taskRows(table, columns);
   findings.push(...lintRowCells(rows, columns, context));
+  findings.push(...lintRowIds(table, columns, context));
   findings.push(...lintRowDependencies(rows, context));
   findings.push(...lintRowAreas(rows, columns, context));
   findings.push(...lintRowRecipes(rows, columns, context));
@@ -731,6 +742,35 @@ function lintRowCells(
         );
       }
     }
+  }
+  return findings;
+}
+
+// The `#` cell must itself be a legal worker-address fragment (see
+// TASK_ID_SHAPE above) — an empty cell keeps today's positional default
+// (`taskRows` fills it in with `index + 1`, which is always shape-legal), so
+// only a NON-EMPTY, badly-shaped id is a finding here.
+function lintRowIds(
+  table: Table,
+  columns: TaskColumns,
+  context: SpecContext
+): Finding[] {
+  if (columns.id < 0) {
+    return [];
+  }
+  const findings: Finding[] = [];
+  for (const row of table.rows) {
+    const raw = cellAt(row.cells, columns.id);
+    if (raw === "" || TASK_ID_SHAPE.test(raw)) {
+      continue;
+    }
+    findings.push(
+      finding(
+        "spec-task-id",
+        at(context.path, row.line),
+        `task ${raw}: \`#\` is \`${raw}\`, which cannot be a worker address — the dispatch protocol names workers \`<role>-t<id>\`, so an id may carry only letters, digits, \`_\` and \`-\` (max 21 chars); number the tasks 1, 2, 3…`
+      )
+    );
   }
   return findings;
 }

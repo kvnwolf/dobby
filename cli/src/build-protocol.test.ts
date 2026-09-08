@@ -559,6 +559,38 @@ describe("the dispatch protocol — the run record", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// SLICE 7b — the status table's transitions: which cell moves at each routing
+// and re-check step, so a code defect visibly resumes the implementor and a
+// closed round visibly resumes the reporter.
+// ---------------------------------------------------------------------------
+
+describe("the status table — transitions", () => {
+  it("moves the implementor to in progress when QA reports a code defect", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /defect/i,
+        /implementor/i,
+        /in progress|🔄/i
+      ),
+      "a code defect resumes the implementor, so its cell must leave ✅/⚪ for in-progress"
+    ).toBe(true);
+  });
+
+  it("has the fixer message the reporter back to trigger the re-check", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /message|SendMessage/i,
+        /back/i,
+        /re-check|recheck/i
+      ),
+      "the return message is what resumes the reporter for its re-check"
+    ).toBe(true);
+  });
+});
+
 // ===========================================================================
 // THE FIX CONVERSATION — the loop that closes a failure.
 //
