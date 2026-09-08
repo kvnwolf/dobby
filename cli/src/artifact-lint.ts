@@ -358,15 +358,27 @@ const BANNED_VERIFY_COMMAND =
   /\b(?:lint|format|typecheck|tsc|biome|knip|vitest|jest|npm test|bun test|dobby check|build)\b/i;
 
 // The character shape a real repository path takes in this kit: word
-// characters, dot, dash and slash only. Nothing else — no space, no
-// parenthesis, no stray punctuation — belongs in a path, so anything outside
-// this shape is prose that leaked into the cell (task-decomposition.md's
-// `Affected areas` rule: name the path, not a description of it). This is what
-// catches a parenthetical aside split apart by the SAME comma that separates
-// areas, e.g. `plugin/skills (research, dispatch)` → `plugin/skills (research`
-// + `dispatch)`, both of which fail this shape before existence is even
-// checked.
-const AREA_PATH_SHAPE = /^[\w./-]+$/;
+// characters, dot, dash, slash and `$`. `$` is allowed because file-based
+// routers (TanStack Start/Router, Remix) spell a dynamic route segment as a
+// `$param` directory, so it is part of a real path in this kit's stack.
+// Nothing else — no space, no parenthesis, no stray punctuation — belongs in
+// a path, so anything outside this shape is prose that leaked into the cell
+// (task-decomposition.md's `Affected areas` rule: name the path, not a
+// description of it). This is what catches a parenthetical aside split apart
+// by the SAME comma that separates areas, e.g. `plugin/skills (research,
+// dispatch)` → `plugin/skills (research` + `dispatch)`, both of which fail
+// this shape before existence is even checked.
+const AREA_PATH_SHAPE = /^[\w./$-]+$/;
+
+// The `#` cell is interpolated verbatim into a worker's Agent `name` as
+// `<role>-t<id>` (build-protocol.md), whose own shape is
+// `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` — letters, digits, `_`, `-`, max 64
+// chars total. `test-author-t` is the longest role prefix at 13 chars, so
+// capping the id at 21 chars keeps every address well under that ceiling
+// with room to spare. An id like `api/v2` or `task 1` would produce an
+// invalid Agent name and fail the very first worker dispatch, so this shape
+// is enforced here rather than discovered at dispatch time.
+const TASK_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,20}$/;
 
 // A backtick or asterisk left INSIDE an area value — unlike `_`, which a real
 // snake_case path segment legitimately carries (`splitCellMembers` in
@@ -627,6 +639,7 @@ function lintTaskTable(
   const columns = taskColumns(table);
   const rows = taskRows(table, columns);
   findings.push(...lintRowCells(rows, columns, context));
+  findings.push(...lintRowIds(table, columns, context));
   findings.push(...lintRowDependencies(rows, context));
   findings.push(...lintRowAreas(rows, columns, context));
   findings.push(...lintRowRecipes(rows, columns, context));
@@ -729,6 +742,35 @@ function lintRowCells(
         );
       }
     }
+  }
+  return findings;
+}
+
+// The `#` cell must itself be a legal worker-address fragment (see
+// TASK_ID_SHAPE above) — an empty cell keeps today's positional default
+// (`taskRows` fills it in with `index + 1`, which is always shape-legal), so
+// only a NON-EMPTY, badly-shaped id is a finding here.
+function lintRowIds(
+  table: Table,
+  columns: TaskColumns,
+  context: SpecContext
+): Finding[] {
+  if (columns.id < 0) {
+    return [];
+  }
+  const findings: Finding[] = [];
+  for (const row of table.rows) {
+    const raw = cellAt(row.cells, columns.id);
+    if (raw === "" || TASK_ID_SHAPE.test(raw)) {
+      continue;
+    }
+    findings.push(
+      finding(
+        "spec-task-id",
+        at(context.path, row.line),
+        `task ${raw}: \`#\` is \`${raw}\`, which cannot be a worker address — the dispatch protocol names workers \`<role>-t<id>\`, so an id may carry only letters, digits, \`_\` and \`-\` (max 21 chars); number the tasks 1, 2, 3…`
+      )
+    );
   }
   return findings;
 }
@@ -847,14 +889,16 @@ function canonicalAreaPath(root: string, area: string): string {
 
 // Why an area is not usable, as a finding message, or null when it is fine: an
 // EXISTING file or directory, or one this task will CREATE — recognised by
-// its parent directory already existing (task-decomposition.md's rule: a path
-// a task creates is legitimate as long as its parent already exists). A cell
-// that isn't shaped like a path at all (a comma-mangled fragment of a
-// parenthetical, free prose) is rejected before existence is even checked,
-// and one that IS shaped like a path but is not written canonically (a
-// doubled separator, an interior `..`, an absolute path standing in for the
-// same relative one) is rejected before existence too — see
-// `canonicalAreaPath` above for why.
+// its NEAREST EXISTING ANCESTOR being inside the repo (task-decomposition.md's
+// rule: a path a task creates is legitimate as long as some ancestor
+// directory below the repo root already exists — a module a task creates two
+// levels deep, or a file inside a directory an earlier task creates, is not
+// forced to overlap that directory as its area). A cell that isn't shaped
+// like a path at all (a comma-mangled fragment of a parenthetical, free
+// prose) is rejected before existence is even checked, and one that IS shaped
+// like a path but is not written canonically (a doubled separator, an
+// interior `..`, an absolute path standing in for the same relative one) is
+// rejected before existence too — see `canonicalAreaPath` above for why.
 function areaPathProblem(
   root: string,
   rawArea: string,
@@ -876,10 +920,19 @@ function areaPathProblem(
   if (existsSync(absolute)) {
     return null;
   }
-  if (area.includes("/") && existsSync(dirname(absolute))) {
-    return null;
+  // Walk upward from the nearest ancestor directory: any one of them
+  // existing anchors the area to real ground. `inside()` is the "strictly
+  // below root" predicate the walk needs on both ends — it stops the moment
+  // it leaves the repo (the root itself never counts as the anchor, or every
+  // top-level nonexistent path would pass unconditionally), and normalizes
+  // the slash so a trailing separator on `root` can never fool a bare `!==`.
+  for (let ancestor = dirname(absolute); inside(root, ancestor); ) {
+    if (existsSync(ancestor)) {
+      return null;
+    }
+    ancestor = dirname(ancestor);
   }
-  return `task ${taskId}: \`Affected areas\` names \`${rawArea}\`, which does not exist in this repo — name a real directory or file (a path the task will CREATE is fine as long as its parent directory already exists)`;
+  return `task ${taskId}: \`Affected areas\` names \`${rawArea}\`, which does not exist in this repo — name a real directory or file (a path the task will CREATE is fine as long as some ancestor directory below the repo root already exists, e.g. a module an earlier task creates)`;
 }
 
 function lintRowRecipes(

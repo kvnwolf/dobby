@@ -127,6 +127,7 @@ const SAYS_NESTED_REFERENCE = /detail\.md|deeper\.md/;
 const SAYS_AREA_PATH = /real path|does not exist/i;
 const SAYS_AREA_CANONICAL = /canonically|canonical/i;
 const SAYS_AREA_EMPHASIS = /markdown emphasis/i;
+const SAYS_TASK_ID = /worker address/i;
 
 // ===========================================================================
 // FIXTURES — the `## Spec` artifact.
@@ -264,12 +265,16 @@ const AREA_PARENT_FILES: Record<string, string> = { "cli/src/.gitkeep": "" };
 // into absent-by-design (the capability comes from the shared detector).
 function makeSpecRepo(
   sections: Sections = CLEAN_SECTIONS,
-  opts: { vitest?: boolean } = {}
+  opts: { files?: Record<string, string>; vitest?: boolean } = {}
 ): string {
   const devDependencies =
     opts.vitest === false ? {} : { vitest: "^3.2.0" as string };
   return makeScratchRepo({
-    files: { ...AREA_PARENT_FILES, "STATE.md": stateDoc(specBody(sections)) },
+    files: {
+      ...AREA_PARENT_FILES,
+      ...opts.files,
+      "STATE.md": stateDoc(specBody(sections)),
+    },
     pkg: { devDependencies, name: "fixture-project", private: true },
     prefix: "dobby-artifact-spec-",
     track: scratchDirs,
@@ -445,6 +450,49 @@ describe("dobby spec lint — the task table", () => {
 });
 
 // ===========================================================================
+// Slice 3a — the `#` cell's shape. The dispatch protocol interpolates it
+// verbatim into a worker's Agent `name` as `<role>-t<id>`, so a plan whose id
+// carries a slash, a space, or too many characters would produce an invalid
+// Agent name and fail the very first worker dispatch (Greptile finding on
+// build-protocol.md:15) — this is the lint that catches that before build.
+// ===========================================================================
+
+describe("dobby spec lint — the task id shape", () => {
+  const idRow = (id: string) =>
+    `| ${id} | Command registry | Per-command flag allowlist plus one stub per session command. | — | cli/src/run.ts | yes | no | dobby env --fix → exit 1 naming the flag and the command |`;
+
+  it("rejects a `#` cell shaped like a path (`api/v2`)", async () => {
+    const root = makeSpecRepo(withTable(taskTable([idRow("api/v2")])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    expect(reportOf(result)).toMatch(SAYS_TASK_ID);
+  });
+
+  it("rejects a `#` cell containing a space (`task 1`)", async () => {
+    const root = makeSpecRepo(withTable(taskTable([idRow("task 1")])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    expect(reportOf(result)).toMatch(SAYS_TASK_ID);
+  });
+
+  it("rejects a `#` cell longer than 21 characters", async () => {
+    const root = makeSpecRepo(withTable(taskTable([idRow("a".repeat(22))])));
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(1);
+    expect(reportOf(result)).toMatch(SAYS_TASK_ID);
+  });
+
+  it.each(["1", "t-2", "A_3"])(
+    "accepts a plain, worker-address-safe `#` cell (%s)",
+    async (id) => {
+      const root = makeSpecRepo(withTable(taskTable([idRow(id)])));
+      const result = await run(["spec", "lint"], root);
+      expect(result.exitCode).toBe(0);
+    }
+  );
+});
+
+// ===========================================================================
 // Slice 3b — `Affected areas` as real repository paths. The clean fixture
 // (CLEAN_TABLE, above) already doubles as the "path a task will CREATE"
 // proof: `cli/src` exists in every spec fixture (AREA_PARENT_FILES) but
@@ -462,13 +510,55 @@ describe("dobby spec lint — Affected areas as real paths", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it("reports an area whose parent directory does not exist either", async () => {
+  it("reports an area with no existing ancestor below the repo root", async () => {
+    // No segment of this path exists anywhere in the fixture — the walk
+    // upward from it reaches the repo root itself without finding an
+    // anchor, and the root is never an acceptable anchor.
     const nowhere =
-      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | cli/nonexistent/preflight.ts | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | nonexistent/deeply/nested/preflight.ts | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
     const root = makeSpecRepo(withTable(taskTable([ROW_1, ROW_2, nowhere])));
     const result = await run(["spec", "lint"], root);
     expect(result.exitCode).toBe(1);
     expect(reportOf(result)).toMatch(SAYS_AREA_PATH);
+  });
+
+  it("accepts a path two levels below an existing directory — an area a later task's module will create", async () => {
+    // `cli/src` exists (AREA_PARENT_FILES); `cli/src/new-module` and
+    // `cli/src/new-module/server` do not. The nearest existing ancestor,
+    // `cli/src`, anchors the area even though it sits two levels up.
+    const twoLevelsDeep =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | cli/src/new-module/server | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(
+      withTable(taskTable([ROW_1, ROW_2, twoLevelsDeep]))
+    );
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("accepts an existing `$param` route directory as a real path", async () => {
+    const existingParam =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | src/routes/$id | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(
+      withTable(taskTable([ROW_1, ROW_2, existingParam])),
+      {
+        files: { "src/routes/$id/.gitkeep": "" },
+      }
+    );
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("accepts a nonexistent path under an existing `$param` route directory", async () => {
+    const underParam =
+      "| 3 | Session preflights | Read-only verdicts for scope and finish. | 1 | src/routes/$id/new-file.tsx | yes | no | dobby scope preflight --slug demo → JSON reporting the collision |";
+    const root = makeSpecRepo(
+      withTable(taskTable([ROW_1, ROW_2, underParam])),
+      {
+        files: { "src/routes/$id/.gitkeep": "" },
+      }
+    );
+    const result = await run(["spec", "lint"], root);
+    expect(result.exitCode).toBe(0);
   });
 
   it("reports a bare label that names no real path in the repo", async () => {

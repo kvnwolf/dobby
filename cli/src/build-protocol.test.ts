@@ -40,8 +40,10 @@ import { describe, expect, it } from "vitest";
 //    decisions name character-for-character — nothing is inferred about them.
 //  - "This task must not describe a Workflow anywhere" is the constraint stated
 //    as a ban, so the ban is what is asserted.
-//  - The `dobby:`-qualified agent ids are the kit's mandatory namespacing rule
-//    (CLAUDE.md, CONTEXT.md `Namespacing`).
+//  - `dobby:<role>` stays the kit's mandatory namespacing rule for cross-
+//    references (CLAUDE.md, CONTEXT.md `Namespacing`) and is what a dispatch's
+//    `subagent_type` names; the ADDRESS a sibling messages is the separate
+//    per-task `name`, `<role>-t<id>`.
 // ===========================================================================
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -557,6 +559,51 @@ describe("the dispatch protocol — the run record", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// SLICE 7b — the status table's transitions: which cell moves at each routing
+// and re-check step, so a code defect visibly resumes the implementor and a
+// closed round visibly resumes the reporter.
+// ---------------------------------------------------------------------------
+
+describe("the status table — transitions", () => {
+  it("moves the implementor to in progress when QA reports a code defect", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /defect/i,
+        /implementor/i,
+        /in progress|🔄/i
+      ),
+      "a code defect resumes the implementor, so its cell must leave ✅/⚪ for in-progress"
+    ).toBe(true);
+  });
+
+  it("has the fixer message the reporter back to trigger the re-check", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /message|SendMessage/i,
+        /back/i,
+        /re-check|recheck/i
+      ),
+      "the return message is what resumes the reporter for its re-check"
+    ).toBe(true);
+  });
+
+  it("routes a corrected test contract through the implementor's Exit gate before QA resumes", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /test-author/i,
+        /implementor/i,
+        /exit gate|gate/i,
+        /before|then|only/i
+      ),
+      "QA never runs the suite, so a corrected contract must be proven by the implementor's own gate first"
+    ).toBe(true);
+  });
+});
+
 // ===========================================================================
 // THE FIX CONVERSATION — the loop that closes a failure.
 //
@@ -573,10 +620,11 @@ describe("the dispatch protocol — the run record", () => {
 //    consume a round" is the decision, stated as three separate facts.
 //  - "the sender reports to the Architect rather than retrying blindly, and the
 //    round still counts" is the constraint, verbatim.
-//  - The `dobby:`-qualified addressee ids are the kit's mandatory namespacing
-//    rule (CLAUDE.md, CONTEXT.md `Namespacing`) — and the name is literally the
-//    answer to "who does QA message", since a worker can only reach a sibling it
-//    can name.
+//  - `dobby:<role>` is the kit's mandatory namespacing rule (CLAUDE.md,
+//    CONTEXT.md `Namespacing`) for the `subagent_type`, never the address a
+//    sibling messages — the per-task `name`, `<role>-t<id>`, is literally the
+//    answer to "who does QA message", since a worker can only reach a sibling
+//    it can name.
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
@@ -591,7 +639,7 @@ describe("the fix conversation — routing a failure", () => {
       statesJoinedRule(
         readProtocol(),
         /\bQA\b/,
-        /dobby:implementor/,
+        /implementor-t<id>/,
         SENDS,
         /defect|failure|failing/i
       ),
@@ -604,7 +652,7 @@ describe("the fix conversation — routing a failure", () => {
       statesJoinedRule(
         readProtocol(),
         /\bQA\b/,
-        /dobby:test-author/,
+        /test-author-t<id>/,
         SENDS,
         /contract/i
       ),
@@ -616,7 +664,7 @@ describe("the fix conversation — routing a failure", () => {
     expect(
       statesJoinedRule(
         readProtocol(),
-        /dobby:test-author/,
+        /test-author-t<id>/,
         /behaviou?r/i,
         /quote|verbatim|snippet|fragment|implementation/i,
         NEGATION
