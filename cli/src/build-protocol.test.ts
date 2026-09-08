@@ -589,6 +589,19 @@ describe("the status table — transitions", () => {
       "the return message is what resumes the reporter for its re-check"
     ).toBe(true);
   });
+
+  it("routes a corrected test contract through the implementor's Exit gate before QA resumes", () => {
+    expect(
+      statesJoinedRule(
+        readProtocol(),
+        /test-author/i,
+        /implementor/i,
+        /exit gate|gate/i,
+        /before|then|only/i
+      ),
+      "QA never runs the suite, so a corrected contract must be proven by the implementor's own gate first"
+    ).toBe(true);
+  });
 });
 
 // ===========================================================================

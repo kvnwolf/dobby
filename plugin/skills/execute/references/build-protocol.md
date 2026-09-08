@@ -56,11 +56,16 @@ This is the loop that closes a failure. QA does not stop at a verdict when it fi
 - **A code defect** — QA sends its findings directly to `implementor-t<id>`, the implementor that still holds this task's context, rather than a fresh worker that would have to re-read everything from nothing. The message describes what QA OBSERVED — the failing behaviour — not a guess at the fix.
 - **A test-contract problem** — when the failure traces back to the tests themselves rather than the implementation, QA sends its findings directly to `test-author-t<id>` instead. A message to the test-author describes expected BEHAVIOUR only: it never quotes, pastes, or shows any snippet or fragment of the implementation. Quoting the code is exactly what the test-author's blindness to it is meant to prevent — a test-author who never sees the implementation writes tests that pin behaviour, not ones that tautologically confirm whatever the code already does.
 
-### Close the round: the fixer messages the reporter back
+### Close the round: the fixer messages whoever can prove the fix
 
-A round does not end when the fixer starts working — it ends when the fixer tells the reporter the fix is ready. Whoever received a round-N message and fixed it sends the return message BY NAME to the worker that reported it, carrying the same round number: the implementor messages `qa-t<id>` once its fix has passed its own Exit gate ("round N fix landed — re-check"), and the test-author messages `implementor-t<id>` once the test contract is corrected, describing expected behaviour only, never a code fragment. That return message is what resumes the reporter — `SendMessage` resumes a named agent from its own transcript — so a round is never left waiting on the Architect to notice a fix landed. QA (or the implementor, on a test-contract round) then re-checks and either passes the task on or opens round N+1 the same way.
+A round does not end when the fixer starts working — it ends when the fixer messages the fix onward, BY NAME, carrying the same round number, to whoever can PROVE it: for a code defect that is the reporter itself; for a test-contract problem it is always the implementor, never straight back to whichever worker reported the problem.
 
-The Architect steps in only in the two cases already covered above: a message that cannot be delivered at all, or a worker that returns without closing its round — a fixer that reports done to the Architect but never messages the reporter back. In that second case the Architect re-sends the return message itself, by name, rather than treating the round as stalled or redispatching either worker.
+- **A code defect**: the implementor messages `qa-t<id>` once its fix has passed its own Exit gate ("round N fix landed — re-check").
+- **A test-contract problem**: the test-author messages `implementor-t<id>` — never `qa-t<id>` directly, even when QA was the one that raised the problem — once the test contract is corrected, describing expected behaviour only, never a code fragment ("round N contract corrected — re-run your gate"). QA never runs the test suite, so a corrected contract that bypassed the implementor's Exit gate would leave QA marking the task done on an unproven change. The implementor then makes any implementation change the corrected contract now demands, re-runs its Exit gate, and only once it is green messages `qa-t<id>` itself ("round N fix landed — re-check") — the same code-defect return leg above, just reached one hop later.
+
+That return message is what resumes the next worker in the chain — `SendMessage` resumes a named agent from its own transcript — so a round is never left waiting on the Architect to notice a fix landed. QA — the only worker either return leg ever resumes — then re-checks and either passes the task on or opens round N+1 the same way.
+
+The Architect steps in only in the two cases already covered above: a message that cannot be delivered at all, or a worker that returns without closing its round — a fixer that reports done to the Architect but never messages the next worker in the chain. In that second case the Architect re-sends the return message itself, by name, rather than treating the round as stalled or redispatching either worker.
 
 ### Number every message, so the count lives in the text
 
@@ -119,7 +124,7 @@ One row per PLANNED task (its `#` and title), one column per step THAT TASK actu
 
 - QA reports a code defect (round N) → QA `❌ round N`, Implementor `🔄 round N (fix)`.
 - The implementor's fix passes its Exit gate and it messages QA back → Implementor `✅`, QA `🔄 round N (re-check)`.
-- A test-contract problem (round N) → Test-author `🔄 round N (fix)`, the reporter — Implementor or QA — `❌ round N`; when the test-author messages that reporter back → Test-author `✅`, reporter `🔄 round N (re-check)`.
+- A test-contract problem (round N) → Test-author `🔄 round N (fix)`, the reporter — Implementor or QA — `❌ round N`; when the test-author messages the implementor back (never QA directly) → Test-author `✅`, Implementor `🔄 round N (gate)`; once the implementor's gate is green and it messages QA → Implementor `✅`, QA `🔄 round N (re-check)`.
 - QA passes → QA `✅` (task `done`); a fifth round that still fails → QA `❌ round 5 — needs-human`.
 - A blocked or dead task keeps its last cells and gets a trailing note (`needs-human`, or `blocked by <id>`).
 
